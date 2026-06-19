@@ -1,0 +1,601 @@
+const fs = require('fs');
+const path = require('path');
+
+const files = {
+  'src/lib/utils.js': `import { clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs) {
+  return twMerge(clsx(inputs));
+}
+
+export function formatHeure(timeString) {
+  if (!timeString) return '';
+  const [heures, minutes] = timeString.split(':');
+  return `\${heures}h\${minutes}`;
+}
+
+export function formatDate(dateString) {
+  if (!dateString) return '';
+  const date = new Date(dateString + 'T00:00:00');
+  if (isNaN(date.getTime())) return '';
+
+  const options = { weekday: 'short', day: 'numeric', month: 'short' };
+  let formatted = new Intl.DateTimeFormat('fr-FR', options).format(date);
+
+  formatted = formatted.replace(/\\./g, '');
+  const parts = formatted.split(' ');
+
+  if (parts.length >= 3) {
+    const jourSemaine = parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + '.';
+    const jourMois = parts[1];
+    const mois = parts[2].toLowerCase() + '.';
+    return `\${jourSemaine} \${jourMois} \${mois}`;
+  }
+
+  return formatted;
+}
+
+export function getDureeLabel(heureDebut, heureFin) {
+  if (!heureDebut || !heureFin) return '';
+
+  const toMinutes = (t) => {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  };
+
+  const debutMin = toMinutes(heureDebut);
+  const finMin   = toMinutes(heureFin);
+
+  if (finMin <= debutMin) return '0h00';
+
+  const pauseDebut = 11 * 60;
+  const pauseFin   = 11 * 60 + 15;
+
+  const overlapStart       = Math.max(debutMin, pauseDebut);
+  const overlapEnd         = Math.min(finMin, pauseFin);
+  const chevauchementPause = Math.max(0, overlapEnd - overlapStart);
+
+  const dureeEffective = (finMin - debutMin) - chevauchementPause;
+  const hours   = Math.floor(dureeEffective / 60);
+  const minutes = dureeEffective % 60;
+
+  return `\${hours}h\${minutes.toString().padStart(2, '0')}`;
+}
+`,
+
+  'src/lib/constants.js': `export const ROLES = Object.freeze({
+  RESPONSABLE: 'responsable',
+  ENSEIGNANT:  'enseignant',
+  ETUDIANT:    'etudiant',
+});
+
+export const TYPE_SEANCE = Object.freeze({
+  CM: 'CM',
+  TD: 'TD',
+  TP: 'TP',
+});
+
+export const STATUT_SEANCE = Object.freeze({
+  CONFIRMEE: 'Confirmée',
+  ANNULEE:   'Annulée',
+  REPORTEE:  'Reportée',
+});
+
+export const SEANCE_COLORS = Object.freeze({
+  [TYPE_SEANCE.CM]: {
+    bg:     'bg-blue-100 dark:bg-blue-950/40',
+    text:   'text-blue-800 dark:text-blue-300',
+    border: 'border-blue-300 dark:border-blue-800',
+  },
+  [TYPE_SEANCE.TD]: {
+    bg:     'bg-green-100 dark:bg-green-950/40',
+    text:   'text-green-800 dark:text-green-300',
+    border: 'border-green-300 dark:border-green-800',
+  },
+  [TYPE_SEANCE.TP]: {
+    bg:     'bg-purple-100 dark:bg-purple-950/40',
+    text:   'text-purple-800 dark:text-purple-300',
+    border: 'border-purple-300 dark:border-purple-800',
+  },
+});
+
+export const STATUT_COLORS = Object.freeze({
+  [STATUT_SEANCE.CONFIRMEE]: {
+    bg:     'bg-emerald-100 dark:bg-emerald-950/40',
+    text:   'text-emerald-800 dark:text-emerald-300',
+    border: 'border-emerald-300 dark:border-emerald-800',
+  },
+  [STATUT_SEANCE.ANNULEE]: {
+    bg:     'bg-rose-100 dark:bg-rose-950/40',
+    text:   'text-rose-800 dark:text-rose-300',
+    border: 'border-rose-300 dark:border-rose-800',
+  },
+  [STATUT_SEANCE.REPORTEE]: {
+    bg:     'bg-amber-100 dark:bg-amber-950/40',
+    text:   'text-amber-800 dark:text-amber-300',
+    border: 'border-amber-300 dark:border-amber-800',
+  },
+});
+
+export const HEURE_MIN = '09:00';
+export const HEURE_MAX = '16:20';
+`,
+
+  'src/api/client.js': `import axios from 'axios';
+import { authStore } from '@/store/authStore';
+
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = authStore.getState().accessToken;
+    if (token) {
+      config.headers.Authorization = `Bearer \${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (error.response?.status === 401 && !originalRequest._isRetry) {
+      originalRequest._isRetry = true;
+
+      try {
+        const refreshToken = authStore.getState().refreshToken;
+
+        if (!refreshToken) {
+          throw new Error('Aucun refresh token disponible dans le store.');
+        }
+
+        const baseURL  = import.meta.env.VITE_API_BASE_URL.replace(/\\/$/, '');
+        const response = await axios.post(
+          `\${baseURL}/token/refresh/`,
+          { refresh: refreshToken }
+        );
+
+        const newAccessToken = response.data.access;
+        authStore.getState().setAccessToken(newAccessToken);
+
+        originalRequest.headers.Authorization = `Bearer \${newAccessToken}`;
+        return apiClient(originalRequest);
+
+      } catch (refreshError) {
+        console.error('Échec du refresh token — déconnexion forcée.', refreshError);
+        authStore.getState().clearAuth();
+        window.location.href = '/login';
+        return Promise.reject(refreshError);
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;
+`,
+
+  'src/api/auth.js': `import apiClient from './client';
+import { authStore } from '@/store/authStore';
+
+export async function login(username, password) {
+  const response = await apiClient.post('/token/', { username, password });
+  return response;
+}
+
+export async function refreshAccessToken(refreshToken) {
+  const response = await apiClient.post('/token/refresh/', { refresh: refreshToken });
+  return response;
+}
+
+export function logout() {
+  authStore.getState().clearAuth();
+}
+`,
+
+  'src/store/authStore.js': `import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+const useAuthStore = create(
+  persist(
+    (set) => ({
+      accessToken:     null,
+      refreshToken:    null,
+      user:            null,
+      isAuthenticated: false,
+
+      setAuth: ({ accessToken, refreshToken, user }) => set({
+        accessToken,
+        refreshToken,
+        user,
+        isAuthenticated: true,
+      }),
+
+      setAccessToken: (token) => set({ accessToken: token }),
+
+      clearAuth: () => set({
+        accessToken:     null,
+        refreshToken:    null,
+        user:            null,
+        isAuthenticated: false,
+      }),
+    }),
+    {
+      name: 'edt-auth',
+
+      partialize: (state) => ({
+        accessToken:  state.accessToken,
+        refreshToken: state.refreshToken,
+        user:         state.user,
+      }),
+
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...persistedState,
+        isAuthenticated: !!persistedState?.accessToken,
+      }),
+    }
+  )
+);
+
+export const selectIsResponsable = (state) => state.user?.role === 'responsable';
+export const selectIsEnseignant  = (state) => state.user?.role === 'enseignant';
+export const selectIsEtudiant    = (state) => state.user?.role === 'etudiant';
+
+export { useAuthStore as authStore };
+export default useAuthStore;
+`,
+
+  'src/routes/ProtectedRoute.jsx': `import { Navigate, Outlet } from 'react-router-dom';
+import useAuthStore from '@/store/authStore';
+
+export default function ProtectedRoute({ allowedRoles }) {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const user            = useAuthStore((state) => state.user);
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (allowedRoles && !allowedRoles.includes(user?.role)) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  return <Outlet />;
+}
+`,
+
+  'src/routes/index.jsx': `import { createBrowserRouter, Navigate } from 'react-router-dom';
+import useAuthStore from '@/store/authStore';
+import ProtectedRoute from './ProtectedRoute';
+import LoginPage from '@/features/auth/LoginPage';
+
+const DashboardResponsable = () => <div className="p-8"><h3>Espace Responsable</h3></div>;
+const DashboardEnseignant  = () => <div className="p-8"><h3>Espace Enseignant</h3></div>;
+const DashboardEtudiant    = () => <div className="p-8"><h3>Espace Étudiant</h3></div>;
+const NotFoundPage         = () => <div className="p-8 text-center text-muted-foreground"><h3>404 — Page introuvable</h3></div>;
+const UnauthorizedPage     = () => <div className="p-8 text-center text-destructive"><h3>403 — Accès non autorisé</h3></div>;
+
+function RootRedirect() {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const user            = useAuthStore((state) => state.user);
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+
+  switch (user?.role) {
+    case 'responsable': return <Navigate to="/responsable/planning" replace />;
+    case 'enseignant':  return <Navigate to="/enseignant/planning"  replace />;
+    case 'etudiant':    return <Navigate to="/etudiant/planning"    replace />;
+    default:            return <Navigate to="/unauthorized"         replace />;
+  }
+}
+
+export const router = createBrowserRouter([
+  { path: '/',      element: <RootRedirect /> },
+  { path: '/login', element: <LoginPage /> },
+
+  {
+    path: '/responsable',
+    element: <ProtectedRoute allowedRoles={['responsable']} />,
+    children: [
+      { path: 'planning', element: <DashboardResponsable /> },
+      { path: '*',        element: <Navigate to="planning" replace /> },
+    ],
+  },
+  {
+    path: '/enseignant',
+    element: <ProtectedRoute allowedRoles={['enseignant']} />,
+    children: [
+      { path: 'planning', element: <DashboardEnseignant /> },
+      { path: '*',        element: <Navigate to="planning" replace /> },
+    ],
+  },
+  {
+    path: '/etudiant',
+    element: <ProtectedRoute allowedRoles={['etudiant']} />,
+    children: [
+      { path: 'planning', element: <DashboardEtudiant /> },
+      { path: '*',        element: <Navigate to="planning" replace /> },
+    ],
+  },
+
+  { path: '/unauthorized', element: <UnauthorizedPage /> },
+  { path: '*',             element: <NotFoundPage /> },
+]);
+`,
+
+  'src/features/auth/LoginPage.jsx': `import { useState } from 'react';
+import { Navigate } from 'react-router-dom';
+import useAuthStore from '@/store/authStore';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+
+export default function LoginPage() {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const user            = useAuthStore((state) => state.user);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  if (isAuthenticated && user) {
+    switch (user.role) {
+      case 'responsable': return <Navigate to="/responsable/planning" replace />;
+      case 'enseignant':  return <Navigate to="/enseignant/planning"  replace />;
+      case 'etudiant':    return <Navigate to="/etudiant/planning"    replace />;
+      default:            return <Navigate to="/unauthorized"         replace />;
+    }
+  }
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-4">
+      <Card className="w-full max-w-md shadow-lg border border-border bg-card text-card-foreground">
+        <CardHeader className="space-y-1 text-center">
+          <CardTitle className="text-2xl font-bold tracking-tight">
+            EDT Université
+          </CardTitle>
+          <CardDescription>
+            Saisissez vos identifiants pour accéder à votre emploi du temps
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+
+            <div className="space-y-2">
+              <Label htmlFor="username">Identifiant de connexion</Label>
+              <Input
+                id="username"
+                type="text"
+                placeholder="Ex: mbemba"
+                className="w-full"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="password">Mot de passe</Label>
+              <Input
+                id="password"
+                type="password"
+                className="w-full"
+              />
+            </div>
+
+            {errorMessage && (
+              <div className="p-3 text-sm font-medium text-destructive bg-destructive/10 rounded-md border border-destructive/20">
+                {errorMessage}
+              </div>
+            )}
+
+            <Button
+              type="button"
+              onClick={() => {}}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-colors"
+            >
+              Se connecter
+            </Button>
+
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+`,
+
+  'src/components/ui/card.jsx': `import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+const Card = React.forwardRef(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn(
+      "rounded-lg border border-card bg-card text-card-foreground shadow-sm",
+      className
+    )}
+    {...props}
+  />
+))
+Card.displayName = "Card"
+
+const CardHeader = React.forwardRef(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("flex flex-col space-y-1.5 p-6", className)}
+    {...props}
+  />
+))
+CardHeader.displayName = "CardHeader"
+
+const CardTitle = React.forwardRef(({ className, ...props }, ref) => (
+  <h2
+    ref={ref}
+    className={cn(
+      "text-2xl font-semibold leading-none tracking-tight",
+      className
+    )}
+    {...props}
+  />
+))
+CardTitle.displayName = "CardTitle"
+
+const CardDescription = React.forwardRef(({ className, ...props }, ref) => (
+  <p
+    ref={ref}
+    className={cn("text-sm text-muted-foreground", className)}
+    {...props}
+  />
+))
+CardDescription.displayName = "CardDescription"
+
+const CardContent = React.forwardRef(({ className, ...props }, ref) => (
+  <div ref={ref} className={cn("p-6 pt-0", className)} {...props} />
+))
+CardContent.displayName = "CardContent"
+
+const CardFooter = React.forwardRef(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("flex items-center p-6 pt-0", className)}
+    {...props}
+  />
+))
+CardFooter.displayName = "CardFooter"
+
+export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }
+`,
+
+  'src/components/ui/button.jsx': `import * as React from "react"
+import { Slot } from "@radix-ui/slot"
+import { cva, type VariantProps } from "class-variance-authority"
+
+import { cn } from "@/lib/utils"
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        destructive:
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        outline:
+          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-10 px-4 py-2",
+        sm: "h-9 rounded-md px-3",
+        lg: "h-11 rounded-md px-8",
+        icon: "h-10 w-10",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  }
+)
+
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean
+}
+
+const Button = React.forwardRef(({ className, variant, size, asChild = false, ...props }, ref) => {
+  const Comp = asChild ? Slot : "button"
+  return (
+    <Comp
+      className={cn(buttonVariants({ variant, size, className }))}
+      ref={ref}
+      {...props}
+    />
+  )
+})
+Button.displayName = "Button"
+
+export { Button, buttonVariants }
+`,
+
+  'src/components/ui/input.jsx': `import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+const Input = React.forwardRef(
+  ({ className, type, ...props }, ref) => (
+    <input
+      type={type}
+      className={cn(
+        "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+        className
+      )}
+      ref={ref}
+      {...props}
+    />
+  )
+)
+Input.displayName = "Input"
+
+export { Input }
+`,
+
+  'src/components/ui/label.jsx': `import * as React from "react"
+import * as LabelPrimitive from "@radix-ui/label"
+import { cva, type VariantProps } from "class-variance-authority"
+
+import { cn } from "@/lib/utils"
+
+const labelVariants = cva(
+  "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+)
+
+const Label = React.forwardRef(
+  ({ className, ...props }, ref) => (
+    <LabelPrimitive.Root
+      ref={ref}
+      className={cn(labelVariants(), className)}
+      {...props}
+    />
+  )
+)
+Label.displayName = LabelPrimitive.Root.displayName
+
+export { Label }
+`,
+};
+
+// Create directories and files
+console.log('Creating project structure...\n');
+
+Object.entries(files).forEach(([filepath, content]) => {
+  const fullPath = path.join(__dirname, filepath);
+  const dir = path.dirname(fullPath);
+  
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`✓ Created directory: ${filepath.substring(0, filepath.lastIndexOf('/'))}`);
+  }
+
+  fs.writeFileSync(fullPath, content, 'utf8');
+  console.log(`✓ Created file: ${filepath}`);
+});
+
+console.log('\n✅ Project structure setup complete!');
+console.log('\nNext steps:');
+console.log('1. npm install');
+console.log('2. npm run dev');
+
+

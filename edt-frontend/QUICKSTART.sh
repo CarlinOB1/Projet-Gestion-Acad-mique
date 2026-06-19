@@ -1,0 +1,21 @@
+#!/bin/bash
+# Quick Start Guide - EDT Frontend
+
+echo "╔════════════════════════════════════════════════════════╗"
+echo "║         EDT FRONTEND - QUICK START                    ║"
+echo "╚════════════════════════════════════════════════════════╝"
+echo ""
+echo "3 simple steps to get your project running:"
+echo ""
+echo "1️⃣  Create all project files:"
+echo "   npm run setup"
+echo ""
+echo "2️⃣  Install dependencies:"
+echo "   npm install"
+echo ""
+echo "3️⃣  Start development:"
+echo "   npm run dev"
+echo ""
+echo "✨ Then open: http://localhost:3000"
+echo ""
+echo "For more details, see SETUP_INSTRUCTIONS.txt"
