@@ -27,10 +27,10 @@ const seanceSchema = z.object({
     const day = new Date(val + 'T00:00:00').getDay();
     return day !== 0;
   }, 'Les séances ne peuvent pas avoir lieu un dimanche'),
-  heure_debut:   z.string().min(1, "L'heure de début est requise")
-    .refine((val) => val >= '09:00', "L'heure de début doit être >= 09:00"),
-  heure_fin:     z.string().min(1, "L'heure de fin est requise")
-    .refine((val) => val <= '16:20', "L'heure de fin doit être <= 16:20"),
+  heure_debut: z.string().min(1, "L'heure de début est requise")
+    .refine((val) => val >= HEURE_MIN, `L'heure de début doit être >= ${HEURE_MIN}`),
+  heure_fin: z.string().min(1, "L'heure de fin est requise")
+    .refine((val) => val <= HEURE_MAX, `L'heure de fin doit être <= ${HEURE_MAX}`),
   type_seance:   z.enum(['CM', 'TD', 'TP'], {
     errorMap: () => ({ message: 'Le type doit être CM, TD ou TP' }),
   }),
@@ -197,14 +197,14 @@ export default function SeanceForm({
       {/* 6. Heure début */}
       <div className="space-y-2">
         <Label>Heure de début</Label>
-        <Input type="time" min="09:00" max="16:20" {...register('heure_debut')} />
+        <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_debut')} />
         {errors.heure_debut && <p className="text-xs text-destructive">{errors.heure_debut.message}</p>}
       </div>
 
       {/* 7. Heure fin */}
       <div className="space-y-2">
         <Label>Heure de fin</Label>
-        <Input type="time" min="09:00" max="16:20" {...register('heure_fin')} />
+        <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_fin')} />
         {errors.heure_fin && <p className="text-xs text-destructive">{errors.heure_fin.message}</p>}
       </div>
 

@@ -1,7 +1,8 @@
 export const ROLES = Object.freeze({
-  RESPONSABLE: 'responsable',
-  ENSEIGNANT: 'enseignant',
-  ETUDIANT: 'etudiant',
+   RESPONSABLE: 'responsable',
+   ENSEIGNANT: 'enseignant',
+   ETUDIANT: 'etudiant',
+   ADMIN: 'admin',
 });
 
 export const TYPE_SEANCE = Object.freeze({
@@ -51,6 +52,8 @@ export const STATUT_COLORS = Object.freeze({
     border: 'border-amber-300 dark:border-amber-800',
   },
 });
+
+export const RESPONSABLE_ROLES = Object.freeze([ROLES.RESPONSABLE, ROLES.ADMIN]);
 
 export const HEURE_MIN = '09:00';
 export const HEURE_MAX = '16:20';

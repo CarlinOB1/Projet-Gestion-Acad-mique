@@ -514,16 +514,18 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         Aligné sur Seance.MIN_HEURE_DEBUT :
         avant 09h00 est interdit, mais n'importe quelle heure >= 09h00 est valide.
         """
-        if value < time(9, 0):
+        if value < Seance.MIN_HEURE_DEBUT:
             raise serializers.ValidationError(
-                "Les séances ne peuvent pas commencer avant 09h00."
+                f"Les séances ne peuvent pas commencer avant "
+                f"{Seance.MIN_HEURE_DEBUT.strftime('%Hh:%M')}."
             )
         return value
 
     def validate_heure_fin(self, value):
-        if value > time(16, 20):
+        if value > Seance.HEURE_FIN_MAX:
             raise serializers.ValidationError(
-                "L'heure de fin ne peut pas dépasser 16h20."
+                f"L'heure de fin ne peut pas dépasser "
+                f"{Seance.HEURE_FIN_MAX.strftime('%Hh:%M')}."
             )
         return value
 
@@ -718,20 +720,22 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             )
 
         # Aligné sur MIN_HEURE_DEBUT : avant 09h00 interdit
-        if heure_debut_report < time(9, 0):
+        if heure_debut_report < Seance.MIN_HEURE_DEBUT:
             raise serializers.ValidationError(
                 {
                     'heure_debut_report': (
-                        "Le créneau de report ne peut pas commencer avant 09h00."
+                        f"Le créneau de report ne peut pas commencer avant "
+                        f"{Seance.MIN_HEURE_DEBUT.strftime('%Hh:%M')}."
                     )
                 }
             )
 
-        if heure_fin_report > time(16, 20):
+        if heure_fin_report > Seance.HEURE_FIN_MAX:
             raise serializers.ValidationError(
                 {
                     'heure_fin_report': (
-                        "L'heure de fin du report ne peut pas dépasser 16h20."
+                        f"L'heure de fin du report ne peut pas dépasser "
+                        f"{Seance.HEURE_FIN_MAX.strftime('%Hh:%M')}."
                     )
                 }
             )
@@ -807,16 +811,18 @@ class SeanceReportSerializer(serializers.Serializer):
         return value
 
     def validate_heure_debut_report(self, value):
-        if value < time(9, 0):
+        if value < Seance.MIN_HEURE_DEBUT:
             raise serializers.ValidationError(
-                "Le créneau de report ne peut pas commencer avant 09h00."
+                f"Le créneau de report ne peut pas commencer avant "
+                f"{Seance.MIN_HEURE_DEBUT.strftime('%Hh%M')}."
             )
         return value
 
     def validate_heure_fin_report(self, value):
-        if value > time(16, 20):
+        if value > Seance.HEURE_FIN_MAX:
             raise serializers.ValidationError(
-                "L'heure de fin du report ne peut pas dépasser 16h20."
+                f"L'heure de fin du report ne peut pas dépasser "
+                f"{Seance.HEURE_FIN_MAX.strftime('%Hh%M')}."
             )
         return value
 

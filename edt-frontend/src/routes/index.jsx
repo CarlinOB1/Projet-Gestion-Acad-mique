@@ -1,4 +1,5 @@
 // Arbre de routage — routes publiques, routes protégées par rôle et aiguillage racine
+import { RESPONSABLE_ROLES } from '@/lib/constants';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import useAuthStore from '@/store/authStore';
 import ProtectedRoute from './ProtectedRoute';
@@ -37,7 +38,7 @@ export const router = createBrowserRouter([
   // ── Responsable ──────────────────────────────────────────────────────────
   {
     path: '/responsable',
-    element: <ProtectedRoute allowedRoles={['responsable']} />,
+    element: <ProtectedRoute allowedRoles={RESPONSABLE_ROLES} />,
     children: [
       {
         element: <AppShell />,

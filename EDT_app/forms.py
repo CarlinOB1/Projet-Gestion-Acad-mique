@@ -24,6 +24,22 @@ class SemestreAdminForm(forms.ModelForm):
     """
     Formulaire avec widget calendrier et avertissement
     non bloquant sur la durée du semestre.
+    Note de cohérence (volontaire) :
+    Cette vérification n'existe qu'ici, dans l'admin Django, et nulle part
+    ailleurs (ni dans Seance.clean()/serializers.py, ni dans le formulaire
+    React SeanceForm.jsx). C'est intentionnel : le samedi n'est PAS interdit
+    en tant que règle métier (contrairement au dimanche, qui est bloqué
+    partout sans dérogation possible). Cet avertissement est un garde-fou
+    de saisie manuelle réservé au responsable pédagogique lorsqu'il
+    planifie exceptionnellement une séance via l'admin Django — il ne doit
+    pas être répliqué côté API/frontend, qui restent volontairement plus
+    permissifs pour ne pas freiner les flux automatisés.
+    Note de cohérence (volontaire) : même logique que SeanceAdminForm
+    ci-dessous — ce garde-fou de saisie manuelle (durée < 4 mois) n'existe
+    qu'à l'admin Django, pas dans Semestre.clean() ni dans l'API REST.
+    La validation stricte (date_debut < date_fin, bornes de l'année
+    académique) reste, elle, appliquée à tous les niveaux ; seule cette
+    règle de durée recommandée est spécifique à l'admin.
     """
     confirmer_duree = forms.BooleanField(
         required=False,

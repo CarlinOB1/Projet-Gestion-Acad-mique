@@ -14,13 +14,14 @@ import { Input }  from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label }  from '@/components/ui/label';
 import { useReporterSeance } from '@/hooks/useSeanceMutations';
+import { HEURE_MIN, HEURE_MAX } from '@/lib/constants'; 
 
 const reportSchema = z.object({
   date_report:        z.string().min(1, 'La date de report est requise'),
   heure_debut_report: z.string().min(1, "L'heure de début est requise")
-    .refine((v) => v >= '09:00', "L'heure de début doit être >= 09:00"),
-  heure_fin_report:   z.string().min(1, "L'heure de fin est requise")
-    .refine((v) => v <= '16:20', "L'heure de fin doit être <= 16:20"),
+    .refine((v) => v >= HEURE_MIN, `L'heure de début doit être >= ${HEURE_MIN}`),
+  heure_fin_report: z.string().min(1, "L'heure de fin est requise")
+    .refine((v) => v <= HEURE_MAX, `L'heure de fin doit être <= ${HEURE_MAX}`),
 }).refine((d) => d.heure_fin_report > d.heure_debut_report, {
   message: "L'heure de fin doit être supérieure à l'heure de début",
   path: ['heure_fin_report'],
@@ -42,13 +43,13 @@ export default function ReportDrawer({ open, onClose, seance }) {
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm({
     resolver: zodResolver(reportSchema),
-    defaultValues: { date_report: '', heure_debut_report: '09:00', heure_fin_report: '10:30' },
+    defaultValues: { date_report: '', heure_debut_report: HEURE_MIN, heure_fin_report: HEURE_MAX },
   });
 
   useEffect(() => {
     if (open) {
       setServerError(null);
-      reset({ date_report: '', heure_debut_report: '09:00', heure_fin_report: '10:30' });
+      reset({ date_report: '', heure_debut_report: HEURE_MIN, heure_fin_report: HEURE_MAX });
     }
   }, [open, seance, reset]);
 
@@ -82,12 +83,12 @@ export default function ReportDrawer({ open, onClose, seance }) {
             </div>
             <div className="space-y-2">
               <Label>Nouvelle heure de début</Label>
-              <Input type="time" min="09:00" max="16:20" {...register('heure_debut_report')} />
+              <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_debut_report')} />
               {errors.heure_debut_report && <p className="text-xs text-destructive">{errors.heure_debut_report.message}</p>}
             </div>
             <div className="space-y-2">
               <Label>Nouvelle heure de fin</Label>
-              <Input type="time" min="09:00" max="16:20" {...register('heure_fin_report')} />
+              <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_fin_report')} />
               {errors.heure_fin_report && <p className="text-xs text-destructive">{errors.heure_fin_report.message}</p>}
             </div>
           </div>
