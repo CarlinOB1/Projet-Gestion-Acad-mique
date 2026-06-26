@@ -15,7 +15,7 @@ const extractList = (response) => {
 
 export const getFacultes = async (params) => {
   const response = await apiClient.get("/facultes/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getFaculteById = async (id) => {
@@ -44,7 +44,7 @@ export const removeFaculte = async (id) => {
 
 export const getDepartements = async (params) => {
   const response = await apiClient.get("/departements/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getDepartementById = async (id) => {
@@ -73,7 +73,7 @@ export const removeDepartement = async (id) => {
 
 export const getFilieres = async (params) => {
   const response = await apiClient.get("/filieres/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getFiliereById = async (id) => {
@@ -102,7 +102,7 @@ export const removeFiliere = async (id) => {
 
 export const getParcours = async (params) => {
   const response = await apiClient.get("/parcours/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getParcoursById = async (id) => {
@@ -131,7 +131,7 @@ export const removeParcours = async (id) => {
 
 export const getAnnees = async (params) => {
   const response = await apiClient.get("/annees/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getAnneeById = async (id) => {
@@ -194,7 +194,7 @@ export const removeSemestre = async (id) => {
 
 export const getClasses = async (params) => {
   const response = await apiClient.get("/classes/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getClasseById = async (id) => {
@@ -233,7 +233,7 @@ export const passerSemestre = async (classeId, semestreCibleId) => {
 
 export const getMatieres = async (params) => {
   const response = await apiClient.get("/matieres/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getMatiereById = async (id) => {
@@ -262,7 +262,7 @@ export const removeMatiere = async (id) => {
 
 export const getModules = async (params) => {
   const response = await apiClient.get("/modules/", { params });
-  return extractList(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getModuleById = async (id) => {

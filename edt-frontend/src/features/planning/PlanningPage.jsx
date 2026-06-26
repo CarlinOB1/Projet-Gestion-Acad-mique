@@ -49,10 +49,11 @@ export default function PlanningPage() {
     queryFn: async () => {
       const res = await apiClient.get("/semestres/");
       return res.data?.results ?? res.data;
-    }
+    },
+    staleTime: 1000 * 60 * 60,
   });
 
-    useEffect(() => {
+  useEffect(() => {
     if (semestres.length > 0 && !selectedSemestreId) {
       const actif = semestres.find((s) => s.annee?.statut === "active");
       setSelectedSemestreId(String(actif ? actif.id : semestres[0].id));

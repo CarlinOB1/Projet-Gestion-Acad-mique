@@ -2,17 +2,17 @@ import apiClient, { extractData } from '@/api/client';
 
 export const getSeances = async (params = {}) => {
   const response = await apiClient.get('/seances/', { params });
-  return extractData(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getMonPlanningEnseignant = async (params = {}) => {
   const response = await apiClient.get('/enseignants/mon_planning/', { params });
-  return extractData(response);
+  return response.data?.results ?? response.data;
 };
 
 export const getMonPlanningEtudiant = async (params = {}) => {
   const response = await apiClient.get('/etudiants/mon_planning/', { params });
-  return extractData(response);
+  return response.data?.results ?? response.data;
 };
 
 /**

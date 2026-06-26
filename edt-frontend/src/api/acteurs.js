@@ -5,8 +5,8 @@ import apiClient, { extractData } from "@/api/client";
 // ==========================================
 
 export const getEnseignants = async (params) => {
-  const response = await apiClient.get("/enseignants/", { params });
-  return extractData(response);
+  const response = await apiClient.get('/enseignants/', { params });
+  return response.data?.results ?? response.data;
 };
 
 export const getEnseignantById = async (id) => {
@@ -34,8 +34,8 @@ export const removeEnseignant = async (id) => {
 // ==========================================
 
 export const getEtudiants = async (params) => {
-  const response = await apiClient.get("/etudiants/", { params });
-  return extractData(response);
+  const response = await apiClient.get('/etudiants/', { params });
+  return response.data?.results ?? response.data;
 };
 
 export const getEtudiantById = async (id) => {
@@ -63,8 +63,8 @@ export const removeEtudiant = async (id) => {
 // ==========================================
 
 export const getProfils = async (params) => {
-  const response = await apiClient.get("/profils/", { params });
-  return extractData(response);
+  const response = await apiClient.get('/profils/', { params });
+  return response.data?.results ?? response.data;
 };
 
 export const getProfilById = async (id) => {

@@ -195,7 +195,7 @@ export default function EtudiantsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Étudiants</h1>
-          <p className="text-sm text-muted-foreground mt-1">Gestion administrative des dossiers étudiants.</p>
+          <p className="text-sm text-muted-foreground mt-1">Gestion administrative des étudiants.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg border border-border">
@@ -233,7 +233,7 @@ export default function EtudiantsPage() {
         isLoading={isLoading} isError={isError}
         onEdit={handleEdit}
         onDelete={(r) => deleteMutation.mutate(r.profil_id)}
-        emptyMessage="Aucun étudiant pour ces critères."
+        emptyMessage="Aucun étudiant enregistré."
       />
 
       {/* CORRECTION : props open/onClose/onConfirm/isPending */}
@@ -288,7 +288,7 @@ export default function EtudiantsPage() {
             </div>
             <div className="space-y-2">
               <Label>Téléphone</Label>
-              <Input name="telephone" value={formData.telephone} onChange={handleInput} placeholder="Optionnel" />
+              <Input name="telephone" value={formData.telephone} onChange={handleInput} />
             </div>
           </div>
 
