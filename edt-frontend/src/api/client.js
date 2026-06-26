@@ -8,7 +8,7 @@ const apiClient = axios.create({
 
 apiClient.interceptors.request.use(
   (config) => {
-    const token = useAuthStore.getState().accessToken;   // ← corrigé
+    const token = useAuthStore.getState().accessToken;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -26,7 +26,7 @@ apiClient.interceptors.response.use(
       originalRequest._isRetry = true;
 
       try {
-        const refreshToken = useAuthStore.getState().refreshToken;  // ← corrigé
+        const refreshToken = useAuthStore.getState().refreshToken;
 
         if (!refreshToken) {
           throw new Error('Aucun refresh token disponible dans le store.');
@@ -39,14 +39,14 @@ apiClient.interceptors.response.use(
         );
 
         const newAccessToken = response.data.access;
-        useAuthStore.getState().setAccessToken(newAccessToken);  // ← corrigé
+        useAuthStore.getState().setAccessToken(newAccessToken);
 
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return apiClient(originalRequest);
 
       } catch (refreshError) {
         console.error('Échec du refresh token — déconnexion forcée.', refreshError);
-        useAuthStore.getState().clearAuth();  // ← corrigé
+        useAuthStore.getState().clearAuth();
         window.location.href = '/login';
         return Promise.reject(refreshError);
       }
@@ -55,5 +55,23 @@ apiClient.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * Extrait les données depuis une réponse API paginée ou non.
+ * DRF renvoie { count, next, previous, results: [...] } quand la pagination est active.
+ * Cette fonction retourne toujours le tableau brut ou l'objet selon le cas.
+ *
+ * @param {import('axios').AxiosResponse} response
+ * @returns {any}
+ */
+export const extractData = (response) => {
+  const data = response.data;
+  // Réponse paginée DRF : { count, next, previous, results }
+  if (data && typeof data === 'object' && Array.isArray(data.results)) {
+    return response.data?.results ?? response.data;
+  }
+  // Réponse directe (tableau ou objet simple)
+  return data;
+};
 
 export default apiClient;

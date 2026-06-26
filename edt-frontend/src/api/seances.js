@@ -1,16 +1,18 @@
-import apiClient from '@/api/client';
+import apiClient, { extractData } from '@/api/client';
 
 export const getSeances = async (params = {}) => {
   const response = await apiClient.get('/seances/', { params });
-  return response.data;
+  return extractData(response);
 };
+
 export const getMonPlanningEnseignant = async (params = {}) => {
   const response = await apiClient.get('/enseignants/mon_planning/', { params });
-  return response.data;
+  return extractData(response);
 };
+
 export const getMonPlanningEtudiant = async (params = {}) => {
   const response = await apiClient.get('/etudiants/mon_planning/', { params });
-  return response.data;
+  return extractData(response);
 };
 
 /**
