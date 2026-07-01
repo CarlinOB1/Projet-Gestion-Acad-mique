@@ -1,6 +1,7 @@
 import axios from 'axios';
 import useAuthStore from '@/store/authStore';
 
+
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
@@ -9,13 +10,12 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     const token = useAuthStore.getState().accessToken;
+    console.log('[API] token:', token ? token.slice(0, 20) + '...' : 'NULL');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
-  },
-  (error) => Promise.reject(error)
-);
+    },);
 
 apiClient.interceptors.response.use(
   (response) => response,
@@ -75,3 +75,4 @@ export const extractData = (response) => {
 };
 
 export default apiClient;
+

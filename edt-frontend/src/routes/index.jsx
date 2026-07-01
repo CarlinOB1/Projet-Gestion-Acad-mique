@@ -11,6 +11,8 @@ import ModulesPage from '@/features/academique/ModulesPage';
 import ClassesPage from '@/features/academique/ClassesPage';
 import EnseignantsPage from '@/features/acteurs/EnseignantsPage';
 import EtudiantsPage from '@/features/acteurs/EtudiantsPage';
+import TrombinoscopePage from '@/features/trombinoscope/TrombinoscopePage';
+import ProgressionPage from '@/features/progression/ProgressionPage';
 
 const NotFoundPage = () => <div className="p-8 text-center text-muted-foreground"><h3>404 — Page introuvable</h3></div>;
 const UnauthorizedPage = () => <div className="p-8 text-center text-destructive"><h3>403 — Accès non autorisé</h3></div>;
@@ -18,16 +20,16 @@ const UnauthorizedPage = () => <div className="p-8 text-center text-destructive"
 // Dans ton fichier index.jsx
 function RootRedirect() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const user            = useAuthStore((state) => state.user);
+  const user = useAuthStore((state) => state.user);
 
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
   switch (user?.role) {
     case 'admin':
     case 'responsable': return <Navigate to="/responsable/planning" replace />;
-    case 'enseignant':  return <Navigate to="/enseignant/planning"  replace />;
-    case 'etudiant':    return <Navigate to="/etudiant/planning"    replace />;
-    default:            return <Navigate to="/unauthorized"         replace />;
+    case 'enseignant': return <Navigate to="/enseignant/planning" replace />;
+    case 'etudiant': return <Navigate to="/etudiant/planning" replace />;
+    default: return <Navigate to="/unauthorized" replace />;
   }
 }
 
@@ -85,7 +87,9 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
+          { path: 'enseignants', element: <TrombinoscopePage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
+          { path: 'progression', element: <ProgressionPage /> }, 
         ],
       },
     ],
