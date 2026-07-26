@@ -56,3 +56,15 @@ export const reporterSeance = async (id, data) => {
   const response = await apiClient.patch(`/seances/${id}/reporter/`, data);
   return response.data;
 };
+
+/**
+ * Récupère les séances en conflit pour un semestre donné.
+ * @param {string|number} semestreId
+ * @returns {Promise<{ count: number, results: Array<Object> }>}
+ */
+export const getConflitsSeances = async (semestreId) => {
+  const response = await apiClient.get('/seances/conflits/', {
+    params: { semestre_id: semestreId },
+  });
+  return response.data;
+};

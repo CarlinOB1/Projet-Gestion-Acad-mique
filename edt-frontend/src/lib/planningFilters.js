@@ -1,51 +1,34 @@
 /**
  * @file planningFilters.js
- * @description Filtrage client des événements de planning (FullCalendar) et
- * dérivation des listes d'options disponibles (enseignants) pour peupler
- * dynamiquement les filtres, sans appel réseau supplémentaire.
+ * @description Filtrage côté client des événements de planning (recherche texte,
+ * type de séance, enseignant, statut) + dérivation des options disponibles.
  */
-
-export const DEFAULT_CRITERIA = {
-    search: '',
-    typeSeance: 'all',
-    enseignantId: 'all',
-    statut: 'all',
-};
 
 /**
- * Filtre une liste d'événements selon des critères combinés.
- * Un critère vide ou "all" est ignoré.
- *
+ * Filtre une liste d'événements FullCalendar selon des critères combinés.
  * @param {Array} events
- * @param {{ search?: string, typeSeance?: string, enseignantId?: string, statut?: string }} criteria
+ * @param {{ search?: string, typeSeance?: string, enseignantId?: string, statut?: string }} filters
  * @returns {Array}
  */
-export function filterPlanningEvents(events = [], criteria = DEFAULT_CRITERIA) {
-    const { search = '', typeSeance = 'all', enseignantId = 'all', statut = 'all' } = criteria;
-    const normalizedSearch = search.trim().toLowerCase();
+export function applyPlanningFilters(events = [], filters = {}) {
+    const { search = '', typeSeance = '', enseignantId = '', statut = '' } = filters;
+    const searchLower = search.trim().toLowerCase();
 
     return events.filter((event) => {
-        const seance = event?.extendedProps || {};
+        const seance = event.extendedProps || {};
 
-        if (normalizedSearch) {
+        if (searchLower) {
             const libelle = seance.module?.libelle?.toLowerCase() || '';
-            if (!libelle.includes(normalizedSearch)) return false;
+            if (!libelle.includes(searchLower)) return false;
         }
 
-        if (typeSeance !== 'all' && seance.type_seance !== typeSeance) {
+        if (typeSeance && seance.type_seance !== typeSeance) return false;
+
+        if (enseignantId && String(seance.enseignant?.profil_id) !== String(enseignantId)) {
             return false;
         }
 
-        if (
-            enseignantId !== 'all' &&
-            String(seance.enseignant?.profil_id) !== String(enseignantId)
-        ) {
-            return false;
-        }
-
-        if (statut !== 'all' && seance.statut !== statut) {
-            return false;
-        }
+        if (statut && seance.statut !== statut) return false;
 
         return true;
     });
@@ -53,26 +36,31 @@ export function filterPlanningEvents(events = [], criteria = DEFAULT_CRITERIA) {
 
 /**
  * Dérive la liste des enseignants distincts présents dans les événements,
- * pour peupler le select "Enseignant" sans appel réseau supplémentaire.
- *
+ * pour peupler dynamiquement le select (pas de valeurs figées côté front).
  * @param {Array} events
  * @returns {Array<{ id, nom_complet }>}
  */
-export function getEnseignantsFromEvents(events = []) {
+export function getEnseignantsDisponibles(events = []) {
     const map = new Map();
-
     events.forEach((event) => {
-        const enseignant = event?.extendedProps?.enseignant;
-        if (!enseignant?.profil_id) return;
-        if (!map.has(enseignant.profil_id)) {
+        const enseignant = event.extendedProps?.enseignant;
+        if (enseignant?.profil_id && !map.has(enseignant.profil_id)) {
             map.set(enseignant.profil_id, {
                 id: enseignant.profil_id,
                 nom_complet: enseignant.nom_complet || 'Enseignant',
             });
         }
     });
+    return Array.from(map.values()).sort((a, b) => a.nom_complet.localeCompare(b.nom_complet));
+}
 
-    return Array.from(map.values()).sort((a, b) =>
-        a.nom_complet.localeCompare(b.nom_complet)
-    );
+export const FILTRES_VIDES = {
+    search: '',
+    typeSeance: '',
+    enseignantId: '',
+    statut: '',
+};
+
+export function aDesFiltresActifs(filters) {
+    return Object.values(filters).some((v) => v !== '');
 }

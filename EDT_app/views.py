@@ -498,6 +498,34 @@ class SeanceViewSet(BaseViewSet):
         enseignant_id = self.request.query_params.get('enseignant_id')
         semestre_id   = self.request.query_params.get('semestre_id')
         statut        = self.request.query_params.get('statut')
+        type_seance   = self.request.query_params.get('type_seance')   # ← ajouté
+        date_debut    = self.request.query_params.get('date_debut')
+        date_fin      = self.request.query_params.get('date_fin')
+        annee_id      = self.request.query_params.get('annee_id')
+
+        if classe_id:
+            qs = qs.filter(classe_id=classe_id)
+        if enseignant_id:
+            qs = qs.filter(enseignant_id=enseignant_id)
+        if semestre_id:
+            qs = qs.filter(classe__semestre_id=semestre_id)
+        if statut:
+            qs = qs.filter(statut=statut)
+        if type_seance:                                                # ← ajouté
+            qs = qs.filter(type_seance=type_seance)
+        if date_debut:
+            qs = qs.filter(date_seance__gte=date_debut)
+        if date_fin:
+            qs = qs.filter(date_seance__lte=date_fin)
+        if annee_id:
+            qs = qs.filter(annee_id=annee_id)
+
+        return qs.order_by('date_seance', 'heure_debut')
+        qs            = super().get_queryset()
+        classe_id     = self.request.query_params.get('classe_id')
+        enseignant_id = self.request.query_params.get('enseignant_id')
+        semestre_id   = self.request.query_params.get('semestre_id')
+        statut        = self.request.query_params.get('statut')
         date_debut    = self.request.query_params.get('date_debut')
         date_fin      = self.request.query_params.get('date_fin')
         annee_id      = self.request.query_params.get('annee_id')

@@ -43,10 +43,12 @@ export default function PlanningPage() {
   const { data: semestres = [], isLoading: isLoadingSemestres, isError: isErrorSemestres } =
     useQuery({
       queryKey: ['semestres'],
-      queryFn: async () => (await apiClient.get('/semestres/')).data,
+      queryFn: async () => {
+        const response = await apiClient.get('/semestres/');
+        return response.data?.results ?? response.data;
+      },
       staleTime: 1000 * 60 * 60,
     });
-
   useEffect(() => {
     if (semestres.length > 0 && !selectedSemestreId) {
       const actif = semestres.find((s) => s.annee?.statut === 'active');

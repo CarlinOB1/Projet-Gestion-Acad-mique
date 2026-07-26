@@ -13,17 +13,17 @@ import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Input }  from '@/components/ui/input';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Label }  from '@/components/ui/label';
+import { Label } from '@/components/ui/label';
 
 const seanceSchema = z.object({
-  semestre_id:   z.string().min(1, 'Le semestre est requis'),
-  filiere_id:    z.string().min(1, 'La filière est requise'),
-  classe_id:     z.string().min(1, 'La classe est requise'),
-  module_id:     z.string().min(1, 'Le module est requis'),
+  semestre_id: z.string().min(1, 'Le semestre est requis'),
+  filiere_id: z.string().min(1, 'La filière est requise'),
+  classe_id: z.string().min(1, 'La classe est requise'),
+  module_id: z.string().min(1, 'Le module est requis'),
   enseignant_id: z.string().min(1, "L'enseignant est requis"),
-  date_seance:   z.string().min(1, 'La date est requise').refine((val) => {
+  date_seance: z.string().min(1, 'La date est requise').refine((val) => {
     const day = new Date(val + 'T00:00:00').getDay();
     return day !== 0;
   }, 'Les séances ne peuvent pas avoir lieu un dimanche'),
@@ -31,7 +31,7 @@ const seanceSchema = z.object({
     .refine((val) => val >= HEURE_MIN, `L'heure de début doit être >= ${HEURE_MIN}`),
   heure_fin: z.string().min(1, "L'heure de fin est requise")
     .refine((val) => val <= HEURE_MAX, `L'heure de fin doit être <= ${HEURE_MAX}`),
-  type_seance:   z.enum(['CM', 'TD', 'TP'], {
+  type_seance: z.enum(['CM', 'TD', 'TP'], {
     errorMap: () => ({ message: 'Le type doit être CM, TD ou TP' }),
   }),
 }).refine((data) => data.heure_fin > data.heure_debut, {
@@ -49,15 +49,15 @@ export default function SeanceForm({
   const { register, handleSubmit, control, setValue, formState: { errors } } = useForm({
     resolver: zodResolver(seanceSchema),
     defaultValues: {
-      semestre_id:   semestreId ? String(semestreId) : '',
-      filiere_id:    '',
-      classe_id:     '',
-      module_id:     '',
+      semestre_id: semestreId ? String(semestreId) : '',
+      filiere_id: '',
+      classe_id: '',
+      module_id: '',
       enseignant_id: '',
-      date_seance:   '',
-      heure_debut:   '09:00',
-      heure_fin:     '10:30',
-      type_seance:   'CM',
+      date_seance: '',
+      heure_debut: '09:00',
+      heure_fin: '10:30',
+      type_seance: 'CM',
       ...defaultValues,
     },
   });
@@ -80,13 +80,23 @@ export default function SeanceForm({
   useEffect(() => {
     if (defaultValues) {
       if (defaultValues.filiere_id) setSelectedFiliereId(defaultValues.filiere_id);
-      if (defaultValues.classe_id)  setSelectedClasseId(defaultValues.classe_id);
-      if (defaultValues.module_id)  setSelectedModuleId(defaultValues.module_id);
+      if (defaultValues.classe_id) setSelectedClasseId(defaultValues.classe_id);
+      if (defaultValues.module_id) setSelectedModuleId(defaultValues.module_id);
     }
   }, [defaultValues, setSelectedFiliereId, setSelectedClasseId, setSelectedModuleId]);
 
+  const onFormSubmit = (formData) => {
+    const classeSelectionnee = classes.find(
+      (c) => String(c.id) === String(formData.classe_id)
+    );
+    onSubmit({
+      ...formData,
+      annee_id: classeSelectionnee?.annee?.id,
+    });
+  };
+
   const getHeuresColor = (h) => {
-    if (h > 4)  return 'text-green-600 dark:text-green-400';
+    if (h > 4) return 'text-green-600 dark:text-green-400';
     if (h >= 1) return 'text-orange-600 dark:text-orange-400';
     return 'text-red-600 dark:text-red-400';
   };
@@ -174,7 +184,7 @@ export default function SeanceForm({
             </SelectTrigger>
             <SelectContent>
               {enseignants.map((e) => (
-                <SelectItem key={e.profil_id} value={String(e.profil_id)}>
+                <SelectItem key={e.profil.user.id} value={String(e.profil.user.id)}>
                   {e.grade ? `[${e.grade}] ` : ''}{e.nom_complet}
                 </SelectItem>
               ))}
@@ -233,7 +243,7 @@ export default function SeanceForm({
       )}
 
       {/* 10. Submit */}
-      <Button className="w-full" onClick={handleSubmit(onSubmit)} disabled={isPending}>
+      <Button className="w-full" onClick={handleSubmit(onFormSubmit)} disabled={isPending}>
         {isPending ? 'Enregistrement...' : 'Enregistrer'}
       </Button>
 
