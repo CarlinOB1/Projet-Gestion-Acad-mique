@@ -28,7 +28,8 @@ export default function DataTable({
   emptyMessage = "Aucune donnée disponible"
 }) {
   // Calcul du nombre total de colonnes (colonnes de données + colonne Actions)
-  const totalColumns = columns.length + 1;
+  const hasRowActions = Boolean(onEdit || onDelete);
+  const totalColumns = columns.length + (hasRowActions ? 1 : 0);
 
   /**
    * Gère la confirmation de suppression avant d'exécuter le callback
@@ -52,9 +53,11 @@ export default function DataTable({
                 {col.label}
               </TableHead>
             ))}
-            <TableHead className="text-xs uppercase font-semibold text-muted-foreground text-right h-10 w-[100px]">
-              Actions
-            </TableHead>
+            {hasRowActions && (
+              <TableHead className="text-xs uppercase font-semibold text-muted-foreground text-right h-10 w-[100px]">
+                Actions
+              </TableHead>
+            )}
           </TableRow>
         </TableHeader>
         
@@ -109,31 +112,34 @@ export default function DataTable({
                   </TableCell>
                 ))}
                 
+                
                 {/* Cellule d'actions */}
-                <TableCell className="py-2 text-right whitespace-nowrap space-x-1">
-                  {onEdit && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onEdit(row)}
-                    >
-                      <Pencil className="h-4 w-4 mr-1.5" />
-                      Modifier
-                    </Button>
-                  )}
-                  
-                  {onDelete && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                      onClick={() => handleDeleteClick(row)}
-                    >
-                      <Trash2 className="h-4 w-4 mr-1.5" />
-                      Supprimer
-                    </Button>
-                  )}
-                </TableCell>
+                {hasRowActions && (
+                  <TableCell className="py-2 text-right whitespace-nowrap space-x-1">
+                    {onEdit && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onEdit(row)}
+                      >
+                        <Pencil className="h-4 w-4 mr-1.5" />
+                        Modifier
+                      </Button>
+                    )}
+                    
+                    {onDelete && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => handleDeleteClick(row)}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1.5" />
+                        Supprimer
+                      </Button>
+                    )}
+                  </TableCell>
+                )}
               </TableRow>
             ))
           )}

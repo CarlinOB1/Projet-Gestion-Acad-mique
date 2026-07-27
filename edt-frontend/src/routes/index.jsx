@@ -38,7 +38,7 @@ export const router = createBrowserRouter([
   // ── Responsable ──────────────────────────────────────────────────────────
   {
     path: '/responsable',
-    element: <ProtectedRoute allowedRoles={['responsable']} />,
+    element: <ProtectedRoute allowedRoles={['responsable', 'admin']} />,
     children: [
       {
         element: <AppShell />,

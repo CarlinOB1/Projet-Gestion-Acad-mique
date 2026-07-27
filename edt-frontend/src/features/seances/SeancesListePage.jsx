@@ -5,7 +5,6 @@
  */
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, ChevronsDown, ChevronsUp } from 'lucide-react';
 import { getSeances } from '@/api/seances';
 import { getSemestres, getClasses } from '@/api/academique';
 import { getEnseignants } from '@/api/acteurs';
@@ -17,9 +16,9 @@ import SeanceDrawer from './SeanceDrawer';
 import ReportDrawer from './ReportDrawer';
 import { Button } from '@/components/ui/button';
 import { useSeanceConflits } from '@/hooks/useSeanceConflits';
-import { Download } from 'lucide-react';
 import { exportToCsv } from '@/lib/exportCsv';
 import { formatDate, formatHeure } from '@/lib/utils';
+import { Plus, ChevronsDown, ChevronsUp, Download } from 'lucide-react';
 
 const DEFAULT_FILTERS = {
     semestreId: '',
@@ -38,7 +37,6 @@ const buildApiParams = (filters) => {
     if (filters.classeId !== 'all') params.classe_id = filters.classeId;
     if (filters.enseignantId !== 'all') params.enseignant_id = filters.enseignantId;
     if (filters.statut !== 'all') params.statut = filters.statut;
-    if (filters.typeSeance !== 'all') params.type_seance = filters.typeSeance;
     if (filters.dateDebut) params.date_debut = filters.dateDebut;
     if (filters.dateFin) params.date_fin = filters.dateFin;
     return params;
@@ -97,13 +95,22 @@ export default function SeancesListePage() {
 
     // ── Filtrage texte libre côté client ─────────────────────────────────────
     const seancesFiltrees = useMemo(() => {
-        if (!searchTerm.trim()) return seances;
-        const term = searchTerm.trim().toLowerCase();
-        return seances.filter((s) =>
-            s.module?.libelle?.toLowerCase().includes(term) ||
-            s.enseignant?.nom_complet?.toLowerCase().includes(term)
-        );
-    }, [seances, searchTerm]);
+        let result = seances;
+
+        if (filters.typeSeance !== 'all') {
+            result = result.filter((s) => s.type_seance === filters.typeSeance);
+        }
+
+        if (searchTerm.trim()) {
+            const term = searchTerm.trim().toLowerCase();
+            result = result.filter((s) =>
+                s.module?.libelle?.toLowerCase().includes(term) ||
+                s.enseignant?.nom_complet?.toLowerCase().includes(term)
+            );
+        }
+
+        return result;
+    }, [seances, filters.typeSeance, searchTerm]);
 
     const { classes: classesGroupees } = useSeancesGrouped(seancesFiltrees);
 
@@ -202,25 +209,12 @@ export default function SeancesListePage() {
                 semestres={semestres}
                 classes={classes}
                 enseignants={enseignants}
+                resultCount={seancesFiltrees.length}
+                hasResults={classesGroupees.length > 0}
+                onExportCsv={handleExportCsv}
+                onDeplierTout={handleDeplierTout}
+                onReplierTout={handleReplierTout}
             />
-
-            <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">
-                    {seancesFiltrees.length} séance{seancesFiltrees.length > 1 ? 's' : ''} affichée{seancesFiltrees.length > 1 ? 's' : ''}
-                </p>
-                {classesGroupees.length > 0 && (
-                    <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm" onClick={handleDeplierTout}>
-                            <ChevronsDown className="h-4 w-4 mr-1.5" />
-                            Tout déplier
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={handleReplierTout}>
-                            <ChevronsUp className="h-4 w-4 mr-1.5" />
-                            Tout replier
-                        </Button>
-                    </div>
-                )}
-            </div>
 
             <div className="flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
