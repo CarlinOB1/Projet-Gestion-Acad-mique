@@ -33,12 +33,6 @@ export default function SeancesFiltersBar({
     semestres = [],
     classes = [],
     enseignants = [],
-
-    resultCount = 0,
-    hasResults = false,
-    onExportCsv,
-    onDeplierTout,
-    onReplierTout,
 }) {
     const activeFilterCount = useMemo(() => {
         return ['classeId', 'enseignantId', 'statut', 'typeSeance']
@@ -50,7 +44,7 @@ export default function SeancesFiltersBar({
     return (
         <div className="bg-card rounded-xl border border-border/60 p-4 space-y-3">
 
-            {/* Ligne 1 : recherche + filtres */}
+            {/* Ligne 1 : recherche + semestre + filtres */}
             <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -61,6 +55,19 @@ export default function SeancesFiltersBar({
                         className="pl-8"
                     />
                 </div>
+
+                <Select value={filters.semestreId} onValueChange={(v) => onFilterChange('semestreId', v)}>
+                    <SelectTrigger className="h-9 rounded-full bg-primary/10 border-none text-primary font-medium px-4 w-auto">
+                        <SelectValue placeholder="Sélectionner un semestre" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {semestres.map((s) => (
+                            <SelectItem key={s.id} value={String(s.id)}>
+                                {s.libelle} — {s.annee?.libelle || 'Année inconnue'}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
 
                 <Popover>
                     <PopoverTrigger asChild>
@@ -155,47 +162,6 @@ export default function SeancesFiltersBar({
                         )}
                     </PopoverContent>
                 </Popover>
-            </div>
-
-            {/* Ligne 2 : chip semestre */}
-            <Select value={filters.semestreId} onValueChange={(v) => onFilterChange('semestreId', v)}>
-                <SelectTrigger className="h-7 rounded-full bg-primary/10 border-none text-primary font-medium px-3 w-auto">
-                    <SelectValue placeholder="Sélectionner un semestre" />
-                </SelectTrigger>
-                <SelectContent>
-                    {semestres.map((s) => (
-                        <SelectItem key={s.id} value={String(s.id)}>
-                            {s.libelle} — {s.annee?.libelle || 'Année inconnue'}
-                        </SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
-
-            {/* Ligne 3 : compteur + actions (seule occurrence) */}
-            <div className="flex items-center justify-between border-t border-border pt-3">
-                <p className="text-sm text-muted-foreground">
-                    {resultCount} séance{resultCount > 1 ? 's' : ''} affichée{resultCount > 1 ? 's' : ''}
-                </p>
-                <div className="flex items-center gap-2">
-                    {resultCount > 0 && onExportCsv && (
-                        <Button variant="outline" size="sm" onClick={onExportCsv}>
-                            <Download className="h-4 w-4 mr-1.5" />
-                            Exporter CSV
-                        </Button>
-                    )}
-                    {hasResults && (
-                        <>
-                            <Button variant="ghost" size="sm" onClick={onDeplierTout}>
-                                <ChevronsDown className="h-4 w-4 mr-1.5" />
-                                Tout déplier
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={onReplierTout}>
-                                <ChevronsUp className="h-4 w-4 mr-1.5" />
-                                Tout replier
-                            </Button>
-                        </>
-                    )}
-                </div>
             </div>
         </div>
     );

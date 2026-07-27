@@ -209,11 +209,6 @@ export default function SeancesListePage() {
                 semestres={semestres}
                 classes={classes}
                 enseignants={enseignants}
-                resultCount={seancesFiltrees.length}
-                hasResults={classesGroupees.length > 0}
-                onExportCsv={handleExportCsv}
-                onDeplierTout={handleDeplierTout}
-                onReplierTout={handleReplierTout}
             />
 
             <div className="flex items-center justify-between">
