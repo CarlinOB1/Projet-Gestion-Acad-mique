@@ -291,6 +291,25 @@ class ProfilViewSet(BaseViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[IsAuthenticated, ProfilActifPermission],
+        url_path='me',
+    )
+    def me(self, request):
+        """Retourne le profil complet de l'utilisateur connecté."""
+        profil = request.user.profil
+        data = ProfilSerializer(profil).data
+        
+        # Enrichissement avec les données spécifiques au rôle
+        if hasattr(profil, 'enseignant'):
+            data['enseignant'] = EnseignantSerializer(profil.enseignant).data
+        elif hasattr(profil, 'etudiant'):
+            data['etudiant'] = EtudiantSerializer(profil.etudiant).data
+            
+        return Response(data, status=status.HTTP_200_OK)
+
 
 class EnseignantViewSet(BaseViewSet):
     """

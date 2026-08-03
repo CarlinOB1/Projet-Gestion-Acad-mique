@@ -63,14 +63,6 @@ export default function Sidebar() {
 
       {/* Pied de page */}
       <div className="p-4 border-t border-border bg-muted/20 space-y-3">
-        <div className="flex flex-col gap-1 px-2">
-          <p className="text-xs font-semibold text-foreground truncate">
-            {user?.nom_complet || 'Utilisateur'}
-          </p>
-          <div className="w-fit px-2 py-0.5 rounded text-[11px] font-medium bg-secondary text-secondary-foreground border border-border">
-            {displayRole}
-          </div>
-        </div>
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-destructive rounded-md hover:bg-destructive/10 transition-colors duration-150 text-left"

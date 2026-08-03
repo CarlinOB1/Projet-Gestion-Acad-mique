@@ -13,6 +13,7 @@ import EnseignantsPage from '@/features/acteurs/EnseignantsPage';
 import EtudiantsPage from '@/features/acteurs/EtudiantsPage';
 import TrombinoscopePage from '@/features/trombinoscope/TrombinoscopePage';
 import ProgressionPage from '@/features/progression/ProgressionPage';
+import ProfilPage from '@/features/profil/ProfilPage';
 
 const NotFoundPage = () => <div className="p-8 text-center text-muted-foreground"><h3>404 — Page introuvable</h3></div>;
 const UnauthorizedPage = () => <div className="p-8 text-center text-destructive"><h3>403 — Accès non autorisé</h3></div>;
@@ -55,6 +56,7 @@ export const router = createBrowserRouter([
           { path: 'organisation', element: <OrganisationPage /> },
           { path: 'enseignants', element: <EnseignantsPage /> },
           { path: 'etudiants', element: <EtudiantsPage /> },
+          { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
       },
@@ -73,6 +75,7 @@ export const router = createBrowserRouter([
           { path: 'planning', element: <PlanningPage /> },
           { path: 'seances', element: <SeancesListePage /> },
           { path: 'classes', element: <ClassesPage /> },
+          { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
       },
@@ -90,6 +93,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
           { path: 'seances', element: <div className="p-6"><h3>Mes séances</h3></div> },
+          { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
       },
@@ -108,6 +112,7 @@ export const router = createBrowserRouter([
           { path: 'planning', element: <PlanningPage /> },
           { path: 'enseignants', element: <TrombinoscopePage /> },
           { path: 'progression', element: <ProgressionPage /> },
+          { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
       },

@@ -1,9 +1,10 @@
 /**
  * Topbar — titre dynamique, bouton menu mobile, profil et badge de rôle.
  */
-import { useLocation } from 'react-router-dom';
-import { Menu } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { Menu, User } from 'lucide-react';
 import useAuthStore from '@/store/authStore';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { NAV_ITEMS } from '@/lib/navigation';
 
 export default function Topbar({ onMenuToggle }) {
@@ -46,14 +47,21 @@ export default function Topbar({ onMenuToggle }) {
       </div>
 
       <div className="flex items-center gap-3 text-right">
-        <div className="hidden sm:block">
-          <p className="text-sm font-medium text-foreground leading-none">
-            {user?.nom_complet}
-          </p>
-        </div>
-        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold border ${roleStyles[currentRole] || roleStyles.etudiant}`}>
-          {roleLabels[currentRole] || 'Étudiant'}
-        </span>
+        <Link to="profil" className="flex items-center gap-3 hover:bg-muted/50 px-3 py-2 rounded-lg transition-colors focus:outline-none">
+          <div className="hidden sm:block text-right">
+            <p className="text-base font-semibold text-foreground leading-tight">
+              {user?.nom_complet}
+            </p>
+            <span className={`mt-1.5 inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold border ${roleStyles[currentRole] || roleStyles.etudiant}`}>
+              {roleLabels[currentRole] || 'Étudiant'}
+            </span>
+          </div>
+          <Avatar className="h-10 w-10">
+            <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
+              {user?.first_name?.[0]}{user?.last_name?.[0] || <User className="h-4 w-4" />}
+            </AvatarFallback>
+          </Avatar>
+        </Link>
       </div>
 
     </header>

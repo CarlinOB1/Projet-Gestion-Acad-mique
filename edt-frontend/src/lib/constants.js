@@ -63,5 +63,5 @@ export const GESTIONNAIRE_ROLES = Object.freeze([
   ROLES.REFERENT_L1
 ]);
 
-export const HEURE_MIN = '09:00';
-export const HEURE_MAX = '16:20';
+export const HEURE_MIN = '07:30';
+export const HEURE_MAX = '18:30';

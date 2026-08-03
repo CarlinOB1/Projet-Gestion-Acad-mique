@@ -1,12 +1,13 @@
 /**
  * @file SeanceDetailsDialog.jsx
- * @description Boîte de dialogue en lecture seule affichant le détail complet
+ * @description Tiroir (Drawer) en lecture seule affichant le détail complet
  * d'une séance au clic, pour les rôles enseignant et étudiant.
+ * Design premium avec code couleur, icônes et sections distinctes.
  */
-import { Clock, User, Users, BookOpen, CalendarClock } from 'lucide-react';
+import { Clock, User, Users, BookOpen, CalendarClock, MapPin, Tag } from 'lucide-react';
 import {
     Dialog, DialogContent, DialogHeader,
-    DialogTitle, DialogDescription,
+    DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { SEANCE_COLORS, STATUT_COLORS } from '@/lib/constants';
@@ -19,7 +20,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
     if (!seance) return null;
 
     const {
-        module, enseignant, classe,
+        module, enseignant, classe, salle,
         type_seance, statut,
         date_seance, heure_debut, heure_fin,
         date_report, heure_debut_report, heure_fin_report,
@@ -33,17 +34,28 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
     };
 
     const estReportee = statut === 'Reportée';
+    const estAnnulee = statut === 'Annulée';
+
+    // Durée en minutes
+    const dureeMs = heure_debut && heure_fin
+        ? (() => {
+            const [h1, m1] = heure_debut.split(':').map(Number);
+            const [h2, m2] = heure_fin.split(':').map(Number);
+            return (h2 * 60 + m2) - (h1 * 60 + m1);
+        })()
+        : null;
 
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="sm:max-w-md gap-5">
+            <DialogContent className="sm:max-w-[460px] p-0 overflow-hidden gap-0">
 
-                <DialogHeader>
-                    <div className="flex items-center gap-2 mb-1">
-                        <span className={`px-1.5 py-0.5 rounded-sm text-xs font-semibold uppercase tracking-wide ${typeStyle.bg} ${typeStyle.text}`}>
+                {/* ── Header coloré selon le type ── */}
+                <div className={`px-6 pt-6 pb-5 ${typeStyle.bg} border-b border-black/5`}>
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                        <span className={`px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-widest ${typeStyle.text} bg-white/50 backdrop-blur-sm`}>
                             {type_seance}
                         </span>
-                        <Badge className={`${statutStyle.bg} ${statutStyle.text}`}>
+                        <Badge className={`${statutStyle.bg} ${statutStyle.text} border-0`}>
                             {statut}
                         </Badge>
                         {seance.is_mutualise && (
@@ -52,42 +64,60 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                             </Badge>
                         )}
                     </div>
-                    <DialogTitle className="text-lg">
-                        {module?.libelle || 'Séance sans titre'}
-                    </DialogTitle>
-                    {module?.description && (
-                        <DialogDescription>{module.description}</DialogDescription>
-                    )}
-                </DialogHeader>
+                    <DialogHeader>
+                        <DialogTitle className={`text-xl font-bold leading-tight ${typeStyle.text} ${estAnnulee ? 'line-through opacity-70' : ''}`}>
+                            {module?.libelle || 'Séance sans titre'}
+                        </DialogTitle>
+                        {module?.matiere?.libelle && (
+                            <p className={`text-sm mt-1 opacity-75 ${typeStyle.text}`}>
+                                {module.matiere.libelle}
+                            </p>
+                        )}
+                    </DialogHeader>
+                </div>
 
-                <div className="space-y-3 text-sm">
+                {/* ── Corps — informations détaillées ── */}
+                <div className="px-6 py-5 space-y-4">
 
-                    <div className="flex items-start gap-2.5">
-                        <Clock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                        <div>
+                    {/* Date & Heure */}
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/40">
+                        <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
+                            <Clock className="h-4 w-4 text-blue-500" />
+                        </div>
+                        <div className="min-w-0">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                                {estReportee ? 'Reporté au' : 'Date & Heure'}
+                            </p>
                             {estReportee ? (
                                 <>
-                                    <p className="text-muted-foreground line-through">
-                                        {formatDate(date_seance)} — {formatHeure(heure_debut)} à {formatHeure(heure_fin)}
+                                    <p className="text-sm text-muted-foreground line-through">
+                                        {formatDate(date_seance)} · {formatHeure(heure_debut)} – {formatHeure(heure_fin)}
                                     </p>
-                                    <p className="font-medium text-foreground flex items-center gap-1.5 mt-0.5">
-                                        <CalendarClock className="h-3.5 w-3.5 text-amber-600" />
-                                        {formatDate(date_report)} — {formatHeure(heure_debut_report)} à {formatHeure(heure_fin_report)}
+                                    <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 mt-1">
+                                        <CalendarClock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                                        {formatDate(date_report)} · {formatHeure(heure_debut_report)} – {formatHeure(heure_fin_report)}
                                     </p>
                                 </>
                             ) : (
-                                <p className="font-medium text-foreground">
-                                    {formatDate(date_seance)} — {formatHeure(heure_debut)} à {formatHeure(heure_fin)}
+                                <p className="text-sm font-semibold text-foreground">
+                                    {formatDate(date_seance)} · {formatHeure(heure_debut)} – {formatHeure(heure_fin)}
+                                    {dureeMs && (
+                                        <span className="ml-2 text-xs font-normal text-muted-foreground">({dureeMs}min)</span>
+                                    )}
                                 </p>
                             )}
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5">
-                        <User className="h-4 w-4 text-muted-foreground shrink-0" />
-                        <div>
-                            <p className="font-medium text-foreground">
-                                {enseignant?.nom_complet || 'Enseignant non assigné'}
+                    {/* Enseignant */}
+                    <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
+                        <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
+                            <User className="h-4 w-4 text-blue-500" />
+                        </div>
+                        <div className="min-w-0">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Enseignant</p>
+                            <p className="text-sm font-semibold text-foreground truncate">
+                                {enseignant?.nom_complet || 'Non assigné'}
                             </p>
                             {enseignant?.grade && (
                                 <p className="text-xs text-muted-foreground">{enseignant.grade}</p>
@@ -95,22 +125,47 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5">
-                        <Users className="h-4 w-4 text-muted-foreground shrink-0" />
-                        <p className="font-medium text-foreground">
-                            {classe?.libelle || 'Classe non renseignée'}
-                        </p>
+                    {/* Classe & Salle côte à côte */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
+                            <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
+                                <Users className="h-4 w-4 text-blue-500" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Classe</p>
+                                <p className="text-sm font-semibold text-foreground">
+                                    {classe?.libelle || classe?.code || 'Non renseignée'}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
+                            <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
+                                <MapPin className="h-4 w-4 text-blue-500" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Salle</p>
+                                <p className="text-sm font-semibold text-foreground">
+                                    {salle?.libelle || salle?.code || 'Non renseignée'}
+                                </p>
+                            </div>
+                        </div>
                     </div>
 
-                    {module?.matiere?.libelle && (
-                        <div className="flex items-center gap-2.5">
-                            <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <p className="text-foreground">{module.matiere.libelle}</p>
+                    {/* Module / Matière si non affiché dans le header */}
+                    {module?.code && (
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
+                            <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
+                                <Tag className="h-4 w-4 text-blue-500" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Code module</p>
+                                <p className="text-sm font-semibold text-foreground">{module.code}</p>
+                            </div>
                         </div>
                     )}
 
                 </div>
-
             </DialogContent>
         </Dialog>
     );

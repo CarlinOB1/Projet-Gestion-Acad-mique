@@ -67,6 +67,11 @@ export const getProfils = async (params) => {
   return response.data?.results ?? response.data;
 };
 
+export const getMonProfil = async () => {
+  const response = await apiClient.get('/profils/me/');
+  return response.data;
+};
+
 export const getProfilById = async (id) => {
   const response = await apiClient.get(`/profils/${id}/`);
   return response.data;
