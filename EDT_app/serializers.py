@@ -11,7 +11,7 @@ from EDT_app.models import (
     Faculte, Departement, Filiere, Parcours,
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
-    Matiere, Module, Seance,
+    Matiere, Module, Seance, ReferentClasse,
 )
 
 
@@ -64,10 +64,28 @@ class DepartementSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         source='faculte',
         write_only=True,
     )
+    # Chef de département : lecture seule (nom complet) + écriture via chef_id
+    chef    = serializers.SerializerMethodField(read_only=True)
+    chef_id = serializers.PrimaryKeyRelatedField(
+        queryset=Enseignant.objects.all(),
+        source='chef',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model  = Departement
-        fields = ['id', 'libelle', 'faculte', 'faculte_id']
+        fields = ['id', 'libelle', 'faculte', 'faculte_id', 'chef', 'chef_id']
+
+    def get_chef(self, obj):
+        if obj.chef:
+            return {
+                'id'         : obj.chef.profil.user.pk,
+                'nom_complet': f"{obj.chef.profil.user.last_name} {obj.chef.profil.user.first_name}".strip(),
+                'grade'      : obj.chef.grade,
+            }
+        return None
 
 
 class FiliereSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
@@ -222,28 +240,39 @@ class SemestreSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
 
 class ClasseSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
-    libelle      = serializers.CharField(read_only=True)
-    parcours     = ParcoursSerializer(read_only=True)
-    filiere      = FiliereSerializer(read_only=True)
-    semestre     = SemestreSerializer(read_only=True)
-    annee        = AnneeAcademiqueSerializer(read_only=True)
-    parcours_id  = serializers.PrimaryKeyRelatedField(
+    libelle     = serializers.CharField(read_only=True)
+    parcours    = ParcoursSerializer(read_only=True)
+    filiere     = FiliereSerializer(read_only=True)
+    semestre    = SemestreSerializer(read_only=True)
+    annee       = AnneeAcademiqueSerializer(read_only=True)
+    parcours_id = serializers.PrimaryKeyRelatedField(
         queryset=Parcours.objects.all(), source='parcours', write_only=True,
     )
-    filiere_id   = serializers.PrimaryKeyRelatedField(
-        queryset=Filiere.objects.all(), source='filiere', write_only=True,
+    # filiere_id est optionnel : null pour les classes L1 (MIP, BCG, PCG)
+    filiere_id  = serializers.PrimaryKeyRelatedField(
+        queryset=Filiere.objects.all(),
+        source='filiere',
+        write_only=True,
+        required=False,
+        allow_null=True,
     )
-    semestre_id  = serializers.PrimaryKeyRelatedField(
+    semestre_id = serializers.PrimaryKeyRelatedField(
         queryset=Semestre.objects.all(), source='semestre', write_only=True,
     )
-    annee_id     = serializers.PrimaryKeyRelatedField(
+    annee_id    = serializers.PrimaryKeyRelatedField(
         queryset=AnneeAcademique.objects.all(), source='annee', write_only=True,
+    )
+    # Champ code pour les classes L1 sans filière
+    code = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Code libre (MIP, BCG, PCG) pour les classes sans filière."
     )
 
     class Meta:
         model  = Classe
         fields = [
-            'id', 'libelle',
+            'id', 'libelle', 'code',
             'parcours', 'parcours_id',
             'filiere',  'filiere_id',
             'semestre', 'semestre_id',
@@ -253,6 +282,10 @@ class ClasseSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     def validate(self, data):
         semestre = data.get('semestre')
         annee    = data.get('annee')
+        filiere  = data.get('filiere')
+        code     = data.get('code', '').strip()
+
+        # Cohérence semestre / année
         if semestre and annee and semestre.annee != annee:
             raise serializers.ValidationError(
                 {
@@ -261,6 +294,11 @@ class ClasseSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
                         "sélectionnée."
                     )
                 }
+            )
+        # Au moins un identifiant requis
+        if not filiere and not code:
+            raise serializers.ValidationError(
+                {'code': "Une classe L1 doit avoir un code (ex : MIP, BCG, PCG)."}
             )
         return data
 
@@ -388,7 +426,8 @@ class EtudiantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'classe_id': "La classe ne correspond pas au parcours sélectionné."}
             )
-        if classe and filiere and classe.filiere != filiere:
+        # Vérification filière seulement si la classe en a une
+        if classe and filiere and classe.filiere and classe.filiere != filiere:
             raise serializers.ValidationError(
                 {'classe_id': "La classe ne correspond pas à la filière sélectionnée."}
             )
@@ -458,19 +497,19 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     """
     Règles métier réimplémentées (en plus du full_clean() du modèle) :
-      - heure_debut >= 09h00  (MIN_HEURE_DEBUT — pas de début avant 9h)
+      - heure_debut >= 09h00
       - heure_fin   <= 16h20
       - Pas de séance un dimanche
       - Cohérence département enseignant ↔ matière du module
-      - Conflit enseignant sur le même créneau
+      - Conflit enseignant sur le même créneau (levé entre séances liées)
       - Conflit classe sur le même créneau
       - Volume horaire journalier de la classe <= MAX_HEURES_JOUR
       - Volume horaire du module non dépassé
       - Date dans les bornes du semestre
       - Champs de report obligatoires si statut == 'Reportée'
     """
-    module       = ModuleSerializer(read_only=True)
-    module_id    = serializers.PrimaryKeyRelatedField(
+    module        = ModuleSerializer(read_only=True)
+    module_id     = serializers.PrimaryKeyRelatedField(
         queryset=Module.objects.all(), source='module', write_only=True,
     )
     enseignant    = EnseignantSerializer(read_only=True)
@@ -485,6 +524,16 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     annee_id    = serializers.PrimaryKeyRelatedField(
         queryset=AnneeAcademique.objects.all(), source='annee', write_only=True,
     )
+    # Séance jumelle pour cours mutualisé
+    seance_liee_id = serializers.PrimaryKeyRelatedField(
+        queryset=Seance.objects.all(),
+        source='seance_liee',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    # Champ calculé : indique si la séance est mutualisée
+    is_mutualise    = serializers.SerializerMethodField()
     duree_effective = serializers.SerializerMethodField()
 
     class Meta:
@@ -498,6 +547,7 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'enseignant',  'enseignant_id',
             'classe',      'classe_id',
             'annee',       'annee_id',
+            'seance_liee_id', 'is_mutualise',
         ]
 
     def get_duree_effective(self, obj):
@@ -506,6 +556,10 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
                 Seance.calculer_duree_effective(obj.heure_debut, obj.heure_fin), 2
             )
         return None
+
+    def get_is_mutualise(self, obj):
+        """Vrai si la séance est liée à une autre (cours mutualisé)."""
+        return obj.seance_liee_id is not None or obj.seances_associees.exists()
 
     # ── Validations champ par champ ──────────────────────────────────────────
 
@@ -630,13 +684,18 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
                 )
 
         # 8. Conflit enseignant sur le même créneau
+        # Levé si la séance conflictuelle est la séance liée (mutualisée)
+        seance_liee = data.get('seance_liee')
         if enseignant and date_seance and heure_debut and heure_fin:
-            if Seance.objects.filter(
+            conflit_ens_qs = Seance.objects.filter(
                 enseignant=enseignant,
                 date_seance=date_seance,
                 heure_debut__lt=heure_fin,
                 heure_fin__gt=heure_debut,
-            ).exclude(pk=pk).exists():
+            ).exclude(pk=pk)
+            if seance_liee:
+                conflit_ens_qs = conflit_ens_qs.exclude(pk=seance_liee.pk)
+            if conflit_ens_qs.exists():
                 raise serializers.ValidationError(
                     {
                         'enseignant_id': (

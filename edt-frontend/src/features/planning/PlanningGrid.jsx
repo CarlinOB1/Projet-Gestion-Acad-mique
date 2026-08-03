@@ -2,6 +2,7 @@
  * @file PlanningGrid.jsx
  * @description Grille FullCalendar — skeleton, erreur, calendrier thématisé.
  */
+import { useState, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
@@ -10,14 +11,35 @@ import SeanceCard from './SeanceCard';
 import { HEURE_MIN, HEURE_MAX } from '@/lib/constants';
 
 /**
- * @param {{ events: Array, isLoading: boolean, isError: boolean, onEventClick: Function }} props
+ * @param {{ events: Array, isLoading: boolean, isError: boolean, onEventClick: Function, onDateClick: Function }} props
  */
 export default function PlanningGrid({
   events = [],
   isLoading,
   isError,
-  onEventClick = () => {},   // CORRECTION : prop ajoutée avec valeur par défaut
+  onEventClick = () => {},
+  onDateClick = () => {},
 }) {
+  const [totalHours, setTotalHours] = useState(0);
+  const [currentViewRange, setCurrentViewRange] = useState({ start: null, end: null });
+
+  // Recalculer les heures si les events ou la vue changent
+  useEffect(() => {
+    if (currentViewRange.start && currentViewRange.end) {
+      const visibleEvents = events.filter((e) => {
+        const start = new Date(e.start);
+        return start >= currentViewRange.start && start < currentViewRange.end;
+      });
+      
+      let totalMs = 0;
+      visibleEvents.forEach((e) => {
+        totalMs += (new Date(e.end) - new Date(e.start));
+      });
+      
+      const hours = totalMs / (1000 * 60 * 60);
+      setTotalHours(hours % 1 === 0 ? hours : hours.toFixed(1));
+    }
+  }, [events, currentViewRange]);
 
   if (isLoading) {
     return (
@@ -43,7 +65,10 @@ export default function PlanningGrid({
   }
 
   return (
-    <div className="fc-theme-custom w-full">
+    <div className="fc-theme-custom w-full relative">
+      <div className="absolute top-2 right-2 z-10 bg-primary/10 text-primary px-3 py-1 rounded-md text-sm font-semibold pointer-events-none hidden sm:block">
+        Total : {totalHours}h
+      </div>
       <style>{`
         .fc-theme-custom { --fc-border-color: hsl(var(--border)); --fc-today-bg-color: hsl(var(--primary) / 0.04); --fc-page-bg-color: transparent; }
         .fc-theme-custom .fc-toolbar-title { color: hsl(var(--foreground)); font-size: 1.125rem; font-weight: 600; text-transform: capitalize; }
@@ -71,7 +96,16 @@ export default function PlanningGrid({
         height="auto"
         events={events}
         eventContent={(eventInfo) => <SeanceCard eventInfo={eventInfo} />}
-        eventClick={onEventClick}   // CORRECTION : branché sur la prop
+        eventClick={onEventClick}
+        dateClick={onDateClick}
+        datesSet={(arg) => {
+          setCurrentViewRange(prev => {
+            if (prev.start?.getTime() === arg.start.getTime() && prev.end?.getTime() === arg.end.getTime()) {
+              return prev;
+            }
+            return { start: arg.start, end: arg.end };
+          });
+        }}
       />
     </div>
   );

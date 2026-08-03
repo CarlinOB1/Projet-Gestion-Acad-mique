@@ -6,7 +6,7 @@ Lancement : python seed.py
 """
 import os
 import django
-from datetime import date, time
+from datetime import date, time, timedelta
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'Gestion_edt.settings')
 django.setup()
@@ -53,6 +53,7 @@ def flush_data():
 
 def creer_utilisateur(username, first_name, last_name, password=MOT_DE_PASSE_DEFAUT):
     """Crée un User Django avec un mot de passe utilisable (login testable)."""
+    User.objects.filter(username=username).delete()
     user = User.objects.create_user(
         username=username,
         password=password,
@@ -87,22 +88,24 @@ parcours_l2 = ParcoursFactory(type_parcours='Licence', niveau=2)
 parcours_m1 = ParcoursFactory(type_parcours='Master', niveau=1)
 
 print("→ Année académique et semestres...")
+today = date.today()
+year_start = today.year if today.month >= 9 else today.year - 1
 annee = AnneeAcademique.objects.create(
-    libelle='2025-2026',
-    date_debut=date(2025, 9, 1),
-    date_fin=date(2026, 6, 30),
+    libelle=f'{year_start}-{year_start+1}',
+    date_debut=date(year_start, 9, 1),
+    date_fin=date(year_start+1, 8, 31),
     statut='active',
 )
 semestre1 = Semestre.objects.create(
     libelle='Semestre 1',
-    date_debut=date(2025, 9, 1),
-    date_fin=date(2026, 1, 31),
+    date_debut=date(year_start, 9, 1),
+    date_fin=date(year_start+1, 8, 31),
     annee=annee,
 )
 semestre2 = Semestre.objects.create(
     libelle='Semestre 2',
-    date_debut=date(2026, 2, 1),
-    date_fin=date(2026, 6, 30),
+    date_debut=date(year_start, 9, 1),
+    date_fin=date(year_start+1, 8, 31),
     annee=annee,
 )
 
@@ -205,13 +208,13 @@ mod_poo_web = ModuleFactory(
     credits=3, description="Développement web côté client et serveur.",
 )
 
-# ── 4. SÉANCES (~15, propres, sans conflit) ─────────────────────────────────────
+# ── 4. SÉANCES (~15, relatives à aujourd'hui) ─────────────────────────────────────
 
-print("→ Séances (Confirmées, Annulées, Reportées)...")
+print("→ Séances relatives à aujourd'hui (Confirmées, Annulées, Reportées)...")
 
 def creer_seance(module, enseignant, classe, date_seance, heure_debut, heure_fin,
                 type_seance, statut='Confirmée',
-                date_report=None, heure_debut_report=None, heure_fin_report=None):
+                date_report=None, heure_debut_report=None, heure_fin_report=None, seance_liee=None):
     return Seance.objects.create(
         module=module, enseignant=enseignant, classe=classe, annee=annee,
         date_seance=date_seance, heure_debut=heure_debut, heure_fin=heure_fin,
@@ -219,38 +222,39 @@ def creer_seance(module, enseignant, classe, date_seance, heure_debut, heure_fin
         date_report=date_report,
         heure_debut_report=heure_debut_report,
         heure_fin_report=heure_fin_report,
+        seance_liee=seance_liee,
     )
 
-# Classe L1 GL — Semestre 1
-creer_seance(mod_poo, ens1, classe_l1_s1, date(2025, 9, 1), time(9, 0), time(11, 0), 'CM')
-creer_seance(mod_bdd, ens3, classe_l1_s1, date(2025, 9, 1), time(13, 0), time(15, 0), 'TD')
-creer_seance(mod_poo, ens1, classe_l1_s1, date(2025, 9, 3), time(9, 0), time(12, 0), 'TP')
-creer_seance(mod_bdd, ens3, classe_l1_s1, date(2025, 9, 8), time(9, 0), time(11, 0), 'CM')
-creer_seance(mod_poo, ens1, classe_l1_s1, date(2025, 9, 10), time(13, 0), time(15, 30), 'TD', statut='Annulée')
+# Classe L1 GL — Semestre 1 (passé ou présent selon date)
+creer_seance(mod_poo, ens1, classe_l1_s1, today - timedelta(days=2), time(9, 0), time(11, 0), 'CM')
+creer_seance(mod_bdd, ens3, classe_l1_s1, today - timedelta(days=1), time(13, 0), time(15, 0), 'TD')
+creer_seance(mod_poo, ens1, classe_l1_s1, today, time(9, 0), time(12, 0), 'TP')
+creer_seance(mod_bdd, ens3, classe_l1_s1, today + timedelta(days=1), time(9, 0), time(11, 0), 'CM')
+creer_seance(mod_poo, ens1, classe_l1_s1, today + timedelta(days=2), time(13, 0), time(15, 30), 'TD', statut='Annulée')
 
 # Classe L2 GL — Semestre 1
-creer_seance(mod_reseaux1, ens2, classe_l2_s1, date(2025, 9, 2), time(9, 0), time(11, 0), 'CM')
-creer_seance(mod_algo_avance, ens3, classe_l2_s1, date(2025, 9, 4), time(10, 0), time(12, 0), 'TD')
-creer_seance(mod_reseaux1, ens2, classe_l2_s1, date(2025, 9, 9), time(9, 0), time(11, 30), 'TP')
+creer_seance(mod_reseaux1, ens2, classe_l2_s1, today - timedelta(days=1), time(9, 0), time(11, 0), 'CM')
+creer_seance(mod_algo_avance, ens3, classe_l2_s1, today, time(10, 0), time(12, 0), 'TD')
+creer_seance(mod_reseaux1, ens2, classe_l2_s1, today + timedelta(days=2), time(9, 0), time(11, 30), 'TP')
 creer_seance(
-    mod_algo_avance, ens3, classe_l2_s1, date(2025, 9, 11), time(14, 0), time(16, 0), 'CM',
+    mod_algo_avance, ens3, classe_l2_s1, today + timedelta(days=3), time(14, 0), time(16, 0), 'CM',
     statut='Reportée',
-    date_report=date(2025, 9, 15), heure_debut_report=time(9, 0), heure_fin_report=time(11, 0),
+    date_report=today + timedelta(days=5), heure_debut_report=time(9, 0), heure_fin_report=time(11, 0),
 )
 
 # Classe M1 GL — Semestre 1
-creer_seance(mod_analyse1, ens4, classe_m1_s1, date(2025, 9, 2), time(9, 0), time(11, 0), 'CM')
-creer_seance(mod_analyse1, ens4, classe_m1_s1, date(2025, 9, 4), time(13, 0), time(15, 0), 'TD')
-creer_seance(mod_analyse1, ens4, classe_m1_s1, date(2025, 9, 9), time(9, 0), time(12, 0), 'TP', statut='Annulée')
+creer_seance(mod_analyse1, ens4, classe_m1_s1, today - timedelta(days=2), time(9, 0), time(11, 0), 'CM')
+creer_seance(mod_analyse1, ens4, classe_m1_s1, today, time(13, 0), time(15, 0), 'TD')
+creer_seance(mod_analyse1, ens4, classe_m1_s1, today + timedelta(days=1), time(9, 0), time(12, 0), 'TP', statut='Annulée')
 creer_seance(
-    mod_analyse1, ens4, classe_m1_s1, date(2025, 9, 16), time(9, 0), time(11, 0), 'CM',
+    mod_analyse1, ens4, classe_m1_s1, today + timedelta(days=4), time(9, 0), time(11, 0), 'CM',
     statut='Reportée',
-    date_report=date(2025, 9, 18), heure_debut_report=time(13, 0), heure_fin_report=time(15, 0),
+    date_report=today + timedelta(days=6), heure_debut_report=time(13, 0), heure_fin_report=time(15, 0),
 )
 
 # Classe L1 GL — Semestre 2
-creer_seance(mod_poo_web, ens1, classe_l1_s2, date(2026, 2, 2), time(9, 0), time(11, 0), 'CM')
-creer_seance(mod_poo_web, ens1, classe_l1_s2, date(2026, 2, 4), time(13, 0), time(15, 0), 'TD')
+creer_seance(mod_poo_web, ens1, classe_l1_s2, today + timedelta(days=1), time(9, 0), time(11, 0), 'CM')
+creer_seance(mod_poo_web, ens1, classe_l1_s2, today + timedelta(days=3), time(13, 0), time(15, 0), 'TD')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RÉCAPITULATIF

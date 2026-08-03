@@ -46,6 +46,11 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                         <Badge className={`${statutStyle.bg} ${statutStyle.text}`}>
                             {statut}
                         </Badge>
+                        {seance.is_mutualise && (
+                            <Badge variant="outline" className="border-indigo-200 text-indigo-700 bg-indigo-50 ml-auto">
+                                Mutualisée
+                            </Badge>
+                        )}
                     </div>
                     <DialogTitle className="text-lg">
                         {module?.libelle || 'Séance sans titre'}

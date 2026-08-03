@@ -11,6 +11,8 @@ import ModulesPage from '@/features/academique/ModulesPage';
 import ClassesPage from '@/features/academique/ClassesPage';
 import EnseignantsPage from '@/features/acteurs/EnseignantsPage';
 import EtudiantsPage from '@/features/acteurs/EtudiantsPage';
+import TrombinoscopePage from '@/features/trombinoscope/TrombinoscopePage';
+import ProgressionPage from '@/features/progression/ProgressionPage';
 
 const NotFoundPage = () => <div className="p-8 text-center text-muted-foreground"><h3>404 — Page introuvable</h3></div>;
 const UnauthorizedPage = () => <div className="p-8 text-center text-destructive"><h3>403 — Accès non autorisé</h3></div>;
@@ -24,8 +26,10 @@ function RootRedirect() {
 
   switch (user?.role) {
     case 'admin':
-    case 'responsable': return <Navigate to="/responsable/planning" replace />;
-    case 'enseignant':  return <Navigate to="/enseignant/planning"  replace />;
+    case 'responsable':      return <Navigate to="/responsable/planning" replace />;
+    case 'chef_departement':
+    case 'referent_l1':      return <Navigate to="/chef/planning"        replace />;
+    case 'enseignant':       return <Navigate to="/enseignant/planning"  replace />;
     case 'etudiant':    return <Navigate to="/etudiant/planning"    replace />;
     default:            return <Navigate to="/unauthorized"         replace />;
   }
@@ -46,12 +50,29 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
           { path: 'seances', element: <SeancesListePage /> },
-          { path: 'conflits', element: <div className="p-6"><h3>Conflits</h3></div> },
           { path: 'classes', element: <ClassesPage /> },
           { path: 'modules', element: <ModulesPage /> },
           { path: 'organisation', element: <OrganisationPage /> },
           { path: 'enseignants', element: <EnseignantsPage /> },
           { path: 'etudiants', element: <EtudiantsPage /> },
+          { path: '*', element: <Navigate to="planning" replace /> },
+        ],
+      },
+    ],
+  },
+
+  // ── Chef & Référent (Hybride) ─────────────────────────────────────────────
+  {
+    path: '/chef',
+    element: <ProtectedRoute allowedRoles={['chef_departement', 'referent_l1']} />,
+    children: [
+      {
+        element: <AppShell />,
+        children: [
+          { index: true, element: <Navigate to="planning" replace /> },
+          { path: 'planning', element: <PlanningPage /> },
+          { path: 'seances', element: <SeancesListePage /> },
+          { path: 'classes', element: <ClassesPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
       },
@@ -85,6 +106,8 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
+          { path: 'enseignants', element: <TrombinoscopePage /> },
+          { path: 'progression', element: <ProgressionPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
       },

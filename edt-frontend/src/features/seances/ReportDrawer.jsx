@@ -12,6 +12,10 @@ import {
 } from '@/components/ui/drawer';
 import { Input }  from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
+import { AlertTriangle } from 'lucide-react';
 import { Label }  from '@/components/ui/label';
 import { useReporterSeance } from '@/hooks/useSeanceMutations';
 import { HEURE_MIN, HEURE_MAX } from '@/lib/constants'; 
@@ -93,15 +97,26 @@ export default function ReportDrawer({ open, onClose, seance }) {
             </div>
           </div>
 
-          {serverError && (
-            <div className="p-3 text-sm font-medium text-destructive bg-destructive/10 rounded-lg border border-destructive/20">
-              {serverError}
-            </div>
-          )}
-
-          <Button className="w-full" onClick={handleSubmit(onSubmit)} disabled={isPending}>
-            {isPending ? 'Report en cours...' : 'Confirmer le report'}
-          </Button>
+          <Popover open={!!serverError}>
+            <PopoverTrigger asChild>
+              <div className="w-full mt-4">
+                <Button className="w-full" onClick={handleSubmit(onSubmit)} disabled={isPending}>
+                  {isPending ? 'Report en cours...' : 'Confirmer le report'}
+                </Button>
+              </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-3 border-amber-200 bg-amber-50" side="top" align="center" onOpenAutoFocus={(e) => e.preventDefault()}>
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  Erreur / Conflit détecté
+                </p>
+                <p className="text-xs text-amber-700">
+                  {serverError}
+                </p>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </DrawerContent>
     </Drawer>

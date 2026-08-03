@@ -13,6 +13,10 @@ import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
+import { AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -34,6 +38,7 @@ const seanceSchema = z.object({
   type_seance: z.enum(['CM', 'TD', 'TP'], {
     errorMap: () => ({ message: 'Le type doit être CM, TD ou TP' }),
   }),
+  seance_liee_id: z.string().optional(),
 }).refine((data) => data.heure_fin > data.heure_debut, {
   message: "L'heure de fin doit être supérieure à l'heure de début",
   path: ['heure_fin'],
@@ -58,6 +63,7 @@ export default function SeanceForm({
       heure_debut: '09:00',
       heure_fin: '10:30',
       type_seance: 'CM',
+      seance_liee_id: '',
       ...defaultValues,
     },
   });
@@ -235,17 +241,35 @@ export default function SeanceForm({
         {errors.type_seance && <p className="text-xs text-destructive">{errors.type_seance.message}</p>}
       </div>
 
-      {/* 9. Erreur serveur */}
-      {serverError && (
-        <div className="p-3 text-sm font-medium text-destructive bg-destructive/10 rounded-lg border border-destructive/20">
-          {serverError}
-        </div>
-      )}
+      {/* 9. Séance Liée (Mutualisation) */}
+      <div className="space-y-2">
+        <Label>ID de séance liée (optionnel)</Label>
+        <Input type="text" placeholder="Ex: 42 (pour mutualiser avec cette séance)" {...register('seance_liee_id')} />
+        <p className="text-[11px] text-muted-foreground">Laissez vide si cette séance n'est pas mutualisée avec une autre.</p>
+        {errors.seance_liee_id && <p className="text-xs text-destructive">{errors.seance_liee_id.message}</p>}
+      </div>
 
-      {/* 10. Submit */}
-      <Button className="w-full" onClick={handleSubmit(onFormSubmit)} disabled={isPending}>
-        {isPending ? 'Enregistrement...' : 'Enregistrer'}
-      </Button>
+      {/* 10. Erreur serveur / Conflit Popover */}
+      <Popover open={!!serverError}>
+        <PopoverTrigger asChild>
+          <div className="w-full">
+            <Button className="w-full" onClick={handleSubmit(onFormSubmit)} disabled={isPending}>
+              {isPending ? 'Enregistrement...' : 'Enregistrer'}
+            </Button>
+          </div>
+        </PopoverTrigger>
+        <PopoverContent className="w-80 p-3 border-amber-200 bg-amber-50" side="top" align="center" onOpenAutoFocus={(e) => e.preventDefault()}>
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Erreur / Conflit détecté
+            </p>
+            <p className="text-xs text-amber-700">
+              {serverError}
+            </p>
+          </div>
+        </PopoverContent>
+      </Popover>
 
     </div>
   );

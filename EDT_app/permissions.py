@@ -74,6 +74,75 @@ class IsEtudiant(BasePermission):
         )
 
 
+class IsChefDepartement(BasePermission):
+    """
+    Vérifie que l'utilisateur est chef d'au moins un département.
+    Un chef de département est un enseignant lié à un Departement via le champ 'chef'.
+    Il a des droits d'écriture sur les séances des filières de son département.
+    """
+    message = "Accès réservé aux chefs de département."
+
+    def has_permission(self, request, view):
+        if request.user.is_superuser:
+            return True
+        return (
+            hasattr(request.user, 'profil')
+            and hasattr(request.user.profil, 'enseignant')
+            and request.user.profil.enseignant.departements_diriges.exists()
+        )
+
+
+class IsReferentClasse(BasePermission):
+    """
+    Vérifie que l'utilisateur est référent d'au moins une classe.
+    Cas d'usage principal : coordinateur L1 (MIP, BCG, PCG).
+    Il peut créer/modifier des séances uniquement pour ses classes assignées.
+    """
+    message = "Accès réservé aux référents de classes."
+
+    def has_permission(self, request, view):
+        if request.user.is_superuser:
+            return True
+        return (
+            hasattr(request.user, 'profil')
+            and hasattr(request.user.profil, 'enseignant')
+            and hasattr(request.user.profil.enseignant, 'referent_classes')
+        )
+
+
+class IsChefOrReferentOrReadOnly(BasePermission):
+    """
+    Lecture libre pour tout utilisateur authentifié.
+    Écriture autorisée pour :
+      - superuser
+      - responsable (groupe Django)
+      - chef de département (sur les séances de ses filières)
+      - référent de classe (sur ses classes assignées)
+    Cette permission est une porte d'entrée générale ; le filtrage
+    fin par département/classe se fait dans les ViewSets.
+    """
+    message = "Modification réservée aux gestionnaires d'emplois du temps."
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        if request.user.is_superuser:
+            return True
+        if request.user.groups.filter(name='responsable').exists():
+            return True
+        if not hasattr(request.user, 'profil'):
+            return False
+        profil = request.user.profil
+        if not hasattr(profil, 'enseignant'):
+            return False
+        enseignant = profil.enseignant
+        # Chef de département ou référent de classe
+        return (
+            enseignant.departements_diriges.exists()
+            or hasattr(enseignant, 'referent_classes')
+        )
+
+
 class IsOwnerOrResponsable(BasePermission):
     """
     Autorise l'accès si l'objet appartient à l'utilisateur connecté,

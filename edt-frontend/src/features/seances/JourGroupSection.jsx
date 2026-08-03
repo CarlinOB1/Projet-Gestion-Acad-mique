@@ -14,7 +14,6 @@ import { formatDate } from '@/lib/utils';
  *   onEdit: Function,
  *   onReport: Function,
  *   onDelete: Function,
- *   conflitsIds?: Set<number>,
  * }} props
  */
 export default function JourGroupSection({
@@ -23,9 +22,8 @@ export default function JourGroupSection({
     onEdit,
     onReport,
     onDelete,
-    conflitsIds,
 }) {
-    const columns = getSeanceColumns({ onEdit, onReport, onDelete, conflitsIds });
+    const columns = getSeanceColumns({ onEdit, onReport, onDelete });
 
     return (
         <div className="space-y-2">

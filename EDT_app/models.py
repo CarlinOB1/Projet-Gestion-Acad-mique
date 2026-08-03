@@ -20,9 +20,21 @@ class Faculte(models.Model):
 
 
 class Departement(models.Model):
-    """Rattaché à une faculté. Possède des matières et des enseignants."""
+    """
+    Rattaché à une faculté. Possède des matières et des enseignants.
+    Le champ 'chef' est un ForeignKey nullable vers un Enseignant :
+    il représente le chef de département, qui est aussi un enseignant
+    et a des droits de gestion des emplois du temps pour ses filières.
+    """
     libelle = models.CharField(max_length=100, blank=False)
     faculte = models.ForeignKey(Faculte, on_delete=models.CASCADE, related_name='departements')
+    chef    = models.ForeignKey(
+        'Enseignant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='departements_diriges',
+    )
 
     def __str__(self):
         return self.libelle
@@ -189,22 +201,44 @@ class Semestre(models.Model):
 
 class Classe(models.Model):
     """
-    Combinaison unique de parcours + filière + semestre + année.
-    Le libellé est généré automatiquement.
+    Combinaison unique de parcours + semestre + année, éventuellement associée
+    à une filière (L2 et plus) ou identifiée par un code libre (L1 : MIP, BCG, PCG).
+
+    - Classes L2+ : filiere renseignée, code vide.
+    - Classes L1  : filiere=None, code = 'MIP' | 'BCG' | 'PCG' (rattachées à la faculté).
+
+    Le libellé est généré automatiquement selon le cas.
     """
-    libelle = models.CharField(max_length=100, editable=False)
+    libelle  = models.CharField(max_length=100, editable=False)
+    code     = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Code libre pour les classes sans filière (ex: MIP, BCG, PCG)."
+    )
     parcours = models.ForeignKey(Parcours, on_delete=models.CASCADE)
-    filiere = models.ForeignKey(Filiere, on_delete=models.CASCADE)
+    filiere  = models.ForeignKey(
+        Filiere,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
     semestre = models.ForeignKey(Semestre, on_delete=models.CASCADE)
-    annee = models.ForeignKey(AnneeAcademique, on_delete=models.CASCADE, related_name='classes')
+    annee    = models.ForeignKey(AnneeAcademique, on_delete=models.CASCADE, related_name='classes')
 
     def generer_libelle(self):
         numero_semestre = ''.join(filter(str.isdigit, self.semestre.libelle))
         lettre_parcours = self.parcours.type_parcours[0].upper()
         numero_parcours = str(self.parcours.niveau)
-        return f"{lettre_parcours}{numero_parcours} S{numero_semestre} {self.filiere.libelle} {self.annee.libelle}"
+        identifiant     = self.filiere.libelle if self.filiere else (self.code or 'N/A')
+        return f"{lettre_parcours}{numero_parcours} S{numero_semestre} {identifiant} {self.annee.libelle}"
 
     def clean(self):
+        # Au moins un identifiant parmi filiere ou code est requis
+        if not self.filiere and not self.code:
+            raise ValidationError(
+                "Une classe doit avoir soit une filière, soit un code (ex: MIP, BCG, PCG)."
+            )
+        # Cohérence semestre / année
         if self.semestre and self.annee:
             if self.semestre.annee != self.annee:
                 raise ValidationError(
@@ -220,7 +254,22 @@ class Classe(models.Model):
         return self.libelle
 
     class Meta:
-        unique_together = ('parcours', 'filiere', 'semestre', 'annee')
+        # La contrainte d'unicité porte sur l'identifiant réel :
+        # soit la filière (L2+), soit le code (L1).
+        # On utilise unique_together sur les deux colonnes nullables :
+        # Django tolère plusieurs NULL dans une colonne unique.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['parcours', 'filiere', 'semestre', 'annee'],
+                condition=models.Q(filiere__isnull=False),
+                name='unique_classe_avec_filiere',
+            ),
+            models.UniqueConstraint(
+                fields=['parcours', 'code', 'semestre', 'annee'],
+                condition=models.Q(filiere__isnull=True),
+                name='unique_classe_sans_filiere',
+            ),
+        ]
 
 
 # ==========================================
@@ -429,31 +478,43 @@ class Module(models.Model):
 # ==========================================
 
 class Seance(models.Model):
-    MIN_HEURE_DEBUT = time_type(9, 0) # Remplacé HEURE_DEBUT_FIXE
-    PAUSE_DEBUT = time_type(11, 0)
-    PAUSE_FIN = time_type(11, 15)
-    HEURE_FIN_MAX = time_type(16, 20)
-    MAX_HEURES_JOUR = 6
+    MIN_HEURE_DEBUT   = time_type(9, 0)
+    PAUSE_DEBUT       = time_type(11, 0)
+    PAUSE_FIN         = time_type(11, 15)
+    HEURE_FIN_MAX     = time_type(16, 20)
+    MAX_HEURES_JOUR   = 6
     HEURES_PAR_CREDIT = 12
 
-    TYPE_CHOICES = [('CM', 'CM'), ('TD', 'TD'), ('TP', 'TP')]
+    TYPE_CHOICES   = [('CM', 'CM'), ('TD', 'TD'), ('TP', 'TP')]
     STATUT_CHOICES = [('Confirmée', 'Confirmée'), ('Annulée', 'Annulée'), ('Reportée', 'Reportée')]
 
-    libelle = models.CharField(max_length=100, blank=True)
+    libelle     = models.CharField(max_length=100, blank=True)
     date_seance = models.DateField(null=False)
     heure_debut = models.TimeField(null=False)
-    heure_fin = models.TimeField(null=False)
+    heure_fin   = models.TimeField(null=False)
     type_seance = models.CharField(max_length=5, choices=TYPE_CHOICES)
-    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='Confirmée')
+    statut      = models.CharField(max_length=20, choices=STATUT_CHOICES, default='Confirmée')
 
-    date_report = models.DateField(blank=True, null=True)
+    date_report        = models.DateField(blank=True, null=True)
     heure_debut_report = models.TimeField(blank=True, null=True)
-    heure_fin_report = models.TimeField(blank=True, null=True)
+    heure_fin_report   = models.TimeField(blank=True, null=True)
 
-    module = models.ForeignKey(Module, on_delete=models.CASCADE)
+    module     = models.ForeignKey(Module, on_delete=models.CASCADE)
     enseignant = models.ForeignKey(Enseignant, on_delete=models.CASCADE)
-    classe = models.ForeignKey(Classe, on_delete=models.CASCADE)
-    annee = models.ForeignKey(AnneeAcademique, on_delete=models.CASCADE)
+    classe     = models.ForeignKey(Classe, on_delete=models.CASCADE)
+    annee      = models.ForeignKey(AnneeAcademique, on_delete=models.CASCADE)
+
+    # Liaison entre séances mutualisées (même cours, classes différentes).
+    # Quand deux séances sont liées, la contrainte de conflit horaire
+    # de l'enseignant est levée entre elles.
+    seance_liee = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='seances_associees',
+        help_text="Séance jumelle pour un cours mutualisé (même créneau, classe différente)."
+    )
 
     @staticmethod
     def calculer_duree_effective(heure_debut, heure_fin):
@@ -511,9 +572,17 @@ class Seance(models.Model):
             if not (self.classe.semestre.date_debut <= self.date_seance <= self.classe.semestre.date_fin):
                 raise ValidationError("La date de séance est hors des limites du semestre.")
 
-        if Seance.objects.filter(enseignant=self.enseignant, date_seance=self.date_seance,
-                                 heure_debut__lt=self.heure_fin, heure_fin__gt=self.heure_debut).exclude(
-            pk=self.pk).exists():
+        # Conflit enseignant : levé si la séance conflictuelle est la séance liée (mutualisée)
+        conflits_ens = Seance.objects.filter(
+            enseignant=self.enseignant,
+            date_seance=self.date_seance,
+            heure_debut__lt=self.heure_fin,
+            heure_fin__gt=self.heure_debut,
+        ).exclude(pk=self.pk)
+        # Exclure la séance liée (mutualisée) du conflit
+        if self.seance_liee_id:
+            conflits_ens = conflits_ens.exclude(pk=self.seance_liee_id)
+        if conflits_ens.exists():
             raise ValidationError("L'enseignant a déjà une séance prévue à cette heure.")
 
         # ── CORRECTIF : vérification du plafond horaire du module ──────────────
@@ -537,3 +606,31 @@ class Seance(models.Model):
 
     def __str__(self):
         return f"{self.module.libelle} - {self.date_seance}"
+
+
+# ==========================================
+# 5. RÉFÉRENTS DE CLASSES
+# ==========================================
+
+class ReferentClasse(models.Model):
+    """
+    Désigne un enseignant comme référent d'un ensemble de classes.
+    Cas d'usage principal : coordinateur L1 (MIP, BCG, PCG).
+
+    Le référent peut créer et modifier des séances pour les classes
+    qui lui sont assignées, sans pour autant être chef de département.
+    """
+    enseignant = models.OneToOneField(
+        Enseignant,
+        on_delete=models.CASCADE,
+        related_name='referent_classes',
+    )
+    classes = models.ManyToManyField(
+        Classe,
+        blank=True,
+        related_name='referents',
+        help_text="Classes dont cet enseignant peut gérer l'emploi du temps.",
+    )
+
+    def __str__(self):
+        return f"Référent : {self.enseignant} ({self.classes.count()} classe(s))"

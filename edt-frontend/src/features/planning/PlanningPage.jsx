@@ -10,7 +10,7 @@ import useAuthStore from '@/store/authStore';
 import { useSeances } from '@/hooks/useSeances';
 import { useDeleteSeance } from '@/hooks/useSeanceMutations';
 import apiClient from '@/api/client';
-import { ROLES } from '@/lib/constants';
+import { ROLES, RESPONSABLE_ROLES, GESTIONNAIRE_ROLES } from '@/lib/constants';
 import { applyPlanningFilters, getEnseignantsDisponibles, FILTRES_VIDES } from '@/lib/planningFilters';
 import PlanningGrid from './PlanningGrid';
 import PlanningFilters from './PlanningFilters';
@@ -85,7 +85,7 @@ export default function PlanningPage() {
       ...eventInfo.event.extendedProps,
     };
 
-    if (role === ROLES.RESPONSABLE) {
+    if (GESTIONNAIRE_ROLES.includes(role)) {
       setPopoverAnchor({
         x: eventInfo.jsEvent.clientX,
         y: eventInfo.jsEvent.clientY,
@@ -95,6 +95,29 @@ export default function PlanningPage() {
     }
 
     setDetailsSeance(seance);
+  };
+
+  const handleDateClick = (info) => {
+    if (!GESTIONNAIRE_ROLES.includes(role)) return;
+    
+    const clickedDate = info.date;
+    const offsetDate = new Date(clickedDate.getTime() - (clickedDate.getTimezoneOffset() * 60000));
+    const dateStr = offsetDate.toISOString().split('T')[0];
+    
+    let timeStr = '09:00';
+    let endTimeStr = '10:30';
+    if (info.dateStr.includes('T')) {
+      timeStr = offsetDate.toISOString().split('T')[1].substring(0, 5);
+      const endDate = new Date(clickedDate.getTime() + 90 * 60000);
+      endTimeStr = new Date(endDate.getTime() - (endDate.getTimezoneOffset() * 60000)).toISOString().split('T')[1].substring(0, 5);
+    }
+
+    setSelectedSeance({
+      date_seance: dateStr,
+      heure_debut: timeStr,
+      heure_fin: endTimeStr,
+    });
+    setIsSeanceDrawerOpen(true);
   };
 
   return (
@@ -108,7 +131,7 @@ export default function PlanningPage() {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-          {role === ROLES.RESPONSABLE && (
+          {GESTIONNAIRE_ROLES.includes(role) && (
             <Button
               onClick={() => { setSelectedSeance(null); setIsSeanceDrawerOpen(true); }}
               className="flex items-center gap-2 justify-center"
@@ -117,22 +140,6 @@ export default function PlanningPage() {
               Nouvelle séance
             </Button>
           )}
-          <Select
-            value={selectedSemestreId ? String(selectedSemestreId) : ''}
-            onValueChange={handleSemestreChange}
-            disabled={isLoadingSemestres || semestres.length === 0}
-          >
-            <SelectTrigger className="w-full sm:w-[280px] bg-background">
-              <SelectValue placeholder="Chargement des semestres..." />
-            </SelectTrigger>
-            <SelectContent align="end">
-              {semestres.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  {s.libelle} — {s.annee?.libelle || 'Année inconnue'}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </header>
 
@@ -141,6 +148,24 @@ export default function PlanningPage() {
         onChange={setFilters}
         enseignants={enseignantsDisponibles}
         showEnseignantFilter={role !== ROLES.ENSEIGNANT}
+        semesterSelect={
+          <Select
+            value={selectedSemestreId ? String(selectedSemestreId) : ''}
+            onValueChange={handleSemestreChange}
+            disabled={isLoadingSemestres || semestres.length === 0}
+          >
+            <SelectTrigger className="w-full sm:w-[280px] bg-background">
+              <SelectValue placeholder="Chargement des semestres..." />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {semestres.map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.libelle} — {s.annee?.libelle || 'Année inconnue'}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        }
       />
 
       {!isLoading && !isError && events.length > 0 && filteredEvents.length !== events.length && (
@@ -155,6 +180,7 @@ export default function PlanningPage() {
           isLoading={isLoading}
           isError={isError}
           onEventClick={handleEventClick}
+          onDateClick={handleDateClick}
         />
       </main>
 

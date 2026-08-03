@@ -8,6 +8,7 @@ import { Plus, ArrowRightCircle, GraduationCap, CheckCircle2 } from 'lucide-reac
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue,
@@ -32,7 +33,8 @@ export default function ClassesPage() {
   const [transitionResult,          setTransitionResult]          = useState(null);
 
   const [parcoursId,      setParcoursId]      = useState('');
-  const [filiereId,       setFiliereId]       = useState('');
+  const [filiereId,       setFiliereId]       = useState('none');
+  const [code,            setCode]            = useState('');
   const [semestreId,      setSemestreId]      = useState('');
   const [anneeId,         setAnneeId]         = useState('');
   const [targetSemestreId, setTargetSemestreId] = useState('');
@@ -99,12 +101,14 @@ export default function ClassesPage() {
     if (isCrudModalOpen) {
       if (editingClasse) {
         setParcoursId(editingClasse.parcours?.id?.toString() ?? '');
-        setFiliereId(editingClasse.filiere?.id?.toString()   ?? '');
+        setFiliereId(editingClasse.filiere?.id?.toString()   ?? 'none');
+        setCode(editingClasse.code ?? '');
         setSemestreId(editingClasse.semestre?.id?.toString() ?? '');
         setAnneeId(editingClasse.annee?.id?.toString()       ?? '');
       } else {
         setParcoursId('');
-        setFiliereId('');
+        setFiliereId('none');
+        setCode('');
         setSemestreId(selectedSemestreId !== 'all' ? selectedSemestreId : '');
         setAnneeId('');
       }
@@ -128,7 +132,8 @@ export default function ClassesPage() {
   const handleCrudConfirm = () => {
     const payload = {
       parcours_id: parseInt(parcoursId, 10),
-      filiere_id:  parseInt(filiereId,  10),
+      filiere_id:  filiereId && filiereId !== 'none' ? parseInt(filiereId, 10) : null,
+      code:        code || null,
       semestre_id: parseInt(semestreId, 10),
       annee_id:    parseInt(anneeId,    10),
     };
@@ -152,7 +157,7 @@ export default function ClassesPage() {
   const columns = [
     { key: 'libelle',  label: 'Nom de la classe' },
     { key: 'parcours', label: 'Parcours',  render: (row) => row.parcours?.libelle || '-' },
-    { key: 'filiere',  label: 'Filière',   render: (row) => row.filiere?.libelle  || '-' },
+    { key: 'filiere',  label: 'Filière/Code',   render: (row) => row.filiere?.libelle || (row.code ? <Badge variant="outline">{row.code}</Badge> : '-') },
     { key: 'semestre', label: 'Semestre',  render: (row) => <Badge variant="secondary">{row.semestre?.libelle || '-'}</Badge> },
     { key: 'annee',    label: 'Année',     render: (row) => row.annee?.libelle    || '-' },
     {
@@ -236,15 +241,26 @@ export default function ClassesPage() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Filière</Label>
+            <Label>Filière (Optionnel)</Label>
             <Select value={filiereId} onValueChange={setFiliereId}>
               <SelectTrigger><SelectValue placeholder="Sélectionner une filière" /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="none">Aucune filière</SelectItem>
                 {filieres.map((f) => (
                   <SelectItem key={f.id} value={f.id.toString()}>{f.libelle}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Code de classe (Ex: MIP, BCG) — Si aucune filière</Label>
+            <Input 
+              type="text" 
+              placeholder="Ex: MIP" 
+              value={code} 
+              onChange={(e) => setCode(e.target.value)} 
+              disabled={filiereId !== 'none'} 
+            />
           </div>
           <div className="space-y-2">
             <Label>Semestre</Label>

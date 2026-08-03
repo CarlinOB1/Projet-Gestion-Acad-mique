@@ -18,7 +18,6 @@ import JourGroupSection from './JourGroupSection';
  *   onEdit: Function,
  *   onReport: Function,
  *   onDelete: Function,
- *   conflitsIds?: Set<number>,
  * }} props
  */
 export default function ClasseGroupSection({
@@ -31,7 +30,6 @@ export default function ClasseGroupSection({
     onEdit,
     onReport,
     onDelete,
-    conflitsIds,
 }) {
     return (
         <div className="border border-border/60 rounded-xl bg-card overflow-hidden">
@@ -65,7 +63,6 @@ export default function ClasseGroupSection({
                             onEdit={onEdit}
                             onReport={onReport}
                             onDelete={onDelete}
-                            conflitsIds={conflitsIds}
                         />
                     ))}
                 </div>

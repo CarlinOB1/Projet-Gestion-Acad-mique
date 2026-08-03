@@ -19,8 +19,8 @@ const SENTINEL_TOUS = '__tous__';
  * @param {{
  *   filters: Object,
  *   onChange: (filters: Object) => void,
- *   enseignants: Array<{ id, nom_complet }>,
  *   showEnseignantFilter?: boolean,
+ *   semesterSelect?: React.ReactNode,
  * }} props
  */
 export default function PlanningFilters({
@@ -28,6 +28,7 @@ export default function PlanningFilters({
     onChange,
     enseignants = [],
     showEnseignantFilter = true,
+    semesterSelect = null,
 }) {
     const updateField = (field, value) => {
         onChange({ ...filters, [field]: value === SENTINEL_TOUS ? '' : value });
@@ -41,6 +42,12 @@ export default function PlanningFilters({
 
     return (
         <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3 bg-muted/40 border border-border/60 rounded-lg p-3">
+            {semesterSelect && (
+                <>
+                    {semesterSelect}
+                    <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
+                </>
+            )}
 
             <div className="relative flex-1 min-w-[180px]">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

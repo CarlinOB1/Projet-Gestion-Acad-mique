@@ -1,5 +1,7 @@
 export const ROLES = Object.freeze({
    RESPONSABLE: 'responsable',
+   CHEF_DEPARTEMENT: 'chef_departement',
+   REFERENT_L1: 'referent_l1',
    ENSEIGNANT: 'enseignant',
    ETUDIANT: 'etudiant',
    ADMIN: 'admin',
@@ -54,6 +56,12 @@ export const STATUT_COLORS = Object.freeze({
 });
 
 export const RESPONSABLE_ROLES = Object.freeze([ROLES.RESPONSABLE, ROLES.ADMIN]);
+export const GESTIONNAIRE_ROLES = Object.freeze([
+  ROLES.RESPONSABLE, 
+  ROLES.ADMIN, 
+  ROLES.CHEF_DEPARTEMENT, 
+  ROLES.REFERENT_L1
+]);
 
 export const HEURE_MIN = '09:00';
 export const HEURE_MAX = '16:20';

@@ -3,7 +3,7 @@
  * @description Définition centralisée des colonnes DataTable pour l'affichage
  * des séances dans la Liste des séances (groupées par classe/jour).
  */
-import { CalendarClock, AlertTriangle, Pencil, CalendarCog, Trash2 } from 'lucide-react';
+import { CalendarClock, Pencil, CalendarCog, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SEANCE_COLORS, STATUT_COLORS } from '@/lib/constants';
@@ -16,11 +16,10 @@ import { formatHeure, getDureeLabel } from '@/lib/utils';
  *   onEdit: (seance: Object) => void,
  *   onReport: (seance: Object) => void,
  *   onDelete: (seance: Object) => void,
- *   conflitsIds?: Set<number>,
  * }} handlers
  * @returns {Array<Object>} Colonnes compatibles avec le composant DataTable existant.
  */
-export const getSeanceColumns = ({ onEdit, onReport, onDelete, conflitsIds = new Set() }) => [
+export const getSeanceColumns = ({ onEdit, onReport, onDelete }) => [
     {
         key: 'horaire',
         label: 'Horaire',
@@ -41,12 +40,6 @@ export const getSeanceColumns = ({ onEdit, onReport, onDelete, conflitsIds = new
         render: (row) => (
             <div className="flex items-center gap-1.5">
                 <span>{row.module?.libelle || 'Sans module'}</span>
-                {conflitsIds.has(row.id) && (
-                    <AlertTriangle
-                        className="h-3.5 w-3.5 text-amber-500 shrink-0"
-                        aria-label="Séance en conflit"
-                    />
-                )}
             </div>
         ),
     },

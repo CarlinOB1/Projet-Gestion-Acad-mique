@@ -15,7 +15,6 @@ import ClasseGroupSection from './ClasseGroupSection';
 import SeanceDrawer from './SeanceDrawer';
 import ReportDrawer from './ReportDrawer';
 import { Button } from '@/components/ui/button';
-import { useSeanceConflits } from '@/hooks/useSeanceConflits';
 import { exportToCsv } from '@/lib/exportCsv';
 import { formatDate, formatHeure } from '@/lib/utils';
 import { Plus, ChevronsDown, ChevronsUp, Download } from 'lucide-react';
@@ -90,8 +89,6 @@ export default function SeancesListePage() {
         queryFn: () => getSeances(apiParams),
         enabled: !!filters.semestreId,
     });
-
-    const { conflitsIds } = useSeanceConflits(filters.semestreId);
 
     // ── Filtrage texte libre côté client ─────────────────────────────────────
     const seancesFiltrees = useMemo(() => {
@@ -273,7 +270,6 @@ export default function SeancesListePage() {
                             onEdit={handleEdit}
                             onReport={handleReport}
                             onDelete={handleDelete}
-                            conflitsIds={conflitsIds}
                         />
                     ))}
                 </div>

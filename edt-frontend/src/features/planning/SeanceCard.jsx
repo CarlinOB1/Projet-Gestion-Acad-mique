@@ -55,16 +55,23 @@ export default function SeanceCard({ eventInfo }) {
         {enseignant?.nom_complet || 'Enseignant non assigné'}
       </p>
 
-      {/* Ligne 4 : badge statut — masqué si Confirmée */}
-      {statut !== 'Confirmée' && (
-        <div className="mt-auto pt-1 flex items-center shrink-0">
-          <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded-sm text-[10px] font-medium
-            ${statutStyle.bg} ${statutStyle.text}`}>
-            {isReportee && (
-              <CalendarClock className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
-            )}
-            <span>{statut}</span>
-          </span>
+      {/* Ligne 4 : badge statut / mutualisée */}
+      {(statut !== 'Confirmée' || event.extendedProps.is_mutualise) && (
+        <div className="mt-auto pt-1 flex items-center gap-1 shrink-0 flex-wrap">
+          {statut !== 'Confirmée' && (
+            <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded-sm text-[10px] font-medium
+              ${statutStyle.bg} ${statutStyle.text}`}>
+              {isReportee && (
+                <CalendarClock className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
+              )}
+              <span>{statut}</span>
+            </span>
+          )}
+          {event.extendedProps.is_mutualise && (
+            <span className="inline-flex items-center px-1 py-0.5 rounded-sm text-[10px] font-medium border border-indigo-200 text-indigo-700 bg-indigo-50">
+              Mutualisée
+            </span>
+          )}
         </div>
       )}
     </div>

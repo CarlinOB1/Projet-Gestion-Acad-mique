@@ -1,4 +1,3 @@
-# views.py
 from django.shortcuts import render
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -10,7 +9,7 @@ from .models import (
     Faculte, Departement, Filiere, Parcours,
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
-    Matiere, Module, Seance,
+    Matiere, Module, Seance, ReferentClasse,
 )
 from EDT_app.serializers import (
     FaculteSerializer, DepartementSerializer, FiliereSerializer,
@@ -26,6 +25,9 @@ from .permissions import (
     IsEnseignant,
     IsEtudiant,
     IsOwnerOrResponsable,
+    IsChefDepartement,
+    IsReferentClasse,
+    IsChefOrReferentOrReadOnly,
 )
 
 
@@ -479,6 +481,9 @@ class SeanceViewSet(BaseViewSet):
       GET /api/seances/conflits/
         Liste toutes les séances en conflit (enseignant ou classe)
         pour le semestre actif.
+
+      GET /api/seances/{id}/seances_liees/
+        Retourne la séance jumelle (cours mutualisé) si elle existe.
     """
     queryset = Seance.objects.select_related(
         'module__matiere__departement',
@@ -488,9 +493,71 @@ class SeanceViewSet(BaseViewSet):
         'classe__filiere',
         'classe__parcours',
         'annee',
+        'seance_liee',
     ).all()
     serializer_class   = SeanceSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefOrReferentOrReadOnly]
+
+    def get_permissions(self):
+        """
+        Permissions d'écriture selon le rôle :
+          - superuser / responsable : accès total
+          - chef de département    : accès aux séances des filières de son dépt
+          - référent de classe      : accès aux séances de ses classes assignées
+        Les lectures (GET) restent libères pour tout utilisateur actif.
+        """
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated(), ProfilActifPermission()]
+        return [IsAuthenticated(), ProfilActifPermission(), IsChefOrReferentOrReadOnly()]
+
+    def _get_classes_autorisees(self):
+        """
+        Retourne les IDs de classes sur lesquelles l'utilisateur a droit d'écriture.
+        - responsable / superuser : toutes les classes
+        - chef de département : classes dont la filière appartient à son département
+        - référent de classe : ses classes assignées
+        """
+        user = self.request.user
+        if user.is_superuser or user.groups.filter(name='responsable').exists():
+            return None  # None = pas de filtre, accès total
+        if not hasattr(user, 'profil') or not hasattr(user.profil, 'enseignant'):
+            return []  # Aucun accès en écriture
+        enseignant = user.profil.enseignant
+        classes_ids = set()
+        # Chef de département
+        for dept in enseignant.departements_diriges.prefetch_related('filieres__classe_set'):
+            for filiere in dept.filieres.all():
+                classes_ids.update(filiere.classe_set.values_list('id', flat=True))
+        # Référent de classe
+        if hasattr(enseignant, 'referent_classes'):
+            classes_ids.update(
+                enseignant.referent_classes.classes.values_list('id', flat=True)
+            )
+        return classes_ids
+
+    def perform_create(self, serializer):
+        """Vérifie que la classe cible est dans le périmètre autorisé."""
+        classes_autorisees = self._get_classes_autorisees()
+        if classes_autorisees is not None:  # None = accès total
+            classe = serializer.validated_data.get('classe')
+            if classe and classe.id not in classes_autorisees:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    "Vous n'avez pas les droits pour planifier des séances dans cette classe."
+                )
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Même vérification à la mise à jour."""
+        classes_autorisees = self._get_classes_autorisees()
+        if classes_autorisees is not None:
+            classe = serializer.validated_data.get('classe', self.get_object().classe)
+            if classe and classe.id not in classes_autorisees:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    "Vous n'avez pas les droits pour modifier des séances dans cette classe."
+                )
+        serializer.save()
 
     def get_queryset(self):
         qs            = super().get_queryset()
@@ -546,6 +613,27 @@ class SeanceViewSet(BaseViewSet):
             qs = qs.filter(annee_id=annee_id)
 
         return qs.order_by('date_seance', 'heure_debut')
+
+    # ── Action : seances_liees ────────────────────────────────────────────
+
+    @action(
+        detail=True,
+        methods=['get'],
+        permission_classes=[IsAuthenticated, ProfilActifPermission],
+        url_path='seances_liees',
+    )
+    def seances_liees(self, request, pk=None):
+        """
+        Retourne la (ou les) séance(s) jumelle(s) d'un cours mutualisé.
+        Si la séance n'est pas mutualisée, retourne une liste vide.
+        """
+        seance = self.get_object()
+        liees  = []
+        if seance.seance_liee:
+            liees.append(seance.seance_liee)
+        liees.extend(seance.seances_associees.all())
+        serializer = SeanceSerializer(liees, many=True)
+        return Response({'count': len(liees), 'results': serializer.data})
 
     # ── Action : reporter ────────────────────────────────────────────────────
 
