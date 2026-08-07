@@ -177,3 +177,8 @@ CSRF_TRUSTED_ORIGINS = [
 
 # Rappel : Ceci doit toujours être à True
 CORS_ALLOW_CREDENTIALS = True
+
+# Media files (Profile pictures, etc.)
+MEDIA_URL = '/media/'
+import os
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

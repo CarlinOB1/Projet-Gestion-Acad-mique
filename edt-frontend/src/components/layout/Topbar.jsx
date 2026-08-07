@@ -4,7 +4,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, User } from 'lucide-react';
 import useAuthStore from '@/store/authStore';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { NAV_ITEMS } from '@/lib/navigation';
 
 export default function Topbar({ onMenuToggle }) {
@@ -16,13 +16,17 @@ export default function Topbar({ onMenuToggle }) {
   const pageTitle   = currentItem ? currentItem.label : 'Tableau de bord';
 
   const roleStyles = {
-    responsable: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900',
+    admin: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900',
+    chef_departement: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-400 dark:border-indigo-900',
+    referent_l1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/40 dark:text-teal-400 dark:border-teal-900',
     enseignant:  'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900',
     etudiant:    'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-900',
   };
 
   const roleLabels = {
-    responsable: 'Responsable',
+    admin: 'Administrateur',
+    chef_departement: 'Chef de Département',
+    referent_l1: 'Référent L1',
     enseignant:  'Enseignant',
     etudiant:    'Étudiant',
   };
@@ -57,6 +61,7 @@ export default function Topbar({ onMenuToggle }) {
             </span>
           </div>
           <Avatar className="h-10 w-10">
+            {user?.photo && <AvatarImage src={user.photo} alt={user?.nom_complet} className="object-cover" />}
             <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
               {user?.first_name?.[0]}{user?.last_name?.[0] || <User className="h-4 w-4" />}
             </AvatarFallback>

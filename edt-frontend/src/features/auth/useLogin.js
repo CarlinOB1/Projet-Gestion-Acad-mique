@@ -39,7 +39,9 @@ export function useLogin() {
 
     onSuccess: (response) => {
       const { access, refresh, user } = response.data;
-      // getState() — écriture directe sans abonnement réactif
+      // Nettoyage préventif du store avant d'écrire les nouvelles données
+      // pour éviter qu'un ancien rôle en cache ne persiste
+      useAuthStore.getState().clearAuth();
       useAuthStore.getState().setAuth({
         accessToken:  access,
         refreshToken: refresh,

@@ -49,12 +49,21 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         role = self._get_role(user)
 
         # 4. Ajoute les infos utilisateur dans la réponse (pas dans le token)
+        photo_url = None
+        if hasattr(user, 'profil') and user.profil.photo:
+            request = self.context.get('request')
+            if request:
+                photo_url = request.build_absolute_uri(user.profil.photo.url)
+            else:
+                photo_url = user.profil.photo.url
+
         data['user'] = {
             'id'         : user.pk,
             'username'   : user.username,
             'nom_complet': self._get_nom_complet(user),
             'role'       : role,
             'statut'     : user.profil.statut if hasattr(user, 'profil') else 'actif',
+            'photo'      : photo_url,
         }
 
         return data
@@ -72,13 +81,11 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def _get_role(user):
         if user.is_superuser:
             return 'admin'
-        if user.groups.filter(name='responsable').exists():
-            return 'responsable'
         if hasattr(user, 'profil'):
             if hasattr(user.profil, 'enseignant'):
                 enseignant = user.profil.enseignant
-                # Chef de département : enseignant qui dirige au moins un département
-                if enseignant.departements_diriges.exists():
+                # Chef de département : dirige un département OU une filière
+                if enseignant.departements_diriges.exists() or enseignant.filieres_dirigees.exists():
                     return 'chef_departement'
                 # Référent de classe : enseignant assigné à des classes L1
                 if hasattr(enseignant, 'referent_classes'):

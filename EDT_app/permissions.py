@@ -18,32 +18,26 @@ class ProfilActifPermission(BasePermission):
         return request.user.profil.statut == 'actif'
 
 
-class IsResponsable(BasePermission):
-    """
-    Autorise uniquement les membres du groupe 'responsable'.
-    Utilisé pour les opérations de création, modification, suppression.
-    """
-    message = "Accès réservé au responsable pédagogique."
-
-    def has_permission(self, request, view):
-        if request.user.is_superuser:
-            return True
-        return request.user.groups.filter(name='responsable').exists()
-
-
-class IsResponsableOrReadOnly(BasePermission):
+class IsChefDepartementOrReadOnly(BasePermission):
     """
     Lecture libre pour tout utilisateur authentifié et actif.
-    Écriture réservée au responsable (ou superuser).
+    Écriture réservée au chef de département (ou superuser).
     """
-    message = "Modification réservée au responsable pédagogique."
+    message = "Modification réservée au chef de département."
 
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
         if request.user.is_superuser:
             return True
-        return request.user.groups.filter(name='responsable').exists()
+        return (
+            hasattr(request.user, 'profil')
+            and hasattr(request.user.profil, 'enseignant')
+            and (
+                request.user.profil.enseignant.departements_diriges.exists()
+                or request.user.profil.enseignant.filieres_dirigees.exists()
+            )
+        )
 
 
 class IsEnseignant(BasePermission):
@@ -76,9 +70,8 @@ class IsEtudiant(BasePermission):
 
 class IsChefDepartement(BasePermission):
     """
-    Vérifie que l'utilisateur est chef d'au moins un département.
-    Un chef de département est un enseignant lié à un Departement via le champ 'chef'.
-    Il a des droits d'écriture sur les séances des filières de son département.
+    Vérifie que l'utilisateur est chef d'au moins un département ou une filière.
+    Il a des droits d'écriture globaux en tant qu'administrateur de l'application.
     """
     message = "Accès réservé aux chefs de département."
 
@@ -88,7 +81,10 @@ class IsChefDepartement(BasePermission):
         return (
             hasattr(request.user, 'profil')
             and hasattr(request.user.profil, 'enseignant')
-            and request.user.profil.enseignant.departements_diriges.exists()
+            and (
+                request.user.profil.enseignant.departements_diriges.exists()
+                or request.user.profil.enseignant.filieres_dirigees.exists()
+            )
         )
 
 
@@ -117,6 +113,7 @@ class IsChefOrReferentOrReadOnly(BasePermission):
       - superuser
       - responsable (groupe Django)
       - chef de département (sur les séances de ses filières)
+      - responsable de filière (sur les séances de sa filière)
       - référent de classe (sur ses classes assignées)
     Cette permission est une porte d'entrée générale ; le filtrage
     fin par département/classe se fait dans les ViewSets.
@@ -128,25 +125,24 @@ class IsChefOrReferentOrReadOnly(BasePermission):
             return True
         if request.user.is_superuser:
             return True
-        if request.user.groups.filter(name='responsable').exists():
-            return True
         if not hasattr(request.user, 'profil'):
             return False
         profil = request.user.profil
         if not hasattr(profil, 'enseignant'):
             return False
         enseignant = profil.enseignant
-        # Chef de département ou référent de classe
+        # Chef de département (dirige un département OU une filière) ou référent de classe
         return (
             enseignant.departements_diriges.exists()
+            or enseignant.filieres_dirigees.exists()
             or hasattr(enseignant, 'referent_classes')
         )
 
 
-class IsOwnerOrResponsable(BasePermission):
+class IsOwnerOrChefDepartement(BasePermission):
     """
     Autorise l'accès si l'objet appartient à l'utilisateur connecté,
-    ou si l'utilisateur est responsable/superuser.
+    ou si l'utilisateur est chef de département/superuser.
     Utilisé au niveau objet (has_object_permission).
     """
     message = "Vous n'avez pas accès à cette ressource."
@@ -157,8 +153,14 @@ class IsOwnerOrResponsable(BasePermission):
     def has_object_permission(self, request, view, obj):
         if request.user.is_superuser:
             return True
-        if request.user.groups.filter(name='responsable').exists():
+        
+        # Check if user is chef_departement
+        if (hasattr(request.user, 'profil') and 
+            hasattr(request.user.profil, 'enseignant') and 
+            (request.user.profil.enseignant.departements_diriges.exists() or 
+             request.user.profil.enseignant.filieres_dirigees.exists())):
             return True
+
         # Vérifie si l'objet appartient à l'utilisateur courant
         if hasattr(obj, 'profil'):
             return obj.profil.user == request.user

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getMonProfil } from '@/api/acteurs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { User, Phone, Mail, GraduationCap, Briefcase, Hash } from 'lucide-react';
 import useAuthStore from '@/store/authStore';
 
@@ -21,7 +21,7 @@ export default function ProfilPage() {
     return <div className="p-8 text-center text-destructive">Erreur lors du chargement du profil.</div>;
   }
 
-  const { user, enseignant, etudiant, telephone, genre } = profil;
+  const { user, enseignant, etudiant, telephone, genre, photo } = profil;
   const initals = user?.first_name?.[0] + (user?.last_name?.[0] || '');
 
   return (
@@ -32,6 +32,7 @@ export default function ProfilPage() {
         {/* Colonne Gauche : Avatar et infos de base */}
         <Card className="md:col-span-1 flex flex-col items-center justify-center p-6 text-center">
           <Avatar className="h-32 w-32 mb-4 border-4 border-muted shadow-sm">
+            {photo && <AvatarImage src={photo} alt={`${user?.first_name} ${user?.last_name}`} className="object-cover" />}
             <AvatarFallback className="text-3xl bg-primary/10 text-primary">
               {initals || <User className="h-12 w-12" />}
             </AvatarFallback>

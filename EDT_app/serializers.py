@@ -89,16 +89,33 @@ class DepartementSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
 
 class FiliereSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
-    departement    = DepartementSerializer(read_only=True)
+    departement = DepartementSerializer(read_only=True)
     departement_id = serializers.PrimaryKeyRelatedField(
         queryset=Departement.objects.all(),
         source='departement',
         write_only=True,
     )
+    # Responsable de filière
+    responsable = serializers.SerializerMethodField(read_only=True)
+    responsable_id = serializers.PrimaryKeyRelatedField(
+        queryset=Enseignant.objects.all(),
+        source='responsable',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model  = Filiere
-        fields = ['id', 'libelle', 'departement', 'departement_id']
+        fields = ['id', 'libelle', 'departement', 'departement_id', 'responsable', 'responsable_id']
+
+    def get_responsable(self, obj):
+        if obj.responsable and hasattr(obj.responsable, 'profil'):
+            return {
+                'id'         : obj.responsable.profil.user.pk,
+                'nom_complet': f"{obj.responsable.profil.user.last_name} {obj.responsable.profil.user.first_name}".strip(),
+            }
+        return None
 
 
 class ParcoursSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
@@ -323,11 +340,21 @@ class ProfilSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         write_only=True,
     )
 
+    photo   = serializers.SerializerMethodField()
+
+    def get_photo(self, obj):
+        if obj.photo:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.photo.url)
+            return obj.photo.url
+        return None
+
     class Meta:
         model  = Profil
         fields = [
             'user_id', 'user',
-            'genre', 'telephone', 'statut', 'motif_suspension',
+            'genre', 'telephone', 'photo', 'statut', 'motif_suspension',
         ]
 
     def validate(self, data):

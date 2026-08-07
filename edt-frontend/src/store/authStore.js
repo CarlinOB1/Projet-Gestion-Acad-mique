@@ -44,7 +44,7 @@ const useAuthStore = create(
 export const selectIsResponsable     = (state) => state.user?.role === 'responsable' || state.user?.role === 'admin';
 export const selectIsChefDepartement = (state) => state.user?.role === 'chef_departement';
 export const selectIsReferentL1      = (state) => state.user?.role === 'referent_l1';
-export const selectIsEnseignant      = (state) => state.user?.role === 'enseignant';
+export const selectIsEnseignant      = (state) => ['enseignant', 'chef_departement', 'referent_l1'].includes(state.user?.role);
 export const selectIsEtudiant        = (state) => state.user?.role === 'etudiant';
 export const selectIsGestionnaire    = (state) => ['admin', 'responsable', 'chef_departement', 'referent_l1'].includes(state.user?.role);
 

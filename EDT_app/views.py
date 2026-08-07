@@ -20,11 +20,11 @@ from EDT_app.serializers import (
 )
 from .permissions import (
     ProfilActifPermission,
-    IsResponsable,
-    IsResponsableOrReadOnly,
+    IsChefDepartement,
+    IsChefDepartementOrReadOnly,
     IsEnseignant,
     IsEtudiant,
-    IsOwnerOrResponsable,
+    IsOwnerOrChefDepartement,
     IsChefDepartement,
     IsReferentClasse,
     IsChefOrReferentOrReadOnly,
@@ -57,13 +57,13 @@ class FaculteViewSet(BaseViewSet):
     """
     queryset           = Faculte.objects.all()
     serializer_class   = FaculteSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
 
 class DepartementViewSet(BaseViewSet):
     queryset           = Departement.objects.select_related('faculte').all()
     serializer_class   = DepartementSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -76,7 +76,7 @@ class DepartementViewSet(BaseViewSet):
 class FiliereViewSet(BaseViewSet):
     queryset           = Filiere.objects.select_related('departement__faculte').all()
     serializer_class   = FiliereSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -89,7 +89,7 @@ class FiliereViewSet(BaseViewSet):
 class ParcoursViewSet(BaseViewSet):
     queryset           = Parcours.objects.all()
     serializer_class   = ParcoursSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
 
 class AnneeAcademiqueViewSet(BaseViewSet):
@@ -99,9 +99,9 @@ class AnneeAcademiqueViewSet(BaseViewSet):
     """
     queryset           = AnneeAcademique.objects.all()
     serializer_class   = AnneeAcademiqueSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsResponsable])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsChefDepartement])
     def archiver(self, request, pk=None):
         annee = self.get_object()
 
@@ -140,7 +140,7 @@ class AnneeAcademiqueViewSet(BaseViewSet):
 class SemestreViewSet(BaseViewSet):
     queryset           = Semestre.objects.select_related('annee').all()
     serializer_class   = SemestreSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs       = super().get_queryset()
@@ -160,7 +160,7 @@ class ClasseViewSet(BaseViewSet):
         'parcours', 'filiere', 'semestre__annee', 'annee'
     ).all()
     serializer_class   = ClasseSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs          = super().get_queryset()
@@ -175,7 +175,7 @@ class ClasseViewSet(BaseViewSet):
             qs = qs.filter(filiere_id=filiere_id)
         return qs
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsResponsable])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsChefDepartement])
     def passer_semestre(self, request, pk=None):
         """
         Transfère les étudiants éligibles de cette classe vers une classe cible.
@@ -256,7 +256,7 @@ class ProfilViewSet(BaseViewSet):
     """
     queryset           = Profil.objects.select_related('user').all()
     serializer_class   = ProfilSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsOwnerOrResponsable]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsOwnerOrChefDepartement]
 
     def get_permissions(self):
         """
@@ -265,13 +265,13 @@ class ProfilViewSet(BaseViewSet):
         - update/destroy : responsable uniquement
         """
         if self.action in ('list', 'create', 'update', 'partial_update', 'destroy'):
-            return [IsAuthenticated(), ProfilActifPermission(), IsResponsable()]
-        return [IsAuthenticated(), ProfilActifPermission(), IsOwnerOrResponsable()]
+            return [IsAuthenticated(), ProfilActifPermission(), IsChefDepartement()]
+        return [IsAuthenticated(), ProfilActifPermission(), IsOwnerOrChefDepartement()]
 
     @action(
         detail=True,
         methods=['patch'],
-        permission_classes=[IsAuthenticated, IsResponsable],
+        permission_classes=[IsAuthenticated, IsChefDepartement],
         url_path='changer_statut',
     )
     def changer_statut(self, request, pk=None):
@@ -287,7 +287,7 @@ class ProfilViewSet(BaseViewSet):
         serializer.is_valid(raise_exception=True)
         profil_maj = serializer.save()
         return Response(
-            ProfilSerializer(profil_maj).data,
+            ProfilSerializer(profil_maj, context={'request': request}).data,
             status=status.HTTP_200_OK,
         )
 
@@ -300,13 +300,13 @@ class ProfilViewSet(BaseViewSet):
     def me(self, request):
         """Retourne le profil complet de l'utilisateur connecté."""
         profil = request.user.profil
-        data = ProfilSerializer(profil).data
+        data = ProfilSerializer(profil, context={'request': request}).data
         
         # Enrichissement avec les données spécifiques au rôle
         if hasattr(profil, 'enseignant'):
-            data['enseignant'] = EnseignantSerializer(profil.enseignant).data
+            data['enseignant'] = EnseignantSerializer(profil.enseignant, context={'request': request}).data
         elif hasattr(profil, 'etudiant'):
-            data['etudiant'] = EtudiantSerializer(profil.etudiant).data
+            data['etudiant'] = EtudiantSerializer(profil.etudiant, context={'request': request}).data
             
         return Response(data, status=status.HTTP_200_OK)
 
@@ -321,7 +321,7 @@ class EnseignantViewSet(BaseViewSet):
         'profil__user', 'departement__faculte'
     ).all()
     serializer_class   = EnseignantSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs      = super().get_queryset()
@@ -384,12 +384,12 @@ class EtudiantViewSet(BaseViewSet):
         'classe__semestre__annee',
     ).all()
     serializer_class   = EtudiantSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_permissions(self):
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
-            return [IsAuthenticated(), ProfilActifPermission(), IsResponsable()]
-        return [IsAuthenticated(), ProfilActifPermission(), IsResponsableOrReadOnly()]
+            return [IsAuthenticated(), ProfilActifPermission(), IsChefDepartement()]
+        return [IsAuthenticated(), ProfilActifPermission(), IsChefDepartementOrReadOnly()]
 
     def get_queryset(self):
         qs          = super().get_queryset()
@@ -459,7 +459,7 @@ class EtudiantViewSet(BaseViewSet):
 class MatiereViewSet(BaseViewSet):
     queryset = Matiere.objects.select_related('departement__faculte').all()
     serializer_class   = MatiereSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs      = super().get_queryset()
@@ -474,7 +474,7 @@ class ModuleViewSet(BaseViewSet):
         'matiere__departement', 'semestre__annee'
     ).all()
     serializer_class   = ModuleSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs          = super().get_queryset()
@@ -659,7 +659,7 @@ class SeanceViewSet(BaseViewSet):
     @action(
         detail=True,
         methods=['patch'],
-        permission_classes=[IsAuthenticated, IsResponsable],
+        permission_classes=[IsAuthenticated, IsChefDepartement],
         url_path='reporter',
     )
     def reporter(self, request, pk=None):
@@ -685,7 +685,7 @@ class SeanceViewSet(BaseViewSet):
     @action(
         detail=False,
         methods=['get'],
-        permission_classes=[IsAuthenticated, IsResponsable],
+        permission_classes=[IsAuthenticated, IsChefDepartement],
         url_path='conflits',
     )
     def conflits(self, request):

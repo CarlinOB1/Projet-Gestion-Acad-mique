@@ -34,7 +34,9 @@ export const transformSeanceToEvent = (seance) => {
 export const useSeances = ({ role, filters = {} }) => {
   const getQueryFn = () => {
     switch (role) {
-      case 'responsable': return () => getSeances(filters);
+      case 'admin':
+      case 'chef_departement':
+      case 'referent_l1': return () => getSeances(filters);
       case 'enseignant':  return () => getMonPlanningEnseignant(filters);
       case 'etudiant':    return () => getMonPlanningEtudiant(filters);
       default:            return () => Promise.resolve([]);

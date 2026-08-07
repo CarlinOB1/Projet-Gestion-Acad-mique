@@ -44,6 +44,13 @@ class Filiere(models.Model):
     """Rattachée à un département."""
     libelle = models.CharField(max_length=100, blank=False)
     departement = models.ForeignKey(Departement, on_delete=models.CASCADE, related_name='filieres')
+    responsable = models.ForeignKey(
+        'Enseignant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='filieres_dirigees',
+    )
 
     def __str__(self):
         return self.libelle
@@ -287,6 +294,7 @@ class Profil(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     genre = models.CharField(max_length=1, choices=GENRE_CHOICES, blank=False)
     telephone = models.CharField(max_length=20, blank=True)
+    photo = models.ImageField(upload_to='profils/', blank=True, null=True)
     statut = models.CharField(max_length=10, choices=STATUT_CHOICES, default='actif')
     motif_suspension = models.TextField(
         blank=True,
@@ -358,7 +366,7 @@ class Etudiant(models.Model):
     profil = models.OneToOneField(Profil, on_delete=models.CASCADE, primary_key=True)
     matricule = models.CharField(max_length=20, unique=True, blank=False)
     parcours = models.ForeignKey(Parcours, on_delete=models.PROTECT)
-    filiere = models.ForeignKey(Filiere, on_delete=models.PROTECT)
+    filiere = models.ForeignKey(Filiere, on_delete=models.PROTECT, null=True, blank=True)
     classe = models.ForeignKey(Classe, on_delete=models.PROTECT)
 
     def clean(self):
@@ -376,9 +384,9 @@ class Etudiant(models.Model):
                     "La classe ne correspond pas au parcours de l'étudiant."
                 )
 
-        # Validation 3 : cohérence classe / filière
+        # Validation 3 : cohérence classe / filière (seulement si l'étudiant a une filière)
         if self.classe and self.filiere:
-            if self.classe.filiere != self.filiere:
+            if self.classe.filiere and self.classe.filiere != self.filiere:
                 raise ValidationError(
                     "La classe ne correspond pas à la filière de l'étudiant."
                 )

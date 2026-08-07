@@ -27,7 +27,6 @@ function RootRedirect() {
 
   switch (user?.role) {
     case 'admin':
-    case 'responsable':      return <Navigate to="/responsable/planning" replace />;
     case 'chef_departement':
     case 'referent_l1':      return <Navigate to="/chef/planning"        replace />;
     case 'enseignant':       return <Navigate to="/enseignant/planning"  replace />;
@@ -40,10 +39,12 @@ export const router = createBrowserRouter([
   { path: '/', element: <RootRedirect /> },
   { path: '/login', element: <LoginPage /> },
 
-  // ── Responsable ──────────────────────────────────────────────────────────
+
+
+  // ── Admin & Chef & Référent (Hybride) ─────────────────────────────────────────────
   {
-    path: '/responsable',
-    element: <ProtectedRoute allowedRoles={['responsable', 'admin']} />,
+    path: '/chef',
+    element: <ProtectedRoute allowedRoles={['admin', 'chef_departement', 'referent_l1']} />,
     children: [
       {
         element: <AppShell />,
@@ -56,25 +57,6 @@ export const router = createBrowserRouter([
           { path: 'organisation', element: <OrganisationPage /> },
           { path: 'enseignants', element: <EnseignantsPage /> },
           { path: 'etudiants', element: <EtudiantsPage /> },
-          { path: 'profil', element: <ProfilPage /> },
-          { path: '*', element: <Navigate to="planning" replace /> },
-        ],
-      },
-    ],
-  },
-
-  // ── Chef & Référent (Hybride) ─────────────────────────────────────────────
-  {
-    path: '/chef',
-    element: <ProtectedRoute allowedRoles={['chef_departement', 'referent_l1']} />,
-    children: [
-      {
-        element: <AppShell />,
-        children: [
-          { index: true, element: <Navigate to="planning" replace /> },
-          { path: 'planning', element: <PlanningPage /> },
-          { path: 'seances', element: <SeancesListePage /> },
-          { path: 'classes', element: <ClassesPage /> },
           { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
