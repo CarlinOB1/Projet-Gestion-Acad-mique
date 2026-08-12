@@ -5,7 +5,7 @@
  */
 import { useMemo } from 'react';
 import {
-    Search, SlidersHorizontal, Download, X,
+    Search, SlidersHorizontal, X,
     ChevronsDown, ChevronsUp,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';

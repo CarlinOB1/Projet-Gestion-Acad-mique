@@ -67,14 +67,14 @@ export const router = createBrowserRouter([
   // ── Enseignant ────────────────────────────────────────────────────────────
   {
     path: '/enseignant',
-    element: <ProtectedRoute allowedRoles={['enseignant']} />,
+    element: <ProtectedRoute allowedRoles={['enseignant', 'chef_departement', 'referent_l1']} />,
     children: [
       {
         element: <AppShell />,
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
-          { path: 'seances', element: <div className="p-6"><h3>Mes séances</h3></div> },
+          { path: 'seances', element: <SeancesListePage /> },
           { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],

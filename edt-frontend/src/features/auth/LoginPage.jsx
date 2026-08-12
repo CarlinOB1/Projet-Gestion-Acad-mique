@@ -11,7 +11,7 @@ import { useLogin, parseLoginError } from './useLogin';
 
 export default function LoginPage() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const user            = useAuthStore((state) => state.user);
+  const user = useAuthStore((state) => state.user);
 
   const { mutate, isPending, error, isError } = useLogin();
   const [showPassword, setShowPassword] = useState(false);
@@ -26,13 +26,15 @@ export default function LoginPage() {
   };
 
   // Redirection automatique après login réussi
+  // Redirection automatique après login réussi
   if (isAuthenticated && user) {
     switch (user.role) {
       case 'admin':
-      case 'responsable': return <Navigate to="/responsable/planning" replace />;
-      case 'enseignant':  return <Navigate to="/enseignant/planning"  replace />;
-      case 'etudiant':    return <Navigate to="/etudiant/planning"    replace />;
-      default:            return <Navigate to="/unauthorized"         replace />;
+      case 'chef_departement':
+      case 'referent_l1': return <Navigate to="/chef/planning" replace />;
+      case 'enseignant': return <Navigate to="/enseignant/planning" replace />;
+      case 'etudiant': return <Navigate to="/etudiant/planning" replace />;
+      default: return <Navigate to="/unauthorized" replace />;
     }
   }
 

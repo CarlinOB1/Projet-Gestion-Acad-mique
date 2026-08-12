@@ -34,6 +34,8 @@ from EDT_app.factories import (
 from EDT_app.models import (
     AnneeAcademique,
     Classe,
+    Departement,
+    Enseignant,
     Etudiant,
     Profil,
     Seance,
@@ -87,6 +89,48 @@ def auth_client(username, password):
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. TESTS SERIALIZERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+class TestDepartementChefRole(TestCase):
+    """Le chef de département doit être un enseignant rattaché au même département."""
+
+    def test_un_enseignant_peut_etre_designe_chef_du_departement_auquel_il_appartient(self):
+        departement = DepartementFactory(libelle="Physique")
+        enseignant = EnseignantFactory(departement=departement)
+
+        departement.chef = enseignant
+        departement.full_clean()
+        departement.save()
+
+        departement.refresh_from_db()
+        self.assertEqual(departement.chef, enseignant)
+
+    def test_un_enseignant_d_un_autre_departement_ne_peut_pas_etre_chef(self):
+        departement = DepartementFactory(libelle="Physique")
+        autre_departement = DepartementFactory(libelle="Chimie")
+        enseignant_autre_departement = EnseignantFactory(departement=autre_departement)
+
+        departement.chef = enseignant_autre_departement
+
+        with self.assertRaises(ValidationError):
+            departement.full_clean()
+
+    def test_le_chef_peut_etre_retirer_puis_reaffecter(self):
+        departement = DepartementFactory(libelle="Physique")
+        enseignant_1 = EnseignantFactory(departement=departement)
+        enseignant_2 = EnseignantFactory(departement=departement)
+
+        departement.chef = enseignant_1
+        departement.save()
+
+        departement.chef = None
+        departement.save()
+        self.assertIsNone(departement.chef)
+
+        departement.chef = enseignant_2
+        departement.full_clean()
+        departement.save()
+        self.assertEqual(departement.chef, enseignant_2)
+
 
 class TestEtudiantSerializerMatricule(TestCase):
     """Validation du format matricule ETU-XXXXX dans le serializer."""

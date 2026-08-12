@@ -159,9 +159,11 @@ export default function PlanningPage() {
 
     const html2pdf = (await import('html2pdf.js')).default;
 
+    const semestre = semestres.find((s) => String(s.id) === String(selectedSemestreId));
+    const rolePrefix = role === ROLES.ENSEIGNANT ? 'enseignant' : GESTIONNAIRE_ROLES.includes(role) ? 'chef' : 'etudiant';
     const opt = {
       margin: 10,
-      filename: `emploi_du_temps_${semestres.find((s) => String(s.id) === String(selectedSemestreId))?.libelle || 'planning'}.pdf`,
+      filename: `emploi_du_temps_${rolePrefix}_${semestre?.libelle || 'planning'}.pdf`,
       image: { type: 'png' },
       html2canvas: { scale: 6, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
@@ -217,8 +219,7 @@ export default function PlanningPage() {
             </SelectContent>
           </Select>
 
-          {role === ROLES.ETUDIANT && (
-            <div className="flex gap-2 w-full sm:w-auto">
+          <div className="flex gap-2 w-full sm:w-auto">
               <Button variant="outline" className="flex-1 sm:flex-none gap-2 bg-background" onClick={handleGeneratePDF}>
                 <Printer className="h-4 w-4" />
                 <span className="hidden sm:inline">Générer PDF</span>
@@ -228,7 +229,6 @@ export default function PlanningPage() {
                 <span className="hidden sm:inline">Lier au calendrier</span>
               </Button>
             </div>
-          )}
           {GESTIONNAIRE_ROLES.includes(role) && (
             <Button
               onClick={() => { setSelectedSeance(null); setIsSeanceDrawerOpen(true); }}

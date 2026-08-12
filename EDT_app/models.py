@@ -22,9 +22,9 @@ class Faculte(models.Model):
 class Departement(models.Model):
     """
     Rattaché à une faculté. Possède des matières et des enseignants.
-    Le champ 'chef' est un ForeignKey nullable vers un Enseignant :
-    il représente le chef de département, qui est aussi un enseignant
-    et a des droits de gestion des emplois du temps pour ses filières.
+    Le champ 'chef' représente le chef de département : un enseignant
+    rattaché au même département, qui a des droits de gestion sur son
+    département et ses filières associées.
     """
     libelle = models.CharField(max_length=100, blank=False)
     faculte = models.ForeignKey(Faculte, on_delete=models.CASCADE, related_name='departements')
@@ -35,6 +35,18 @@ class Departement(models.Model):
         blank=True,
         related_name='departements_diriges',
     )
+
+    def clean(self):
+        if self.pk is not None and self.chef_id is not None:
+            chef = self.chef
+            if chef and chef.departement_id is not None and chef.departement_id != self.pk:
+                raise ValidationError(
+                    {"chef": "Le chef de département doit être rattaché au même département."}
+                )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.libelle
@@ -332,6 +344,7 @@ class Enseignant(models.Model):
     """
     Enseignant rattaché à un département.
     Son grade et son type de contrat sont définis par des choix fixes.
+    S'il est chef de département, il doit rester rattaché au département qu'il dirige.
     """
     GRADE_CHOICES = [
         ('', '----------'),
@@ -349,6 +362,20 @@ class Enseignant(models.Model):
     grade = models.CharField(max_length=50, choices=GRADE_CHOICES, blank=True)
     contrat = models.CharField(max_length=20, choices=TYPE_CHOICES, blank=False)
     departement = models.ForeignKey(Departement, on_delete=models.PROTECT)
+
+    def clean(self):
+        if self.pk is not None:
+            departements_diriges = Departement.objects.filter(chef=self)
+            if departements_diriges.exists():
+                departement_dirige = departements_diriges.first()
+                if self.departement_id is None or self.departement_id != departement_dirige.pk:
+                    raise ValidationError(
+                        {"departement": "Un enseignant chef de département doit rester rattaché au département qu'il dirige."}
+                    )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.profil.user.last_name} {self.profil.user.first_name}"

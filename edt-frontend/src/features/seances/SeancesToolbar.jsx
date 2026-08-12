@@ -4,7 +4,7 @@
  * recherche + un seul bouton "Filtres" (Popover) + chip semestre + compteur.
  */
 import { useMemo } from 'react';
-import { Search, SlidersHorizontal, Download, Plus, X } from 'lucide-react';
+import { Search, SlidersHorizontal, Plus, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,7 +35,6 @@ export default function SeancesToolbar({
   onFiltersChange,
 
   resultCount = 0,
-  onExportCsv,
   allExpanded = true,
   onToggleExpandAll,
   onCreateClick,
@@ -175,11 +174,6 @@ export default function SeancesToolbar({
           </PopoverContent>
         </Popover>
 
-        {onExportCsv && (
-          <Button variant="outline" size="icon" onClick={onExportCsv} aria-label="Exporter en CSV">
-            <Download className="h-4 w-4" />
-          </Button>
-        )}
 
         {onCreateClick && (
           <Button onClick={onCreateClick} className="gap-1.5 shrink-0">

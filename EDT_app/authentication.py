@@ -20,7 +20,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
       {
         "user_id"    : int,
         "username"   : str,
-        "role"       : "responsable" | "enseignant" | "etudiant" | "admin",
+        "role"       : "responsable" | "chef_departement" | "enseignant" | "etudiant" | "admin",
         "nom_complet": str,
         "statut"     : "actif" | "suspendu"
       }
@@ -84,8 +84,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if hasattr(user, 'profil'):
             if hasattr(user.profil, 'enseignant'):
                 enseignant = user.profil.enseignant
-                # Chef de département : dirige un département OU une filière
-                if enseignant.departements_diriges.exists() or enseignant.filieres_dirigees.exists():
+                # Chef de département : dirige un département
+                if enseignant.departements_diriges.exists():
                     return 'chef_departement'
                 # Référent de classe : enseignant assigné à des classes L1
                 if hasattr(enseignant, 'referent_classes'):

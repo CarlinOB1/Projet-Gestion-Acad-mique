@@ -15,9 +15,7 @@ import ClasseGroupSection from './ClasseGroupSection';
 import SeanceDrawer from './SeanceDrawer';
 import ReportDrawer from './ReportDrawer';
 import { Button } from '@/components/ui/button';
-import { exportToCsv } from '@/lib/exportCsv';
-import { formatDate, formatHeure } from '@/lib/utils';
-import { Plus, ChevronsDown, ChevronsUp, Download } from 'lucide-react';
+import { Plus, ChevronsDown, ChevronsUp } from 'lucide-react';
 
 const DEFAULT_FILTERS = {
     semestreId: '',
@@ -161,19 +159,6 @@ export default function SeancesListePage() {
         }
     };
 
-    const handleExportCsv = () => {
-        const columns = [
-            { key: 'classe', label: 'Classe', accessor: (s) => s.classe?.libelle },
-            { key: 'date', label: 'Date', accessor: (s) => formatDate(s.date_seance) },
-            { key: 'debut', label: 'Début', accessor: (s) => formatHeure(s.heure_debut) },
-            { key: 'fin', label: 'Fin', accessor: (s) => formatHeure(s.heure_fin) },
-            { key: 'module', label: 'Module', accessor: (s) => s.module?.libelle },
-            { key: 'enseignant', label: 'Enseignant', accessor: (s) => s.enseignant?.nom_complet },
-            { key: 'type', label: 'Type', accessor: (s) => s.type_seance },
-            { key: 'statut', label: 'Statut', accessor: (s) => s.statut },
-        ];
-        exportToCsv('seances_export', seancesFiltrees, columns);
-    };
 
     return (
         <div className="space-y-6 w-full max-w-7xl mx-auto">
@@ -213,12 +198,7 @@ export default function SeancesListePage() {
                     {seancesFiltrees.length} séance{seancesFiltrees.length > 1 ? 's' : ''} affichée{seancesFiltrees.length > 1 ? 's' : ''}
                 </p>
                 <div className="flex items-center gap-2">
-                    {seancesFiltrees.length > 0 && (
-                        <Button variant="outline" size="sm" onClick={handleExportCsv}>
-                            <Download className="h-4 w-4 mr-1.5" />
-                            Exporter CSV
-                        </Button>
-                    )}
+
                     {classesGroupees.length > 0 && (
                         <>
                             <Button variant="ghost" size="sm" onClick={handleDeplierTout}>

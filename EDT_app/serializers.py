@@ -95,7 +95,7 @@ class FiliereSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         source='departement',
         write_only=True,
     )
-    # Responsable de filière
+    # Responsable de filière : dérivé du chef du département pour éviter la confusion.
     responsable = serializers.SerializerMethodField(read_only=True)
     responsable_id = serializers.PrimaryKeyRelatedField(
         queryset=Enseignant.objects.all(),
@@ -110,6 +110,12 @@ class FiliereSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         fields = ['id', 'libelle', 'departement', 'departement_id', 'responsable', 'responsable_id']
 
     def get_responsable(self, obj):
+        chef = obj.departement.chef if obj.departement_id else None
+        if chef and hasattr(chef, 'profil'):
+            return {
+                'id'         : chef.profil.user.pk,
+                'nom_complet': f"{chef.profil.user.last_name} {chef.profil.user.first_name}".strip(),
+            }
         if obj.responsable and hasattr(obj.responsable, 'profil'):
             return {
                 'id'         : obj.responsable.profil.user.pk,

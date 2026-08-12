@@ -33,10 +33,7 @@ class IsChefDepartementOrReadOnly(BasePermission):
         return (
             hasattr(request.user, 'profil')
             and hasattr(request.user.profil, 'enseignant')
-            and (
-                request.user.profil.enseignant.departements_diriges.exists()
-                or request.user.profil.enseignant.filieres_dirigees.exists()
-            )
+            and request.user.profil.enseignant.departements_diriges.exists()
         )
 
 
@@ -70,7 +67,7 @@ class IsEtudiant(BasePermission):
 
 class IsChefDepartement(BasePermission):
     """
-    Vérifie que l'utilisateur est chef d'au moins un département ou une filière.
+    Vérifie que l'utilisateur est chef d'au moins un département.
     Il a des droits d'écriture globaux en tant qu'administrateur de l'application.
     """
     message = "Accès réservé aux chefs de département."
@@ -81,10 +78,7 @@ class IsChefDepartement(BasePermission):
         return (
             hasattr(request.user, 'profil')
             and hasattr(request.user.profil, 'enseignant')
-            and (
-                request.user.profil.enseignant.departements_diriges.exists()
-                or request.user.profil.enseignant.filieres_dirigees.exists()
-            )
+            and request.user.profil.enseignant.departements_diriges.exists()
         )
 
 
@@ -112,8 +106,7 @@ class IsChefOrReferentOrReadOnly(BasePermission):
     Écriture autorisée pour :
       - superuser
       - responsable (groupe Django)
-      - chef de département (sur les séances de ses filières)
-      - responsable de filière (sur les séances de sa filière)
+      - chef de département (sur les séances de son département)
       - référent de classe (sur ses classes assignées)
     Cette permission est une porte d'entrée générale ; le filtrage
     fin par département/classe se fait dans les ViewSets.
@@ -131,10 +124,8 @@ class IsChefOrReferentOrReadOnly(BasePermission):
         if not hasattr(profil, 'enseignant'):
             return False
         enseignant = profil.enseignant
-        # Chef de département (dirige un département OU une filière) ou référent de classe
         return (
             enseignant.departements_diriges.exists()
-            or enseignant.filieres_dirigees.exists()
             or hasattr(enseignant, 'referent_classes')
         )
 
@@ -155,10 +146,9 @@ class IsOwnerOrChefDepartement(BasePermission):
             return True
         
         # Check if user is chef_departement
-        if (hasattr(request.user, 'profil') and 
-            hasattr(request.user.profil, 'enseignant') and 
-            (request.user.profil.enseignant.departements_diriges.exists() or 
-             request.user.profil.enseignant.filieres_dirigees.exists())):
+        if (hasattr(request.user, 'profil') and
+            hasattr(request.user.profil, 'enseignant') and
+            request.user.profil.enseignant.departements_diriges.exists()):
             return True
 
         # Vérifie si l'objet appartient à l'utilisateur courant

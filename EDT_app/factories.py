@@ -129,6 +129,7 @@ class EnseignantFactory(DjangoModelFactory):
 
     profil = factory.SubFactory(ProfilFactory)
     grade = "Docteur"
+    contrat = "Permanent"
     departement = factory.SubFactory(DepartementFactory)
 
 

@@ -24,7 +24,7 @@ SECRET_KEY = 'django-insecure-bm4l@%-r-36nwnwhh3(th&w9k8y4tna*odmp8xxaa#*f()tkgc
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['.ngrok-free.dev', 'localhost', '127.0.0.1']
 
 # Application definition
 
@@ -181,4 +181,4 @@ CORS_ALLOW_CREDENTIALS = True
 # Media files (Profile pictures, etc.)
 MEDIA_URL = '/media/'
 import os
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

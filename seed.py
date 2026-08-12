@@ -257,6 +257,17 @@ def creer_utilisateur(username, first_name, last_name, email=None):
     )
     return user
 
+
+def creer_enseignant(username, first_name, last_name, departement, grade='Docteur', contrat='Permanent'):
+    user = creer_utilisateur(username, first_name, last_name)
+    profil = ProfilFactory(user=user, genre='M', telephone='060000000')
+    return Enseignant.objects.create(
+        profil=profil,
+        grade=grade,
+        contrat=contrat,
+        departement=departement,
+    )
+
 matricule_counter = 1
 def generate_matricule():
     global matricule_counter
@@ -312,14 +323,32 @@ for f_name, f_obj in filieres.items():
 
 print("→ Création Enseignants, Matières et Séances factices...")
 for f_name, dept in deps.items():
-    # Enseignants
-    e1_user = creer_utilisateur(f'ens1.{slugify_name(f_name)}', 'Jean', f'Prof{f_name}')
-    e1_prof = ProfilFactory(user=e1_user, genre='M', telephone='060000000')
-    ens1 = Enseignant.objects.create(profil=e1_prof, grade='Docteur', contrat='Permanent', departement=dept)
-    
-    # Assign as responsable de filière
+    # Chef de département + enseignants supplémentaires
+    chef = creer_enseignant(
+        username=f'chef.{slugify_name(f_name)}',
+        first_name='Chef',
+        last_name=f'Prof{f_name}',
+        departement=dept,
+    )
+    dept.chef = chef
+    dept.save()
+
+    enseignant2 = creer_enseignant(
+        username=f'ens2.{slugify_name(f_name)}',
+        first_name='Alice',
+        last_name=f'Prof{f_name}',
+        departement=dept,
+    )
+    enseignant3 = creer_enseignant(
+        username=f'ens3.{slugify_name(f_name)}',
+        first_name='Bob',
+        last_name=f'Prof{f_name}',
+        departement=dept,
+    )
+
+    # Assign as responsable de filière (optionnel, conservé pour compatibilité)
     if f_name in filieres:
-        filieres[f_name].responsable = ens1
+        filieres[f_name].responsable = chef
         filieres[f_name].save()
     
     # Matière & Module
@@ -329,7 +358,7 @@ for f_name, dept in deps.items():
     # Séance
     if f_name in classes_l2:
         Seance.objects.create(
-            module=mod, enseignant=ens1, classe=classes_l2[f_name], annee=annee,
+            module=mod, enseignant=chef, classe=classes_l2[f_name], annee=annee,
             date_seance=today, heure_debut=time(9, 0), heure_fin=time(11, 0),
             type_seance='CM', statut='Confirmée'
         )
