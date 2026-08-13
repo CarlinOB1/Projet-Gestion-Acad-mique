@@ -7,11 +7,11 @@
 /**
  * Filtre une liste d'événements FullCalendar selon des critères combinés.
  * @param {Array} events
- * @param {{ search?: string, typeSeance?: string, enseignantId?: string, statut?: string }} filters
+ * @param {{ search?: string, typeSeance?: string, enseignantId?: string, classeId?: string, statut?: string }} filters
  * @returns {Array}
  */
 export function applyPlanningFilters(events = [], filters = {}) {
-    const { search = '', typeSeance = '', enseignantId = '', statut = '' } = filters;
+    const { search = '', typeSeance = '', enseignantId = '', classeId = '', statut = '' } = filters;
     const searchLower = search.trim().toLowerCase();
 
     return events.filter((event) => {
@@ -28,6 +28,10 @@ export function applyPlanningFilters(events = [], filters = {}) {
             return false;
         }
 
+        if (classeId && String(seance.classe?.id) !== String(classeId)) {
+            return false;
+        }
+
         if (statut && seance.statut !== statut) return false;
 
         return true;
@@ -36,7 +40,7 @@ export function applyPlanningFilters(events = [], filters = {}) {
 
 /**
  * Dérive la liste des enseignants distincts présents dans les événements,
- * pour peupler dynamiquement le select (pas de valeurs figées côté front).
+ * pour peupler dynamiquement le select.
  * @param {Array} events
  * @returns {Array<{ id, nom_complet }>}
  */
@@ -54,13 +58,35 @@ export function getEnseignantsDisponibles(events = []) {
     return Array.from(map.values()).sort((a, b) => a.nom_complet.localeCompare(b.nom_complet));
 }
 
+/**
+ * Dérive la liste des classes distinctes présentes dans les événements.
+ * @param {Array} events
+ * @returns {Array<{ id, libelle, filiere }>}
+ */
+export function getClassesDisponibles(events = []) {
+    const map = new Map();
+    events.forEach((event) => {
+        const classe = event.extendedProps?.classe;
+        if (classe?.id && !map.has(classe.id)) {
+            map.set(classe.id, {
+                id: classe.id,
+                libelle: classe.libelle || classe.code || `Classe ${classe.id}`,
+                filiere_id: classe.filiere?.id,
+                filiere_libelle: classe.filiere?.libelle,
+            });
+        }
+    });
+    return Array.from(map.values()).sort((a, b) => a.libelle.localeCompare(b.libelle));
+}
+
 export const FILTRES_VIDES = {
     search: '',
     typeSeance: '',
     enseignantId: '',
+    classeId: '',
     statut: '',
 };
 
 export function aDesFiltresActifs(filters) {
     return Object.values(filters).some((v) => v !== '');
-}
+}

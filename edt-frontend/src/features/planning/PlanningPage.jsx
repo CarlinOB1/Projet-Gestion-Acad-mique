@@ -1,18 +1,13 @@
-/**
- * @file PlanningPage.jsx
- * @description Page planning — semestre, filtres, grille, actions responsable,
- * détail de séance en lecture seule pour enseignant/étudiant.
- */
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Printer, Calendar, Pencil, CalendarClock, Trash2 } from 'lucide-react';
+import { Plus, Printer, Calendar, Pencil, CalendarClock, Trash2, Layers } from 'lucide-react';
 import useAuthStore from '@/store/authStore';
 import { useSeances } from '@/hooks/useSeances';
 import { useDeleteSeance } from '@/hooks/useSeanceMutations';
 import { getMonProfil } from '@/api/acteurs';
 import apiClient from '@/api/client';
 import { ROLES, GESTIONNAIRE_ROLES } from '@/lib/constants';
-import { applyPlanningFilters, getEnseignantsDisponibles, FILTRES_VIDES } from '@/lib/planningFilters';
+import { applyPlanningFilters, getEnseignantsDisponibles, getClassesDisponibles, FILTRES_VIDES } from '@/lib/planningFilters';
 import PlanningTableView from './PlanningTableView';
 import PlanningFilters from './PlanningFilters';
 import SeanceDetailsDialog from './SeanceDetailsDialog';
@@ -42,6 +37,7 @@ export default function PlanningPage() {
   });
   const [isSeanceDrawerOpen, setIsSeanceDrawerOpen] = useState(false);
   const [selectedSeance, setSelectedSeance] = useState(null);
+  const [contextualDefaults, setContextualDefaults] = useState(null);
   const [isReportDrawerOpen, setIsReportDrawerOpen] = useState(false);
   const [seanceToReport, setSeanceToReport] = useState(null);
   const [filters, setFilters] = useState(FILTRES_VIDES);
@@ -80,22 +76,16 @@ export default function PlanningPage() {
     setFilters(FILTRES_VIDES);
   }, []);
 
-  // Keep a ref to semestres so the navigation effect doesn't depend on it
-  const semestresRef = useRef(semestres);
-  useEffect(() => { semestresRef.current = semestres; }, [semestres]);
-
   // Auto-navigate whenever the selected semester changes
   const lastJumpedSemestreId = useRef(null);
   useEffect(() => {
     if (!selectedSemestreId || !semestres.length) return;
-    // Only jump if the semester truly changed (not a re-render)
     if (lastJumpedSemestreId.current === selectedSemestreId) return;
 
     const semestre = semestres.find((s) => String(s.id) === String(selectedSemestreId));
     if (!semestre) return;
 
     lastJumpedSemestreId.current = selectedSemestreId;
-
     const debut = semestre.date_debut ? new Date(semestre.date_debut) : null;
 
     const getMondayOf = (d) => {
@@ -120,6 +110,11 @@ export default function PlanningPage() {
     [events]
   );
 
+  const classesDisponibles = useMemo(
+    () => getClassesDisponibles(events),
+    [events]
+  );
+
   const filteredEvents = useMemo(
     () => applyPlanningFilters(events, filters),
     [events, filters]
@@ -136,7 +131,6 @@ export default function PlanningPage() {
       if (!groups[year]) groups[year] = [];
       groups[year].push(s);
     });
-    // Optional: Sort years descending if needed, but assuming they come sorted from API
     return groups;
   }, [semestres]);
 
@@ -151,6 +145,21 @@ export default function PlanningPage() {
       return;
     }
     setDetailsSeance(seance);
+  };
+
+  // Handler pour le clic sur une case vide (+ Affecter)
+  const handleEmptyCellClick = ({ date_seance, heure_debut, heure_fin }) => {
+    if (!GESTIONNAIRE_ROLES.includes(role)) return;
+    const classeSelectionnee = classesDisponibles.find(c => String(c.id) === String(filters.classeId));
+    setContextualDefaults({
+      date_seance,
+      heure_debut,
+      heure_fin,
+      classe_id: filters.classeId ? String(filters.classeId) : '',
+      filiere_id: classeSelectionnee?.filiere_id ? String(classeSelectionnee.filiere_id) : '',
+    });
+    setSelectedSeance(null);
+    setIsSeanceDrawerOpen(true);
   };
 
   const handleGeneratePDF = async () => {
@@ -172,22 +181,41 @@ export default function PlanningPage() {
     html2pdf().set(opt).from(element).save();
   };
 
-  const planningTitle = role === ROLES.ETUDIANT && profilEtudiant?.etudiant?.classe
-    ? `Emploi du temps — ${profilEtudiant.etudiant.classe.libelle || profilEtudiant.etudiant.classe.code}`
-    : 'Emploi du temps';
+  // Calcul du titre contextuel de la page
+  const selectedClasse = useMemo(
+    () => classesDisponibles.find(c => String(c.id) === String(filters.classeId)),
+    [classesDisponibles, filters.classeId]
+  );
+
+  const pageTitle = useMemo(() => {
+    if (role === ROLES.ETUDIANT && profilEtudiant?.etudiant?.classe) {
+      return `Planning — ${profilEtudiant.etudiant.classe.libelle || profilEtudiant.etudiant.classe.code}`;
+    }
+    if (selectedClasse) {
+      return `Planning — ${selectedClasse.libelle}`;
+    }
+    if (GESTIONNAIRE_ROLES.includes(role)) {
+      return `Planning Global du Département`;
+    }
+    return 'Planning';
+  }, [role, profilEtudiant, selectedClasse]);
 
   return (
-    <div className="space-y-6 w-full max-w-7xl mx-auto relative">
+    <div className="space-y-5 w-full max-w-7xl mx-auto relative">
 
+      {/* ── En-tête Principal ── */}
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            {planningTitle.replace('Emploi du temps', 'Planning')}
+          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
+            {pageTitle}
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Consultez les emplois du temps des cours.
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {selectedClasse 
+              ? `Emploi du temps des cours pour la classe ${selectedClasse.libelle}.`
+              : 'Consultez et gérez les emplois du temps des cours.'}
           </p>
         </div>
+
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
           <Select
             value={selectedSemestreId ? String(selectedSemestreId) : ''}
@@ -220,19 +248,24 @@ export default function PlanningPage() {
           </Select>
 
           <div className="flex gap-2 w-full sm:w-auto">
-              <Button variant="outline" className="flex-1 sm:flex-none gap-2 bg-background" onClick={handleGeneratePDF}>
-                <Printer className="h-4 w-4" />
-                <span className="hidden sm:inline">Générer PDF</span>
-              </Button>
-              <Button variant="outline" className="flex-1 sm:flex-none gap-2 bg-background" onClick={() => alert("Le lien d'abonnement iCal a été copié dans le presse-papier ! (Fonctionnalité en cours de développement)")}>
-                <Calendar className="h-4 w-4" />
-                <span className="hidden sm:inline">Lier au calendrier</span>
-              </Button>
-            </div>
+            <Button variant="outline" className="flex-1 sm:flex-none gap-2 bg-background" onClick={handleGeneratePDF}>
+              <Printer className="h-4 w-4 text-muted-foreground" />
+              <span className="hidden sm:inline">Générer PDF</span>
+            </Button>
+            <Button variant="outline" className="flex-1 sm:flex-none gap-2 bg-background" onClick={() => alert("Le lien d'abonnement iCal a été copié dans le presse-papier !")}>
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span className="hidden sm:inline">Lier au calendrier</span>
+            </Button>
+          </div>
+
           {GESTIONNAIRE_ROLES.includes(role) && (
             <Button
-              onClick={() => { setSelectedSeance(null); setIsSeanceDrawerOpen(true); }}
-              className="flex items-center gap-2 justify-center"
+              onClick={() => { 
+                setSelectedSeance(null); 
+                setContextualDefaults(null);
+                setIsSeanceDrawerOpen(true); 
+              }}
+              className="flex items-center gap-2 justify-center bg-blue-600 hover:bg-blue-700 font-semibold"
             >
               <Plus className="h-4 w-4" />
               Nouvelle séance
@@ -241,6 +274,45 @@ export default function PlanningPage() {
         </div>
       </header>
 
+      {/* ── Sélecteur de Classe sous forme d'Onglets Pilules (Pill Tabs) pour Gestionnaires ── */}
+      {GESTIONNAIRE_ROLES.includes(role) && classesDisponibles.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar border-b border-border/40">
+          <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 shrink-0 mr-1">
+            <Layers className="w-3.5 h-3.5" />
+            Classe :
+          </span>
+          <button
+            type="button"
+            onClick={() => setFilters(f => ({ ...f, classeId: '' }))}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+              !filters.classeId
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+          >
+            Toutes les classes
+          </button>
+          {classesDisponibles.map((c) => {
+            const isSelected = String(filters.classeId) === String(c.id);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setFilters(f => ({ ...f, classeId: String(c.id) }))}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/40'
+                }`}
+              >
+                {c.libelle}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Filtres de recherche texte et avancés ── */}
       <PlanningFilters
         filters={filters}
         onChange={setFilters}
@@ -260,6 +332,7 @@ export default function PlanningPage() {
           isLoading={isLoading}
           isError={isError}
           onSeanceClick={handleSeanceClick}
+          onEmptyCellClick={GESTIONNAIRE_ROLES.includes(role) ? handleEmptyCellClick : null}
           weekStart={weekStart}
           onWeekChange={setWeekStart}
           semestre={semestres.find((s) => String(s.id) === String(selectedSemestreId))}
@@ -281,6 +354,7 @@ export default function PlanningPage() {
             <Button variant="ghost" className="justify-start gap-3 h-10 px-3 text-sm"
               onClick={() => {
                 setSelectedSeance(gestionnaireTarget);
+                setContextualDefaults(null);
                 setIsSeanceDrawerOpen(true);
                 setGestionnaireTarget(null);
               }}>
@@ -320,9 +394,14 @@ export default function PlanningPage() {
 
       <SeanceDrawer
         open={isSeanceDrawerOpen}
-        onClose={() => { setIsSeanceDrawerOpen(false); setSelectedSeance(null); }}
+        onClose={() => { 
+          setIsSeanceDrawerOpen(false); 
+          setSelectedSeance(null); 
+          setContextualDefaults(null);
+        }}
         semestreId={selectedSemestreId}
         seance={selectedSeance}
+        contextualDefaults={contextualDefaults}
       />
       <ReportDrawer
         open={isReportDrawerOpen}
@@ -338,10 +417,10 @@ export default function PlanningPage() {
             events={filteredEvents} 
             weekStart={weekStart} 
             semestre={semestres.find((s) => String(s.id) === String(selectedSemestreId))}
-            title={planningTitle}
+            title={pageTitle}
           />
         </div>
       </div>
     </div>
   );
-}
+}

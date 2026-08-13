@@ -20,7 +20,7 @@ const parseApiError = (error) => {
   return error?.message || 'Une erreur serveur est survenue.';
 };
 
-export default function SeanceDrawer({ open, onClose, semestreId, seance }) {
+export default function SeanceDrawer({ open, onClose, semestreId, seance, contextualDefaults = null }) {
   const [serverError, setServerError] = useState(null);
 
   const createMutation = useCreateSeance();
@@ -32,7 +32,7 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance }) {
     if (open) setServerError(null);
   }, [open, seance]);
 
-  // CORRECTION : normalisation des IDs imbriqués en strings plats pour useForm
+  // Normalisation des IDs imbriqués en strings plats pour useForm
   const normalizedDefaults = seance ? {
     semestre_id:   String(seance.classe?.semestre?.id  ?? ''),
     filiere_id:    String(seance.classe?.filiere?.id   ?? ''),
@@ -43,6 +43,16 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance }) {
     heure_debut:   seance.heure_debut?.slice(0, 5) ?? '09:00',
     heure_fin:     seance.heure_fin?.slice(0, 5)   ?? '10:30',
     type_seance:   seance.type_seance ?? 'CM',
+  } : contextualDefaults ? {
+    semestre_id:   semestreId ? String(semestreId) : '',
+    filiere_id:    contextualDefaults.filiere_id ? String(contextualDefaults.filiere_id) : '',
+    classe_id:     contextualDefaults.classe_id ? String(contextualDefaults.classe_id) : '',
+    module_id:     '',
+    enseignant_id: '',
+    date_seance:   contextualDefaults.date_seance ?? '',
+    heure_debut:   contextualDefaults.heure_debut ?? '09:00',
+    heure_fin:     contextualDefaults.heure_fin ?? '11:00',
+    type_seance:   'CM',
   } : null;
 
   const handleSubmit = (formData) => {
@@ -79,4 +89,4 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance }) {
       </DrawerContent>
     </Drawer>
   );
-}
+}

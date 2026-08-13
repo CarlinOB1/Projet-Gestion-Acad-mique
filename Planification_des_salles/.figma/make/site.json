@@ -1,0 +1,10 @@
+{
+  "description": "Streamline course scheduling for university departments with a user-friendly interface that allocates classes to specific rooms while highlighting conflicts.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
