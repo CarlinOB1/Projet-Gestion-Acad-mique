@@ -158,12 +158,21 @@ class ClasseViewSet(BaseViewSet):
     """
     queryset = Classe.objects.select_related(
         'parcours', 'filiere', 'semestre__annee', 'annee'
-    ).all()
+    ).prefetch_related('etudiant_set').all()
     serializer_class   = ClasseSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
     def get_queryset(self):
         qs          = super().get_queryset()
+        user        = self.request.user
+
+        # Filtre pour Chef de Département
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+            enseignant = user.profil.enseignant
+            departements_diriges = enseignant.departements_diriges.all()
+            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+                qs = qs.filter(filiere__departement__in=departements_diriges)
+
         annee_id    = self.request.query_params.get('annee_id')
         semestre_id = self.request.query_params.get('semestre_id')
         filiere_id  = self.request.query_params.get('filiere_id')
@@ -325,6 +334,15 @@ class EnseignantViewSet(BaseViewSet):
 
     def get_queryset(self):
         qs      = super().get_queryset()
+        user    = self.request.user
+
+        # Filtre pour Chef de Département
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+            enseignant = user.profil.enseignant
+            departements_diriges = enseignant.departements_diriges.all()
+            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+                qs = qs.filter(departement__in=departements_diriges)
+
         dept_id = self.request.query_params.get('departement_id')
         if dept_id:
             qs = qs.filter(departement_id=dept_id)
@@ -393,6 +411,15 @@ class EtudiantViewSet(BaseViewSet):
 
     def get_queryset(self):
         qs          = super().get_queryset()
+        user        = self.request.user
+
+        # Filtre pour Chef de Département
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+            enseignant = user.profil.enseignant
+            departements_diriges = enseignant.departements_diriges.all()
+            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+                qs = qs.filter(classe__filiere__departement__in=departements_diriges)
+
         classe_id   = self.request.query_params.get('classe_id')
         filiere_id  = self.request.query_params.get('filiere_id')
         parcours_id = self.request.query_params.get('parcours_id')
@@ -580,11 +607,20 @@ class SeanceViewSet(BaseViewSet):
 
     def get_queryset(self):
         qs            = super().get_queryset()
+        user          = self.request.user
+
+        # Filtre pour Chef de Département
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+            enseignant = user.profil.enseignant
+            departements_diriges = enseignant.departements_diriges.all()
+            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+                qs = qs.filter(classe__filiere__departement__in=departements_diriges)
+
         classe_id     = self.request.query_params.get('classe_id')
         enseignant_id = self.request.query_params.get('enseignant_id')
         semestre_id   = self.request.query_params.get('semestre_id')
         statut        = self.request.query_params.get('statut')
-        type_seance   = self.request.query_params.get('type_seance')   # ← ajouté
+        type_seance   = self.request.query_params.get('type_seance')
         date_debut    = self.request.query_params.get('date_debut')
         date_fin      = self.request.query_params.get('date_fin')
         annee_id      = self.request.query_params.get('annee_id')
@@ -597,33 +633,8 @@ class SeanceViewSet(BaseViewSet):
             qs = qs.filter(classe__semestre_id=semestre_id)
         if statut:
             qs = qs.filter(statut=statut)
-        if type_seance:                                                # ← ajouté
+        if type_seance:
             qs = qs.filter(type_seance=type_seance)
-        if date_debut:
-            qs = qs.filter(date_seance__gte=date_debut)
-        if date_fin:
-            qs = qs.filter(date_seance__lte=date_fin)
-        if annee_id:
-            qs = qs.filter(annee_id=annee_id)
-
-        return qs.order_by('date_seance', 'heure_debut')
-        qs            = super().get_queryset()
-        classe_id     = self.request.query_params.get('classe_id')
-        enseignant_id = self.request.query_params.get('enseignant_id')
-        semestre_id   = self.request.query_params.get('semestre_id')
-        statut        = self.request.query_params.get('statut')
-        date_debut    = self.request.query_params.get('date_debut')
-        date_fin      = self.request.query_params.get('date_fin')
-        annee_id      = self.request.query_params.get('annee_id')
-
-        if classe_id:
-            qs = qs.filter(classe_id=classe_id)
-        if enseignant_id:
-            qs = qs.filter(enseignant_id=enseignant_id)
-        if semestre_id:
-            qs = qs.filter(classe__semestre_id=semestre_id)
-        if statut:
-            qs = qs.filter(statut=statut)
         if date_debut:
             qs = qs.filter(date_seance__gte=date_debut)
         if date_fin:

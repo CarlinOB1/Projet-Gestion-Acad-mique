@@ -25,6 +25,17 @@ export default function Sidebar() {
     ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
     : '';
 
+  const sections = {};
+  allowedNavItems.forEach((item) => {
+    const sec = item.section || 'MON COMPTE';
+    if (!sections[sec]) {
+      sections[sec] = [];
+    }
+    sections[sec].push(item);
+  });
+
+  const hasMultipleSections = Object.keys(sections).length > 1;
+
   return (
     <aside className="w-[240px] h-full flex flex-col bg-background border-r border-border select-none">
 
@@ -39,26 +50,35 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-        {allowedNavItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.key}
-              to={item.path}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors duration-150 ${
-                  isActive
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="truncate">{item.label}</span>
-            </NavLink>
-          );
-        })}
+      <nav className="flex-1 overflow-y-auto p-4 space-y-6">
+        {Object.entries(sections).map(([sectionName, items]) => (
+          <div key={sectionName} className="space-y-1">
+            {hasMultipleSections && (
+              <h2 className="px-3 text-[10px] font-bold text-muted-foreground/60 tracking-wider uppercase mb-2">
+                {sectionName}
+              </h2>
+            )}
+            {items.map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.key}
+                  to={item.path}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors duration-150 ${
+                      isActive
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                    }`
+                  }
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </NavLink>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Pied de page */}

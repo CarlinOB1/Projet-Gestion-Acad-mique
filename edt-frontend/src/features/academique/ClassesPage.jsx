@@ -1,25 +1,139 @@
 /**
  * src/features/academique/ClassesPage.jsx
- * Page de gestion des classes — CRUD, filtre semestre, passage de semestre.
+ * Vue accordéon : une carte par classe, clic pour dérouler la liste des étudiants.
  */
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowRightCircle, GraduationCap, CheckCircle2 } from 'lucide-react';
+import {
+  GraduationCap, ChevronDown, ChevronUp, Users, ArrowRightCircle,
+  CheckCircle2, Plus, UserX, UserCheck, School,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import DataTable from '@/components/shared/DataTable';
 import FormModal from '@/components/shared/FormModal';
+import StatutDrawer from '@/features/acteurs/StatutDrawer';
 import {
   getClasses, createClasse, updateClasse, removeClasse, passerSemestre,
-  getSemestres, getParcours, getFilieres,
-  getAnnees, // CORRECTION : import ajouté
+  getSemestres, getParcours, getFilieres, getAnnees,
 } from '@/api/academique';
+import { getEtudiants } from '@/api/acteurs';
+import { STATUT_COLORS } from '@/lib/constants';
+
+// ── Sous-composant : ligne étudiant ──────────────────────────────────────────
+function EtudiantRow({ etudiant, onStatut }) {
+  const statut = etudiant.profil?.statut ?? 'actif';
+  const initiale = etudiant.profil?.user?.last_name?.[0] ?? etudiant.matricule?.[0] ?? '?';
+  return (
+    <div className="flex items-center justify-between px-4 py-2.5 hover:bg-muted/40 transition-colors rounded-md">
+      <div className="flex items-center gap-3">
+        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold uppercase shrink-0">
+          {initiale}
+        </div>
+        <div>
+          <p className="text-sm font-medium text-foreground leading-tight">
+            {etudiant.profil?.user?.last_name} {etudiant.profil?.user?.first_name}
+          </p>
+          <p className="text-xs text-muted-foreground">{etudiant.matricule}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant={statut === 'actif' ? 'outline' : 'destructive'} className="text-xs">
+          {statut}
+        </Badge>
+        <Button
+          variant="ghost" size="icon" className="h-7 w-7"
+          title={statut === 'actif' ? 'Suspendre' : 'Réactiver'}
+          onClick={() => onStatut(etudiant)}
+        >
+          {statut === 'actif'
+            ? <UserX className="h-3.5 w-3.5 text-muted-foreground" />
+            : <UserCheck className="h-3.5 w-3.5 text-emerald-500" />}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Sous-composant : carte classe accordéon ───────────────────────────────────
+function ClasseCard({ classe, onPasserSemestre }) {
+  const [open, setOpen] = useState(false);
+  const [isStatutDrawerOpen, setIsStatutDrawerOpen] = useState(false);
+  const [etudiantForStatut, setEtudiantForStatut] = useState(null);
+
+  const { data: etudiants = [], isLoading } = useQuery({
+    queryKey: ['etudiants', 'classe', classe.id],
+    queryFn: () => getEtudiants({ classe_id: classe.id }),
+    enabled: open,
+    staleTime: 1000 * 30,
+  });
+
+  return (
+    <div className="border border-border rounded-xl overflow-hidden bg-card shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors text-left"
+      >
+        <div className="flex items-center gap-3">
+          <div>
+            <p className="font-semibold text-foreground">{classe.libelle}</p>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <span className="text-xs text-muted-foreground">{classe.filiere?.libelle || classe.code || '—'}</span>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <Badge variant="secondary" className="text-xs py-0">{classe.semestre?.libelle}</Badge>
+              <span className="text-muted-foreground/40 text-xs">·</span>
+              <span className="text-xs text-muted-foreground">{classe.annee?.libelle}</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Users className="h-3.5 w-3.5" />
+            <span>{classe.nombre_etudiants ?? 0} Étudiant{(classe.nombre_etudiants ?? 0) !== 1 ? 's' : ''}</span>
+          </div>
+          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-border/60">
+          {isLoading && (
+            <div className="py-6 flex items-center justify-center">
+              <div className="animate-pulse text-sm text-muted-foreground">Chargement des étudiants…</div>
+            </div>
+          )}
+          {!isLoading && etudiants.length === 0 && (
+            <div className="py-6 text-center text-sm text-muted-foreground">Aucun étudiant dans cette classe.</div>
+          )}
+          {!isLoading && etudiants.length > 0 && (
+            <div className="divide-y divide-border/40 px-2 py-1">
+              {etudiants.map((et) => (
+                <EtudiantRow
+                  key={et.profil?.user?.id ?? et.matricule}
+                  etudiant={et}
+                  onStatut={(e) => { setEtudiantForStatut(e); setIsStatutDrawerOpen(true); }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <StatutDrawer
+        open={isStatutDrawerOpen}
+        onClose={() => { setIsStatutDrawerOpen(false); setEtudiantForStatut(null); }}
+        profil={etudiantForStatut?.profil ?? null}
+        queryKeyToInvalidate={['etudiants', 'classe', classe.id]}
+      />
+    </div>
+  );
+}
 
 export default function ClassesPage() {
   const queryClient = useQueryClient();
@@ -154,25 +268,6 @@ export default function ClassesPage() {
     }
   };
 
-  const columns = [
-    { key: 'libelle',  label: 'Nom de la classe' },
-    { key: 'parcours', label: 'Parcours',  render: (row) => row.parcours?.libelle || '-' },
-    { key: 'filiere',  label: 'Filière/Code',   render: (row) => row.filiere?.libelle || (row.code ? <Badge variant="outline">{row.code}</Badge> : '-') },
-    { key: 'semestre', label: 'Semestre',  render: (row) => <Badge variant="secondary">{row.semestre?.libelle || '-'}</Badge> },
-    { key: 'annee',    label: 'Année',     render: (row) => row.annee?.libelle    || '-' },
-    {
-      key: 'actions_custom',
-      label: 'Avancement',
-      render: (row) => (
-        <Button variant="outline" size="sm"
-          className="text-primary hover:text-primary hover:bg-primary/5 gap-1.5"
-          onClick={() => { setActiveClasseForTransition(row); setIsPasserSemestreOpen(true); }}>
-          <ArrowRightCircle className="h-4 w-4" />
-          Passer semestre
-        </Button>
-      ),
-    },
-  ];
 
   return (
     <div className="space-y-6 w-full max-w-7xl mx-auto">
@@ -183,9 +278,9 @@ export default function ClassesPage() {
             <GraduationCap className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Classes</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Classes & Étudiants</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Gérez les promotions et orchestrez les passages de semestres.
+              Gérez les classes et la liste des étudiants de votre département.
             </p>
           </div>
         </div>
@@ -201,20 +296,40 @@ export default function ClassesPage() {
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={() => { setEditingClasse(null); setIsCrudModalOpen(true); }}>
-            <Plus className="mr-2 h-4 w-4" />
-            Ajouter une classe
-          </Button>
         </div>
       </div>
 
-      <DataTable
-        columns={columns} data={classes}
-        isLoading={isLoading} isError={isError}
-        onEdit={(row) => { setEditingClasse(row); setIsCrudModalOpen(true); }}
-        onDelete={(row) => deleteMutation.mutate(row.id)}
-        emptyMessage="Aucune classe pour ce filtre."
-      />
+      {/* Liste accordéon */}
+      {isLoading && (
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-20 rounded-xl bg-muted/40 animate-pulse border border-border" />
+          ))}
+        </div>
+      )}
+      {isError && (
+        <div className="p-6 text-center text-sm text-destructive border border-destructive/20 rounded-xl bg-destructive/5">
+          Impossible de charger les classes.
+        </div>
+      )}
+      {!isLoading && !isError && classes.length === 0 && (
+        <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground">
+          <School className="h-10 w-10 opacity-30" />
+          <p className="text-sm">Aucune classe trouvée pour ce filtre.</p>
+        </div>
+      )}
+      {!isLoading && !isError && classes.length > 0 && (
+        <div className="space-y-3">
+          {classes.map((classe) => (
+            <ClasseCard
+              key={classe.id}
+              classe={classe}
+              onPasserSemestre={(c) => { setActiveClasseForTransition(c); setIsPasserSemestreOpen(true); }}
+            />
+          ))}
+        </div>
+      )}
+
 
       {/* Modale CRUD */}
       <FormModal

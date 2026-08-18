@@ -168,35 +168,6 @@ export default function EnseignantsPage() {
         );
       },
     },
-    {
-      key: "statut_action",
-      label: "",
-      render: (r) => {
-        const isActif = r.profil?.statut === "actif";
-        return (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setEnseignantForStatut(r);
-              setIsStatutDrawerOpen(true);
-            }}
-          >
-            {isActif ? (
-              <>
-                <UserX className="h-4 w-4 mr-1 text-destructive" />
-                Suspendre
-              </>
-            ) : (
-              <>
-                <UserCheck className="h-4 w-4 mr-1 text-green-600" />
-                Réactiver
-              </>
-            )}
-          </Button>
-        );
-      },
-    },
   ];
 
   return (
@@ -210,16 +181,6 @@ export default function EnseignantsPage() {
             Gestion du corps enseignant.
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setEditingEnseignant(null);
-            setFormData(INITIAL_FORM);
-            setIsModalOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Ajouter un enseignant
-        </Button>
       </div>
 
       <DataTable
@@ -227,8 +188,6 @@ export default function EnseignantsPage() {
         data={enseignants}
         isLoading={isLoading}
         isError={isError}
-        onEdit={handleEdit}
-        onDelete={(r) => deleteMutation.mutate(r.profil_id)}
         emptyMessage="Aucun enseignant enregistré."
       />
 

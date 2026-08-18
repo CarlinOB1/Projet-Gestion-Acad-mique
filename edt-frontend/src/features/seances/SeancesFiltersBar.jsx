@@ -33,6 +33,7 @@ export default function SeancesFiltersBar({
     semestres = [],
     classes = [],
     enseignants = [],
+    showEnseignantFilter = true,
 }) {
     const activeFilterCount = useMemo(() => {
         return ['classeId', 'enseignantId', 'statut', 'typeSeance']
@@ -93,20 +94,22 @@ export default function SeancesFiltersBar({
                             </Select>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Enseignant</Label>
-                            <Select value={filters.enseignantId} onValueChange={(v) => onFilterChange('enseignantId', v)}>
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">Tous les enseignants</SelectItem>
-                                    {enseignants.map((e) => (
-                                        <SelectItem key={e.profil_id} value={String(e.profil_id)}>
-                                            {e.nom_complet}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        {showEnseignantFilter && (
+                            <div className="space-y-2">
+                                <Label>Enseignant</Label>
+                                <Select value={filters.enseignantId} onValueChange={(v) => onFilterChange('enseignantId', v)}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">Tous les enseignants</SelectItem>
+                                        {enseignants.map((e) => (
+                                            <SelectItem key={e.profil_id} value={String(e.profil_id)}>
+                                                {e.nom_complet}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-2">

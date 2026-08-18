@@ -3,8 +3,10 @@
  * @description Page de gestion des étudiants — CRUD, filtres, gestion de statut.
  */
 import { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { UserX, UserCheck, Plus, SlidersHorizontal } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { UserX, UserCheck, Plus, SlidersHorizontal, School, GraduationCap } from 'lucide-react';
 import { getEtudiants, createEtudiant, updateEtudiant, removeEtudiant } from '@/api/acteurs';
 import { getClasses, getParcours, getFilieres } from '@/api/academique';
 // CORRECTION : alias @/ correct
@@ -28,6 +30,8 @@ const INITIAL_FORM = {
 };
 
 export default function EtudiantsPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
 
   const [isModalOpen,         setIsModalOpen]         = useState(false);
@@ -100,8 +104,8 @@ export default function EtudiantsPage() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingEtudiant(null);
-    setFormData(INITIAL_FORM);
     setServerError(null);
+    setFormData(INITIAL_FORM);
   };
 
   const handleEdit = (row) => {
@@ -173,20 +177,6 @@ export default function EtudiantsPage() {
         );
       },
     },
-    {
-      key: 'statut_action', label: '',
-      render: (r) => {
-        const isActif = r.profil?.statut === 'actif';
-        return (
-          <Button variant="ghost" size="sm"
-            onClick={() => { setEtudiantForStatut(r); setIsStatutDrawerOpen(true); }}>
-            {isActif
-              ? <><UserX className="h-4 w-4 mr-1 text-destructive" />Suspendre</>
-              : <><UserCheck className="h-4 w-4 mr-1 text-green-600" />Réactiver</>}
-          </Button>
-        );
-      },
-    },
   ];
 
   return (
@@ -194,8 +184,8 @@ export default function EtudiantsPage() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Étudiants</h1>
-          <p className="text-sm text-muted-foreground mt-1">Gestion administrative des étudiants.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Classes & Étudiants</h1>
+          <p className="text-sm text-muted-foreground mt-1">Gérez les classes et la liste des étudiants de votre département.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg border border-border">
@@ -222,17 +212,24 @@ export default function EtudiantsPage() {
               </SelectContent>
             </Select>
           </div>
-          <Button onClick={() => { setEditingEtudiant(null); setFormData(INITIAL_FORM); setIsModalOpen(true); }}>
-            <Plus className="h-4 w-4 mr-2" />Ajouter un étudiant
-          </Button>
         </div>
       </div>
+
+      {/* ── Onglets de Navigation Classes / Étudiants ── */}
+      <Tabs value="etudiants" onValueChange={(val) => {
+        if (val === 'classes') {
+          navigate('/chef/classes');
+        }
+      }} className="w-fit">
+        <TabsList variant="line">
+          <TabsTrigger value="classes" title="Classes"><School className="h-4 w-4" /></TabsTrigger>
+          <TabsTrigger value="etudiants" title="Étudiants"><GraduationCap className="h-4 w-4" /></TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       <DataTable
         columns={columns} data={etudiants}
         isLoading={isLoading} isError={isError}
-        onEdit={handleEdit}
-        onDelete={(r) => deleteMutation.mutate(r.profil_id)}
         emptyMessage="Aucun étudiant enregistré."
       />
 

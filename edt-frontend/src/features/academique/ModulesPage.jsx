@@ -6,8 +6,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Layers } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 // Primitives UI de shadcn/ui
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,8 @@ import {
 } from '@/api/academique';
 
 export default function ModulesPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
 
   // États locaux de contrôle
@@ -101,9 +105,7 @@ export default function ModulesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: removeModule,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['modules'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['modules'] }),
   });
 
   // -------------------------------------------------------------------------
@@ -141,13 +143,13 @@ export default function ModulesPage() {
     setIsModalOpen(true);
   };
 
-  const handleConfirmSubmit = () => {
+  const handleFormSubmit = () => {
     const payload = {
       libelle,
       matiere_id: parseInt(matiereId, 10),
       semestre_id: parseInt(semestreId, 10),
       credits: parseInt(credits, 10),
-      description,
+      description: description || null,
     };
 
     if (editingModule) {
@@ -222,9 +224,9 @@ export default function ModulesPage() {
             <Layers className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Modules</h1>
+            <h1 className="text-3xl font-bold tracking-tight">Structure Académique</h1>
             <p className="text-muted-foreground text-sm mt-0.5">
-              Visualisez l'état d'avancement des volumes horaires et configurez les modules d'enseignement.
+              Gérez l'organisation académique (facultés, départements, filières, parcours) et les modules.
             </p>
           </div>
         </div>
@@ -254,6 +256,18 @@ export default function ModulesPage() {
         </div>
       </div>
 
+      {/* ── Onglets de Navigation Structure / Modules ── */}
+      <Tabs value="modules" onValueChange={(val) => {
+        if (val === 'organisation') {
+          navigate('/chef/organisation');
+        }
+      }} className="w-fit">
+        <TabsList variant="line">
+          <TabsTrigger value="organisation">Organisation</TabsTrigger>
+          <TabsTrigger value="modules">Modules (Matières)</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       {/* TABLEAU DE DONNÉES */}
       <DataTable
         columns={columns}
@@ -269,7 +283,7 @@ export default function ModulesPage() {
       <FormModal
         open={isModalOpen}
         onClose={handleCloseModal}
-        onConfirm={handleConfirmSubmit}
+        onConfirm={handleFormSubmit}
         title={editingModule ? "Modifier le module" : "Créer un nouveau module"}
         description="Renseignez les informations requises pour structurer l'unité d'enseignement."
         isPending={createMutation.isPending || updateMutation.isPending}

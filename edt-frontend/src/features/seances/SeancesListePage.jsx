@@ -5,17 +5,20 @@
  */
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { getSeances } from '@/api/seances';
 import { getSemestres, getClasses } from '@/api/academique';
-import { getEnseignants } from '@/api/acteurs';
+import { getEnseignants, getMonProfil } from '@/api/acteurs';
 import { useDeleteSeance } from '@/hooks/useSeanceMutations';
 import { useSeancesGrouped } from '@/hooks/useSeancesGrouped';
+import useAuthStore from '@/store/authStore';
 import SeancesFiltersBar from './SeancesFiltersBar';
 import ClasseGroupSection from './ClasseGroupSection';
 import SeanceDrawer from './SeanceDrawer';
 import ReportDrawer from './ReportDrawer';
 import { Button } from '@/components/ui/button';
-import { Plus, ChevronsDown, ChevronsUp } from 'lucide-react';
+import { Plus, ChevronsDown, ChevronsUp, Calendar, List } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const DEFAULT_FILTERS = {
     semestreId: '',
@@ -40,7 +43,16 @@ const buildApiParams = (filters) => {
 };
 
 export default function SeancesListePage() {
+    const navigate = useNavigate();
+    const location = useLocation();
+    const role = useAuthStore((state) => state.user?.role);
     const [filters, setFilters] = useState(DEFAULT_FILTERS);
+
+    const { data: profil } = useQuery({
+        queryKey: ['mon-profil'],
+        queryFn: getMonProfil,
+        enabled: role === 'enseignant',
+    });
     const [searchTerm, setSearchTerm] = useState('');
     const [openClasseIds, setOpenClasseIds] = useState(new Set());
 
@@ -80,7 +92,13 @@ export default function SeancesListePage() {
     }, [semestres, filters.semestreId]);
 
     // ── Séances filtrées côté serveur ────────────────────────────────────────
-    const apiParams = useMemo(() => buildApiParams(filters), [filters]);
+    const apiParams = useMemo(() => {
+        const params = buildApiParams(filters);
+        if (role === 'enseignant' && profil?.enseignant?.id) {
+            params.enseignant_id = String(profil.enseignant.id);
+        }
+        return params;
+    }, [filters, role, profil]);
 
     const { data: seances = [], isLoading, isError } = useQuery({
         queryKey: ['seances', 'liste', apiParams],
@@ -166,20 +184,30 @@ export default function SeancesListePage() {
             <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                        Liste des séances
+                        {role === 'enseignant' ? 'Mes séances' : 'Liste des séances'}
                     </h1>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Consultez et gérez l'ensemble des séances planifiées, classe par classe.
+                        {role === 'enseignant'
+                            ? 'Consultez la liste de vos séances planifiées ce semestre.'
+                            : "Consultez et gérez l'ensemble des séances planifiées, classe par classe."}
                     </p>
                 </div>
-                <Button
-                    onClick={() => { setSelectedSeance(null); setSeanceDrawerOpen(true); }}
-                    className="flex items-center gap-2 justify-center"
-                >
-                    <Plus className="h-4 w-4" />
-                    Nouvelle séance
-                </Button>
+
             </header>
+
+            {/* ── Onglets de Navigation Grille / Liste ── */}
+            {(location.pathname.startsWith('/chef') || location.pathname.startsWith('/enseignant')) && (
+                <Tabs value="liste" onValueChange={(val) => {
+                    if (val === 'grille') {
+                        navigate(location.pathname.startsWith('/chef') ? '/chef/planning' : '/enseignant/planning');
+                    }
+                }} className="w-fit">
+                    <TabsList variant="line">
+                        <TabsTrigger value="grille" title="Vue Calendrier"><Calendar className="h-4 w-4" /></TabsTrigger>
+                        <TabsTrigger value="liste" title="Vue Liste"><List className="h-4 w-4" /></TabsTrigger>
+                    </TabsList>
+                </Tabs>
+            )}
 
             <SeancesFiltersBar
                 filters={filters}
@@ -191,6 +219,7 @@ export default function SeancesListePage() {
                 semestres={semestres}
                 classes={classes}
                 enseignants={enseignants}
+                showEnseignantFilter={role !== 'enseignant'}
             />
 
             <div className="flex items-center justify-between">

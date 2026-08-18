@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Printer, Calendar, Pencil, CalendarClock, Trash2, Layers } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Plus, Printer, Calendar, Pencil, CalendarClock, Trash2, Layers, List } from 'lucide-react';
 import useAuthStore from '@/store/authStore';
 import { useSeances } from '@/hooks/useSeances';
 import { useDeleteSeance } from '@/hooks/useSeanceMutations';
@@ -14,6 +15,7 @@ import SeanceDetailsDialog from './SeanceDetailsDialog';
 import SeanceDrawer from '@/features/seances/SeanceDrawer';
 import ReportDrawer from '@/features/seances/ReportDrawer';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue, SelectGroup, SelectLabel
@@ -24,6 +26,13 @@ import {
 
 export default function PlanningPage() {
   const role = useAuthStore((state) => state.user?.role);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Sur /enseignant/planning, le chef doit voir son propre planning
+  // (et non le planning global du département)
+  const isPersonalPlanningRoute = location.pathname.startsWith('/enseignant/planning');
+  const effectiveRole = isPersonalPlanningRoute && role !== ROLES.ETUDIANT ? ROLES.ENSEIGNANT : role;
 
   const [selectedSemestreId, setSelectedSemestreId] = useState(null);
   const [weekStart, setWeekStart] = useState(() => {
@@ -52,7 +61,7 @@ export default function PlanningPage() {
   const { data: profilEtudiant } = useQuery({
     queryKey: ['mon-profil'],
     queryFn: getMonProfil,
-    enabled: role === ROLES.ETUDIANT,
+    enabled: effectiveRole === ROLES.ETUDIANT,
   });
 
   const { data: semestres = [], isLoading: isLoadingSemestres, isError: isErrorSemestres } =
@@ -103,24 +112,42 @@ export default function PlanningPage() {
   }, [selectedSemestreId, semestres]);
 
   const { events, isLoading: isLoadingSeances, isError: isErrorSeances } =
-    useSeances({ role, filters: { semestre_id: selectedSemestreId } });
+    useSeances({ role: effectiveRole, filters: { semestre_id: selectedSemestreId } });
+
+  // Récupère toutes les classes du semestre pour les gestionnaires (pour afficher même celles sans séances)
+  const { data: allClasses = [], isLoading: isLoadingClasses } = useQuery({
+    queryKey: ['classes', { semestre_id: selectedSemestreId }],
+    queryFn: async () => {
+      if (!selectedSemestreId) return [];
+      const response = await apiClient.get('/classes/', { params: { semestre_id: selectedSemestreId } });
+      return response.data?.results ?? response.data;
+    },
+    enabled: GESTIONNAIRE_ROLES.includes(effectiveRole) && !!selectedSemestreId,
+  });
 
   const enseignantsDisponibles = useMemo(
     () => getEnseignantsDisponibles(events),
     [events]
   );
 
-  const classesDisponibles = useMemo(
-    () => getClassesDisponibles(events),
-    [events]
-  );
+  const classesDisponibles = useMemo(() => {
+    if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
+      return allClasses.map(c => ({
+        id: c.id,
+        libelle: c.libelle || c.code || `Classe ${c.id}`,
+        filiere_id: c.filiere?.id,
+        filiere_libelle: c.filiere?.libelle,
+      })).sort((a, b) => a.libelle.localeCompare(b.libelle));
+    }
+    return getClassesDisponibles(events);
+  }, [events, allClasses, effectiveRole]);
 
   const filteredEvents = useMemo(
     () => applyPlanningFilters(events, filters),
     [events, filters]
   );
 
-  const isLoading = isLoadingSemestres || isLoadingSeances;
+  const isLoading = isLoadingSemestres || isLoadingSeances || isLoadingClasses;
   const isError = isErrorSemestres || isErrorSeances;
 
   // Group semesters by year for the UI
@@ -140,7 +167,8 @@ export default function PlanningPage() {
 
   // Handler unique pour le clic sur une séance (table view)
   const handleSeanceClick = (seance) => {
-    if (GESTIONNAIRE_ROLES.includes(role)) {
+    // Sur la vue perso du chef, on affiche les détails (pas les actions gestionnaire)
+    if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
       setGestionnaireTarget(seance);
       return;
     }
@@ -149,7 +177,7 @@ export default function PlanningPage() {
 
   // Handler pour le clic sur une case vide (+ Affecter)
   const handleEmptyCellClick = ({ date_seance, heure_debut, heure_fin }) => {
-    if (!GESTIONNAIRE_ROLES.includes(role)) return;
+    if (!GESTIONNAIRE_ROLES.includes(effectiveRole)) return;
     const classeSelectionnee = classesDisponibles.find(c => String(c.id) === String(filters.classeId));
     setContextualDefaults({
       date_seance,
@@ -188,17 +216,20 @@ export default function PlanningPage() {
   );
 
   const pageTitle = useMemo(() => {
-    if (role === ROLES.ETUDIANT && profilEtudiant?.etudiant?.classe) {
+    if (effectiveRole === ROLES.ETUDIANT && profilEtudiant?.etudiant?.classe) {
       return `Planning — ${profilEtudiant.etudiant.classe.libelle || profilEtudiant.etudiant.classe.code}`;
+    }
+    if (effectiveRole === ROLES.ENSEIGNANT && isPersonalPlanningRoute) {
+      return 'Mon Planning';
     }
     if (selectedClasse) {
       return `Planning — ${selectedClasse.libelle}`;
     }
-    if (GESTIONNAIRE_ROLES.includes(role)) {
+    if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
       return `Planning Global du Département`;
     }
     return 'Planning';
-  }, [role, profilEtudiant, selectedClasse]);
+  }, [effectiveRole, isPersonalPlanningRoute, profilEtudiant, selectedClasse]);
 
   return (
     <div className="space-y-5 w-full max-w-7xl mx-auto relative">
@@ -210,9 +241,11 @@ export default function PlanningPage() {
             {pageTitle}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {selectedClasse 
-              ? `Emploi du temps des cours pour la classe ${selectedClasse.libelle}.`
-              : 'Consultez et gérez les emplois du temps des cours.'}
+            {isPersonalPlanningRoute
+              ? 'Consultez votre emploi du temps personnel pour ce semestre.'
+              : selectedClasse 
+                ? `Emploi du temps des cours pour la classe ${selectedClasse.libelle}.`
+                : 'Consultez et gérez les emplois du temps des cours.'}
           </p>
         </div>
 
@@ -258,24 +291,13 @@ export default function PlanningPage() {
             </Button>
           </div>
 
-          {GESTIONNAIRE_ROLES.includes(role) && (
-            <Button
-              onClick={() => { 
-                setSelectedSeance(null); 
-                setContextualDefaults(null);
-                setIsSeanceDrawerOpen(true); 
-              }}
-              className="flex items-center gap-2 justify-center bg-blue-600 hover:bg-blue-700 font-semibold"
-            >
-              <Plus className="h-4 w-4" />
-              Nouvelle séance
-            </Button>
-          )}
+
         </div>
       </header>
 
+
       {/* ── Sélecteur de Classe sous forme d'Onglets Pilules (Pill Tabs) pour Gestionnaires ── */}
-      {GESTIONNAIRE_ROLES.includes(role) && classesDisponibles.length > 0 && (
+      {GESTIONNAIRE_ROLES.includes(effectiveRole) && classesDisponibles.length > 0 && (
         <div className="flex items-center gap-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar border-b border-border/40">
           <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 shrink-0 mr-1">
             <Layers className="w-3.5 h-3.5" />

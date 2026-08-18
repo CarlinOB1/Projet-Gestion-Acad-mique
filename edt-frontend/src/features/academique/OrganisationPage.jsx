@@ -7,6 +7,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 
@@ -36,6 +37,8 @@ import {
 } from '@/api/academique';
 
 export default function OrganisationPage() {
+    const navigate = useNavigate();
+    const location = useLocation();
     const [activeTab, setActiveTab] = useState('facultes');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
@@ -76,16 +79,24 @@ export default function OrganisationPage() {
             {/* En-tête de la page */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b pb-5">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Organisation académique</h1>
+                    <h1 className="text-3xl font-bold tracking-tight">Structure Académique</h1>
                     <p className="text-muted-foreground mt-1">
-                        Configurez et gérez la structure hiérarchique de votre établissement.
+                        Gérez l'organisation académique (facultés, départements, filières, parcours) et les modules.
                     </p>
                 </div>
-                <Button onClick={() => { setEditingItem(null); setIsModalOpen(true); }} className="shadow-sm">
-                    <Plus className="mr-2 h-4 w-4" />
-                    {getButtonLabel()}
-                </Button>
             </div>
+
+            {/* ── Onglets de Navigation Structure / Modules ── */}
+            <Tabs value="organisation" onValueChange={(val) => {
+                if (val === 'modules') {
+                    navigate('/chef/modules');
+                }
+            }} className="w-fit">
+                <TabsList variant="line">
+                    <TabsTrigger value="organisation">Organisation</TabsTrigger>
+                    <TabsTrigger value="modules">Modules (Matières)</TabsTrigger>
+                </TabsList>
+            </Tabs>
 
             {/* Onglets applicatifs */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-6">
@@ -192,7 +203,6 @@ function FacultesTab({ isOpen, onClose, editingItem, onEdit, serverError, setSer
         <>
             <DataTable
                 columns={columns} data={data} isLoading={isLoading} isError={isError}
-                onEdit={onEdit} onDelete={(row) => deleteMutation.mutate(row.id)}
             />
             <FormModal
                 open={isOpen} onClose={onClose} onConfirm={handleConfirm}
@@ -269,7 +279,6 @@ function DepartementsTab({ isOpen, onClose, editingItem, onEdit, serverError, se
         <>
             <DataTable
                 columns={columns} data={data} isLoading={isLoading} isError={isError}
-                onEdit={onEdit} onDelete={(row) => deleteMutation.mutate(row.id)}
             />
             <FormModal
                 open={isOpen} onClose={onClose} onConfirm={handleConfirm}
@@ -358,7 +367,6 @@ function FilieresTab({ isOpen, onClose, editingItem, onEdit, serverError, setSer
         <>
             <DataTable
                 columns={columns} data={data} isLoading={isLoading} isError={isError}
-                onEdit={onEdit} onDelete={(row) => deleteMutation.mutate(row.id)}
             />
             <FormModal
                 open={isOpen} onClose={onClose} onConfirm={handleConfirm}
@@ -446,7 +454,6 @@ function ParcoursTab({ isOpen, onClose, editingItem, onEdit, serverError, setSer
         <>
             <DataTable
                 columns={columns} data={data} isLoading={isLoading} isError={isError}
-                onEdit={onEdit} onDelete={(row) => deleteMutation.mutate(row.id)}
             />
             <FormModal
                 open={isOpen} onClose={onClose} onConfirm={handleConfirm}

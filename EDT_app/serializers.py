@@ -292,6 +292,8 @@ class ClasseSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         help_text="Code libre (MIP, BCG, PCG) pour les classes sans filière."
     )
 
+    nombre_etudiants = serializers.SerializerMethodField()
+
     class Meta:
         model  = Classe
         fields = [
@@ -300,7 +302,11 @@ class ClasseSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'filiere',  'filiere_id',
             'semestre', 'semestre_id',
             'annee',    'annee_id',
+            'nombre_etudiants',
         ]
+
+    def get_nombre_etudiants(self, obj):
+        return obj.etudiant_set.count()
 
     def validate(self, data):
         semestre = data.get('semestre')

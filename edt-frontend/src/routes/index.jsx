@@ -5,7 +5,6 @@ import ProtectedRoute from './ProtectedRoute';
 import LoginPage from '@/features/auth/LoginPage';
 import AppShell from '@/components/layout/AppShell';
 import PlanningPage from '@/features/planning/PlanningPage';
-import SeancesListePage from '@/features/seances/SeancesListePage';
 import OrganisationPage from '@/features/academique/OrganisationPage';
 import ModulesPage from '@/features/academique/ModulesPage';
 import ClassesPage from '@/features/academique/ClassesPage';
@@ -51,7 +50,6 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
-          { path: 'seances', element: <SeancesListePage /> },
           { path: 'classes', element: <ClassesPage /> },
           { path: 'modules', element: <ModulesPage /> },
           { path: 'organisation', element: <OrganisationPage /> },
@@ -74,7 +72,6 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
-          { path: 'seances', element: <SeancesListePage /> },
           { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
