@@ -277,9 +277,6 @@ export default function ClassesPage({ readOnly = false }) {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 text-primary rounded-lg hidden sm:block">
-            <GraduationCap className="h-6 w-6" />
-          </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">Classes & Étudiants</h1>
             <p className="text-sm text-muted-foreground mt-1">
