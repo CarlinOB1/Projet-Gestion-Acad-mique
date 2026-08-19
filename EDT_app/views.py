@@ -10,6 +10,7 @@ from .models import (
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
     Matiere, Module, Seance, ReferentClasse,
+    DocumentPedagogique,
 )
 from EDT_app.serializers import (
     FaculteSerializer, DepartementSerializer, FiliereSerializer,
@@ -17,6 +18,7 @@ from EDT_app.serializers import (
     ClasseSerializer, ProfilSerializer, EnseignantSerializer,
     EtudiantSerializer, MatiereSerializer, ModuleSerializer,
     SeanceSerializer, SeanceReportSerializer, ProfilSuspensionSerializer,
+    DocumentPedagogiqueSerializer,
 )
 from .permissions import (
     ProfilActifPermission,
@@ -25,9 +27,9 @@ from .permissions import (
     IsEnseignant,
     IsEtudiant,
     IsOwnerOrChefDepartement,
-    IsChefDepartement,
     IsReferentClasse,
     IsChefOrReferentOrReadOnly,
+    IsDocumentOwnerOrReadOnly,
 )
 
 
@@ -166,12 +168,16 @@ class ClasseViewSet(BaseViewSet):
         qs          = super().get_queryset()
         user        = self.request.user
 
-        # Filtre pour Chef de Département
-        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant') and \
+                not (user.is_superuser or user.groups.filter(name='responsable').exists()):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
-            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+            if departements_diriges.exists():
+                # Chef de département : classes de ses départements gérés
                 qs = qs.filter(filiere__departement__in=departements_diriges)
+            else:
+                # Enseignant simple : classes de son propre département uniquement
+                qs = qs.filter(filiere__departement=enseignant.departement)
 
         annee_id    = self.request.query_params.get('annee_id')
         semestre_id = self.request.query_params.get('semestre_id')
@@ -513,6 +519,27 @@ class ModuleViewSet(BaseViewSet):
             qs = qs.filter(matiere_id=matiere_id)
         return qs
 
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[IsAuthenticated, ProfilActifPermission, IsEnseignant],
+        url_path='mes_modules',
+    )
+    def mes_modules(self, request):
+        """
+        Retourne les modules que l'enseignant connecté dispense (basé sur ses séances).
+        """
+        from rest_framework.exceptions import PermissionDenied
+        if not hasattr(request.user.profil, 'enseignant'):
+            raise PermissionDenied("Seuls les enseignants peuvent voir leurs modules.")
+            
+        enseignant = request.user.profil.enseignant
+        modules = Module.objects.filter(seance__enseignant=enseignant).distinct()
+        
+        # On utilise le serializer de module
+        serializer = self.get_serializer(modules, many=True)
+        return Response(serializer.data)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. PLANIFICATION
@@ -753,6 +780,56 @@ class SeanceViewSet(BaseViewSet):
                 'results': serializer.data,
             }
         )
+
+
+# ==========================================
+# 6. DOCUMENTS PÉDAGOGIQUES
+# ==========================================
+
+class DocumentViewSet(BaseViewSet):
+    """
+    Gestion des documents pédagogiques.
+    """
+    queryset = DocumentPedagogique.objects.select_related('module', 'enseignant').all()
+    serializer_class = DocumentPedagogiqueSerializer
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsDocumentOwnerOrReadOnly]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        
+        module_id = self.request.query_params.get('module_id')
+        if module_id:
+            qs = qs.filter(module_id=module_id)
+
+        if user.is_superuser:
+            return qs
+
+        if not hasattr(user, 'profil'):
+            return qs.none()
+
+        # Filtrage selon le rôle
+        if hasattr(user.profil, 'etudiant'):
+            # L'étudiant voit les documents des modules liés à ses séances confirmées (ou juste les modules de son semestre/classe)
+            # Simplification : modules des séances planifiées pour sa classe
+            modules_ids = Seance.objects.filter(
+                classe=user.profil.etudiant.classe,
+                statut='confirmee'
+            ).values_list('module_id', flat=True).distinct()
+            qs = qs.filter(module_id__in=modules_ids)
+            
+        elif hasattr(user.profil, 'enseignant'):
+            enseignant = user.profil.enseignant
+            if not enseignant.departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+                # Enseignant simple : on filtre pour ne lui montrer que ses propres documents (ou ceux de ses modules)
+                # Mais il est souvent plus simple qu'il voit ses propres documents
+                qs = qs.filter(enseignant=enseignant)
+
+        return qs
+
+    def perform_create(self, serializer):
+        enseignant = self.request.user.profil.enseignant
+        serializer.save(enseignant=enseignant)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

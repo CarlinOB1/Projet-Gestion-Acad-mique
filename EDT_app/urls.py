@@ -40,6 +40,7 @@ router.register(r'modules',  views.ModuleViewSet,  basename='module')
 
 # Planification
 router.register(r'seances', views.SeanceViewSet, basename='seance')
+router.register(r'documents', views.DocumentViewSet, basename='document')
 
 
 urlpatterns = [

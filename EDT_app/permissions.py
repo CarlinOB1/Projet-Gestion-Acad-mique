@@ -157,3 +157,35 @@ class IsOwnerOrChefDepartement(BasePermission):
         if hasattr(obj, 'user'):
             return obj.user == request.user
         return False
+
+
+class IsDocumentOwnerOrReadOnly(BasePermission):
+    """
+    Lecture libre pour tout utilisateur authentifié actif.
+    Création : enseignants uniquement.
+    Modification / Suppression : uniquement l'enseignant propriétaire du document.
+    """
+    message = "Seul l'enseignant propriétaire peut modifier ou supprimer ce document."
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        if request.user.is_superuser:
+            return True
+        # Création/modification : enseignants uniquement
+        return (
+            hasattr(request.user, 'profil')
+            and hasattr(request.user.profil, 'enseignant')
+        )
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        if request.user.is_superuser:
+            return True
+        # Seul le propriétaire peut modifier/supprimer
+        return (
+            hasattr(request.user, 'profil')
+            and hasattr(request.user.profil, 'enseignant')
+            and obj.enseignant == request.user.profil.enseignant
+        )

@@ -26,7 +26,7 @@ import { getEtudiants } from '@/api/acteurs';
 import { STATUT_COLORS } from '@/lib/constants';
 
 // ── Sous-composant : ligne étudiant ──────────────────────────────────────────
-function EtudiantRow({ etudiant, onStatut }) {
+function EtudiantRow({ etudiant, onStatut, readOnly = false }) {
   const statut = etudiant.profil?.statut ?? 'actif';
   const initiale = etudiant.profil?.user?.last_name?.[0] ?? etudiant.matricule?.[0] ?? '?';
   return (
@@ -46,22 +46,24 @@ function EtudiantRow({ etudiant, onStatut }) {
         <Badge variant={statut === 'actif' ? 'outline' : 'destructive'} className="text-xs">
           {statut}
         </Badge>
-        <Button
-          variant="ghost" size="icon" className="h-7 w-7"
-          title={statut === 'actif' ? 'Suspendre' : 'Réactiver'}
-          onClick={() => onStatut(etudiant)}
-        >
-          {statut === 'actif'
-            ? <UserX className="h-3.5 w-3.5 text-muted-foreground" />
-            : <UserCheck className="h-3.5 w-3.5 text-emerald-500" />}
-        </Button>
+        {!readOnly && (
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7"
+            title={statut === 'actif' ? 'Suspendre' : 'Réactiver'}
+            onClick={() => onStatut(etudiant)}
+          >
+            {statut === 'actif'
+              ? <UserX className="h-3.5 w-3.5 text-muted-foreground" />
+              : <UserCheck className="h-3.5 w-3.5 text-emerald-500" />}
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
 // ── Sous-composant : carte classe accordéon ───────────────────────────────────
-function ClasseCard({ classe, onPasserSemestre }) {
+function ClasseCard({ classe, onPasserSemestre, readOnly = false }) {
   const [open, setOpen] = useState(false);
   const [isStatutDrawerOpen, setIsStatutDrawerOpen] = useState(false);
   const [etudiantForStatut, setEtudiantForStatut] = useState(null);
@@ -117,6 +119,7 @@ function ClasseCard({ classe, onPasserSemestre }) {
                 <EtudiantRow
                   key={et.profil?.user?.id ?? et.matricule}
                   etudiant={et}
+                  readOnly={readOnly}
                   onStatut={(e) => { setEtudiantForStatut(e); setIsStatutDrawerOpen(true); }}
                 />
               ))}
@@ -135,7 +138,7 @@ function ClasseCard({ classe, onPasserSemestre }) {
   );
 }
 
-export default function ClassesPage() {
+export default function ClassesPage({ readOnly = false }) {
   const queryClient = useQueryClient();
 
   const [selectedSemestreId,        setSelectedSemestreId]        = useState('all');
@@ -324,6 +327,7 @@ export default function ClassesPage() {
             <ClasseCard
               key={classe.id}
               classe={classe}
+              readOnly={readOnly}
               onPasserSemestre={(c) => { setActiveClasseForTransition(c); setIsPasserSemestreOpen(true); }}
             />
           ))}

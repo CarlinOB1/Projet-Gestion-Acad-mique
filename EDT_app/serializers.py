@@ -12,6 +12,7 @@ from EDT_app.models import (
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
     Matiere, Module, Seance, ReferentClasse,
+    DocumentPedagogique,
 )
 
 
@@ -1008,3 +1009,67 @@ class ProfilSuspensionSerializer(serializers.Serializer):
         profil.motif_suspension = self.validated_data.get('motif_suspension', '')
         profil.save()
         return profil
+
+
+# ==========================================
+# 6. DOCUMENTS PÉDAGOGIQUES
+# ==========================================
+
+class DocumentPedagogiqueSerializer(serializers.ModelSerializer):
+    """
+    Serializer pour les documents pédagogiques.
+    - `fichier_url` : URL absolue pour téléchargement.
+    - `enseignant` : lecture seule, injecté depuis request.user à la création.
+    - `module_id`  : clé étrangère en écriture.
+    """
+    fichier_url  = serializers.SerializerMethodField(read_only=True)
+    enseignant   = EnseignantSerializer(read_only=True)
+    module       = ModuleSerializer(read_only=True)
+    module_id    = serializers.PrimaryKeyRelatedField(
+        queryset=Module.objects.all(), source='module', write_only=True
+    )
+    nom_fichier  = serializers.SerializerMethodField(read_only=True)
+    taille       = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model  = DocumentPedagogique
+        fields = [
+            'id', 'titre', 'fichier', 'fichier_url', 'nom_fichier', 'taille',
+            'type_doc', 'module', 'module_id', 'enseignant', 'created_at',
+        ]
+        read_only_fields = ['enseignant', 'created_at', 'fichier_url', 'nom_fichier', 'taille']
+
+    def get_fichier_url(self, obj):
+        if obj.fichier:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.fichier.url)
+            return obj.fichier.url
+        return None
+
+    def get_nom_fichier(self, obj):
+        """Retourne juste le nom du fichier sans son chemin complet."""
+        if obj.fichier:
+            import os
+            return os.path.basename(obj.fichier.name)
+        return None
+
+    def get_taille(self, obj):
+        """Retourne la taille du fichier en octets, None si introuvable."""
+        try:
+            return obj.fichier.size
+        except Exception:
+            return None
+
+    def validate_fichier(self, value):
+        """Validation de l'extension côté serializer (doublée du validateur modèle)."""
+        import os
+        EXTENSIONS_AUTORISEES = {
+            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'
+        }
+        ext = os.path.splitext(value.name)[1].lower()
+        if ext not in EXTENSIONS_AUTORISEES:
+            raise serializers.ValidationError(
+                f"Les fichiers '{ext}' ne sont pas autorisés. Formats acceptés : PDF, DOC, XLS, PPT, TXT."
+            )
+        return value

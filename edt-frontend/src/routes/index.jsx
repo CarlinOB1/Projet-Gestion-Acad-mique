@@ -13,6 +13,8 @@ import EtudiantsPage from '@/features/acteurs/EtudiantsPage';
 import TrombinoscopePage from '@/features/trombinoscope/TrombinoscopePage';
 import ProgressionPage from '@/features/progression/ProgressionPage';
 import ProfilPage from '@/features/profil/ProfilPage';
+import MesModulesPage from '@/features/enseignant/MesModulesPage';
+import DocumentsPage from '@/features/enseignant/DocumentsPage';
 
 const NotFoundPage = () => <div className="p-8 text-center text-muted-foreground"><h3>404 — Page introuvable</h3></div>;
 const UnauthorizedPage = () => <div className="p-8 text-center text-destructive"><h3>403 — Accès non autorisé</h3></div>;
@@ -72,6 +74,9 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
           { path: 'planning', element: <PlanningPage /> },
+          { path: 'modules', element: <MesModulesPage /> },
+          { path: 'classes', element: <ClassesPage readOnly /> },
+          { path: 'documents', element: <DocumentsPage /> },
           { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],
@@ -91,6 +96,7 @@ export const router = createBrowserRouter([
           { path: 'planning', element: <PlanningPage /> },
           { path: 'enseignants', element: <TrombinoscopePage /> },
           { path: 'progression', element: <ProgressionPage /> },
+          { path: 'documents', element: <DocumentsPage readOnly /> },
           { path: 'profil', element: <ProfilPage /> },
           { path: '*', element: <Navigate to="planning" replace /> },
         ],

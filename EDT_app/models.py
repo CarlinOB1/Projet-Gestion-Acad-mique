@@ -669,3 +669,55 @@ class ReferentClasse(models.Model):
 
     def __str__(self):
         return f"Référent : {self.enseignant} ({self.classes.count()} classe(s))"
+
+
+# ==========================================
+# 6. DOCUMENTS PÉDAGOGIQUES
+# ==========================================
+
+def validate_extension_fichier(value):
+    """Autorise uniquement certaines extensions."""
+    import os
+    from django.core.exceptions import ValidationError
+    EXTENSIONS_AUTORISEES = {
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'
+    }
+    ext = os.path.splitext(value.name)[1].lower()
+    if ext not in EXTENSIONS_AUTORISEES:
+        raise ValidationError(
+            f"Les fichiers de type '{ext}' ne sont pas autorisés. Formats acceptés : PDF, DOC, XLS, PPT, TXT."
+        )
+
+
+class DocumentPedagogique(models.Model):
+    """
+    Document pédagogique uploadé par un enseignant et rattaché à un module.
+    Accessible en lecture à tous les utilisateurs authentifiés actifs.
+    Modifiable / supprimable uniquement par l'enseignant propriétaire.
+    """
+    TYPE_CHOICES = [
+        ('cours',  'Cours'),
+        ('td',     'TD'),
+        ('tp',     'TP'),
+        ('autre',  'Autre'),
+    ]
+
+    titre      = models.CharField(max_length=200, blank=False)
+    fichier    = models.FileField(
+        upload_to='documents/%Y/%m/',
+        validators=[validate_extension_fichier],
+    )
+    type_doc   = models.CharField(max_length=20, choices=TYPE_CHOICES, default='cours')
+    module     = models.ForeignKey(
+        Module, on_delete=models.CASCADE, related_name='documents'
+    )
+    enseignant = models.ForeignKey(
+        Enseignant, on_delete=models.CASCADE, related_name='documents'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.titre} ({self.module.libelle})"
+
+    class Meta:
+        ordering = ['-created_at']
