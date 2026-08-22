@@ -167,12 +167,14 @@ STATIC_URL = 'static/'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://slogan-prelaunch-untapped.ngrok-free.dev",
 ]
 
 # Indispensable pour autoriser le passage du cookie CSRF depuis ce port
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://slogan-prelaunch-untapped.ngrok-free.dev",
 ]
 
 # Rappel : Ceci doit toujours être à True
