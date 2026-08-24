@@ -8,8 +8,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Layers } from 'lucide-react';
+import { Plus, Layers, Users } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from '@/components/ui/sheet';
+import AffectationsPanel from '@/features/affectations/AffectationsPanel';
 
 // Primitives UI de shadcn/ui
 import { Button } from '@/components/ui/button';
@@ -48,6 +52,8 @@ export default function ModulesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingModule, setEditingModule] = useState(null);
   const [serverError, setServerError] = useState(null);
+  // Sheet Affectations
+  const [moduleAffectation, setModuleAffectation] = useState(null);
 
   // États locaux du formulaire (useState simple)
   const [libelle, setLibelle] = useState('');
@@ -184,24 +190,17 @@ export default function ModulesPage() {
       label: 'Volume Horaire',
       render: (row) => {
         const consomme = row.heures_consommees || 0;
-        const max = row.heures_max || 1; // Évite la division par zéro
+        const max = row.heures_max || 1;
         const percentage = Math.min((consomme / max) * 100, 100);
-
-        // Détermination dynamique de la couleur selon le taux de consommation
         let progressBarColor = 'bg-green-500';
-        if (percentage >= 80 && percentage < 100) {
-          progressBarColor = 'bg-orange-500';
-        } else if (percentage >= 100) {
-          progressBarColor = 'bg-red-500';
-        }
-
+        if (percentage >= 80 && percentage < 100) progressBarColor = 'bg-orange-500';
+        else if (percentage >= 100) progressBarColor = 'bg-red-500';
         return (
           <div className="flex flex-col gap-1.5 w-44">
             <div className="flex justify-between text-xs font-medium text-muted-foreground">
               <span>{consomme}h / {max}h</span>
               <span>{Math.round(percentage)}%</span>
             </div>
-            {/* Barre de progression inline via div CSS natif */}
             <div className="w-full bg-muted rounded-full h-2 overflow-hidden border border-border/30">
               <div
                 className={`h-full ${progressBarColor} transition-all duration-300 rounded-full`}
@@ -211,6 +210,21 @@ export default function ModulesPage() {
           </div>
         );
       }
+    },
+    {
+      key: 'affectations',
+      label: 'Répartition',
+      render: (row) => (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1.5 text-xs"
+          onClick={(e) => { e.stopPropagation(); setModuleAffectation(row); }}
+        >
+          <Users className="h-3.5 w-3.5" />
+          Affecter
+        </Button>
+      )
     }
   ];
 
@@ -367,6 +381,28 @@ export default function ModulesPage() {
           </div>
         </div>
       </FormModal>
+
+      {/* SHEET AFFECTATIONS */}
+      <Sheet open={!!moduleAffectation} onOpenChange={(open) => !open && setModuleAffectation(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
+          <SheetHeader className="mb-4">
+            <SheetTitle>
+              Répartition — {moduleAffectation?.libelle}
+            </SheetTitle>
+            <SheetDescription>
+              Gérez les affectations des enseignants sur ce module.
+              {moduleAffectation && (
+                <span className="block mt-1 text-xs">
+                  Volume max : {moduleAffectation.heures_max}h
+                  {' · '}
+                  Consommé : {moduleAffectation.heures_consommees}h
+                </span>
+              )}
+            </SheetDescription>
+          </SheetHeader>
+          <AffectationsPanel module={moduleAffectation} />
+        </SheetContent>
+      </Sheet>
 
     </div>
   );

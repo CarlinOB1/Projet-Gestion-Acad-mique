@@ -373,6 +373,15 @@ class Enseignant(models.Model):
                         {"departement": "Un enseignant chef de département doit rester rattaché au département qu'il dirige."}
                     )
 
+    def charge_totale(self):
+        """
+        Somme des heures_prevues sur toutes les affectations de cet enseignant.
+        Utile pour un futur contrôle de quota statutaire.
+        """
+        from django.db.models import Sum
+        result = self.affectations.aggregate(total=Sum('heures_prevues'))['total']
+        return result or 0
+
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
@@ -472,6 +481,12 @@ class Module(models.Model):
     """
     Module appartenant à une matière et rattaché à un semestre.
     1 crédit = 12h de cours effectif maximum.
+
+    Ventilation optionnelle par type de séance :
+    - heures_cm / heures_td / heures_tp : volumes horaires déclarés par type.
+    - Si renseignés, leur somme ne peut pas dépasser heures_max().
+    - Servent de plafond de référence pour les AffectationModule typées.
+    - Si non renseignés, le module reste sur un volume total non ventilé.
     """
     libelle = models.CharField(max_length=100, blank=False)
     description = models.TextField(blank=True)
@@ -486,26 +501,225 @@ class Module(models.Model):
     # CORRECTION : champ présent en base mais absent du modèle — réintégré
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Ventilation horaire optionnelle par type (Phase 1 — décision Phase 0)
+    heures_cm = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0, message="Les heures CM ne peuvent pas être négatives.")],
+        help_text="Volume horaire CM prévu. Optionnel.",
+    )
+    heures_td = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0, message="Les heures TD ne peuvent pas être négatives.")],
+        help_text="Volume horaire TD prévu. Optionnel.",
+    )
+    heures_tp = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0, message="Les heures TP ne peuvent pas être négatives.")],
+        help_text="Volume horaire TP prévu. Optionnel.",
+    )
+
     def heures_max(self):
         return self.credits * 12
 
     def heures_consommees(self, exclure_seance_pk=None):
-        seances = self.seance_set.filter(statut='Confirmée')
+        seances = self.seance_set.filter(statut__in=['Confirmée', 'Reportée'])
         if exclure_seance_pk:
             seances = seances.exclude(pk=exclure_seance_pk)
-        return sum(
-            Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
-            for s in seances
-        )
+            
+        total = 0
+        for s in seances:
+            if s.statut == 'Reportée' and s.heure_debut_report and s.heure_fin_report:
+                total += Seance.calculer_duree_effective(s.heure_debut_report, s.heure_fin_report)
+            else:
+                total += Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
+        return total
 
     def heures_restantes(self, exclure_seance_pk=None):
         return self.heures_max() - self.heures_consommees(exclure_seance_pk)
+
+    def heures_par_type(self, type_seance):
+        """
+        Retourne le plafond horaire déclaré pour un type donné (CM/TD/TP),
+        ou None si ce type n'est pas ventilé sur ce module.
+        """
+        mapping = {'CM': self.heures_cm, 'TD': self.heures_td, 'TP': self.heures_tp}
+        return mapping.get(type_seance)
+
+    def clean(self):
+        super().clean()
+        # Validation : la somme des heures ventilées ne dépasse pas heures_max()
+        # On valide uniquement les champs renseignés.
+        champs = {
+            'heures_cm': self.heures_cm,
+            'heures_td': self.heures_td,
+            'heures_tp': self.heures_tp,
+        }
+        valeurs_renseignees = {k: v for k, v in champs.items() if v is not None}
+        if valeurs_renseignees:
+            total_ventile = sum(valeurs_renseignees.values())
+            if self.credits and total_ventile > self.heures_max():
+                raise ValidationError(
+                    f"La somme des heures ventilées (CM+TD+TP = {total_ventile}h) "
+                    f"dépasse le volume horaire maximal du module "
+                    f"({self.heures_max()}h pour {self.credits} crédit(s))."
+                )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.libelle} ({self.semestre.libelle})"
 
     class Meta:
         unique_together = ('libelle', 'semestre')
+
+
+# ==========================================
+# 3b. AFFECTATION DES MODULES
+# ==========================================
+
+class AffectationModule(models.Model):
+    """
+    Niveau 2 : répartition des charges d'enseignement.
+    Lie un enseignant à un module pour un volume d'heures donné,
+    avec un type de séance optionnel (CM/TD/TP).
+
+    - type_seance=None  → affectation générique (l'enseignant couvre tout type)
+    - type_seance=CM/TD/TP → affectation typée (l'enseignant couvre ce type uniquement)
+
+    Règle de non-ambiguïté : pour un couple (module, enseignant) donné,
+    on ne peut pas mélanger affectation générique ET affectations typées.
+
+    Dépassement de volume : si la somme des heures_prevues dépasse heures_max()
+    du module, un avertissement est émis (non bloquant — décision Phase 0).
+    """
+    TYPE_CHOICES = [('CM', 'CM'), ('TD', 'TD'), ('TP', 'TP')]
+
+    module      = models.ForeignKey(
+        Module,
+        on_delete=models.CASCADE,
+        related_name='affectations',
+    )
+    enseignant  = models.ForeignKey(
+        Enseignant,
+        on_delete=models.CASCADE,
+        related_name='affectations',
+    )
+    type_seance = models.CharField(
+        max_length=5,
+        choices=TYPE_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Laisser vide pour une affectation générique (tous types).",
+    )
+    heures_prevues = models.FloatField(
+        validators=[MinValueValidator(0, message="Le volume prévu ne peut pas être négatif.")],
+        help_text="Volume horaire affecté à cet enseignant pour ce module (et ce type).",
+    )
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    # ── Contraintes d'intégrité ──────────────────────────────────────────────
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['module', 'enseignant', 'type_seance'],
+                name='unique_affectation_module_enseignant_type',
+            ),
+        ]
+        ordering = ['module', 'enseignant', 'type_seance']
+
+    def clean(self):
+        super().clean()
+        if not self.module_id or not self.enseignant_id:
+            return  # FKs pas encore résolues, on laisse passer
+
+        # ── Règle de non-ambiguïté par couple (module, enseignant) ────────────
+        autres = AffectationModule.objects.filter(
+            module=self.module_id,
+            enseignant=self.enseignant_id,
+        ).exclude(pk=self.pk)
+
+        if self.type_seance is None:
+            # Affectation générique : interdit si le couple a déjà des affectations typées
+            if autres.filter(type_seance__isnull=False).exists():
+                raise ValidationError(
+                    "Impossible de créer une affectation générique : cet enseignant possède "
+                    "déjà une ou plusieurs affectations typées (CM/TD/TP) sur ce module. "
+                    "Supprimez-les d'abord, ou utilisez une affectation typée."
+                )
+        else:
+            # Affectation typée : interdit si le couple a déjà une affectation générique
+            if autres.filter(type_seance__isnull=True).exists():
+                raise ValidationError(
+                    "Impossible de créer une affectation typée : cet enseignant possède "
+                    "déjà une affectation générique sur ce module. "
+                    "Supprimez-la d'abord, ou utilisez une affectation générique."
+                )
+
+        # ── Avertissement (non bloquant) : dépassement du volume du module ────
+        # Le dépassement est détecté ici pour traçabilité, mais n'est pas bloquant.
+        # Le serializer exposera l'avertissement dans la réponse API (champ 'warnings').
+        # Pas de raise ValidationError ici — décision Phase 0.
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    # ── Méthodes utilitaires ─────────────────────────────────────────────────
+
+    def heures_consommees(self, exclure_seance_pk=None):
+        """
+        Heures effectives des séances confirmées ou reportées rattachées à cette affectation.
+        Si l'affectation est typée, seules les séances du même type sont comptées.
+        """
+        seances = Seance.objects.filter(
+            module=self.module_id,
+            enseignant=self.enseignant_id,
+            statut__in=['Confirmée', 'Reportée'],
+        )
+        if self.type_seance:
+            seances = seances.filter(type_seance=self.type_seance)
+        if exclure_seance_pk:
+            seances = seances.exclude(pk=exclure_seance_pk)
+            
+        total = 0
+        for s in seances:
+            if s.statut == 'Reportée' and s.heure_debut_report and s.heure_fin_report:
+                total += Seance.calculer_duree_effective(s.heure_debut_report, s.heure_fin_report)
+            else:
+                total += Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
+        return total
+
+    def heures_restantes(self, exclure_seance_pk=None):
+        """Volume horaire encore disponible sur cette affectation."""
+        return self.heures_prevues - self.heures_consommees(exclure_seance_pk)
+
+    def volume_total_affectations_module(self):
+        """
+        Somme de toutes les heures_prevues sur le module (tous enseignants).
+        Utilisé pour générer l'avertissement de dépassement.
+        """
+        from django.db.models import Sum
+        result = AffectationModule.objects.filter(
+            module=self.module_id
+        ).exclude(pk=self.pk).aggregate(total=Sum('heures_prevues'))['total'] or 0
+        return result + (self.heures_prevues or 0)
+
+    def has_volume_warning(self):
+        """Retourne True si la somme des affectations dépasse heures_max() du module."""
+        return self.volume_total_affectations_module() > self.module.heures_max()
+
+    def __str__(self):
+        type_label = self.type_seance or 'Générique'
+        return (
+            f"{self.enseignant} → {self.module.libelle} "
+            f"({type_label}, {self.heures_prevues}h)"
+        )
 
 
 # ==========================================
@@ -568,69 +782,91 @@ class Seance(models.Model):
         return duree_effective.total_seconds() / 3600
 
     def _valider_creneau_report(self):
-        if not self.date_report or not self.heure_debut_report or not self.heure_fin_report:
-            raise ValidationError("Les données de report sont incomplètes.")
-
-        # Applique la nouvelle règle : Pas avant 9h
-        if self.heure_debut_report < self.MIN_HEURE_DEBUT:
-            raise ValidationError(f"Le report ne peut pas commencer avant {self.MIN_HEURE_DEBUT.strftime('%Hh%M')}.")
-
-        if self.heure_fin_report > self.HEURE_FIN_MAX:
-            raise ValidationError(f"Le report ne peut pas finir après {self.HEURE_FIN_MAX.strftime('%Hh%M')}.")
-
-        # Vérification Conflits Report
-        if Seance.objects.filter(enseignant=self.enseignant, date_seance=self.date_report,
-                                 heure_debut__lt=self.heure_fin_report, heure_fin__gt=self.heure_debut_report).exclude(pk=self.pk).exists():
-            raise ValidationError("Conflit d'horaire pour l'enseignant sur le créneau de report.")
+        """Délègue à validation_seance.valider_creneau_report()."""
+        from EDT_app.validation_seance import valider_creneau_report
+        valider_creneau_report(
+            enseignant=self.enseignant,
+            classe=self.classe if self.classe_id else None,
+            annee=self.annee if self.annee_id else None,
+            date_report=self.date_report,
+            heure_debut_report=self.heure_debut_report,
+            heure_fin_report=self.heure_fin_report,
+            pk=self.pk,
+        )
 
     def clean(self):
+        """
+        Délègue toutes les validations métier à EDT_app.validation_seance.
+        Source unique de vérité partagée avec SeanceSerializer.validate().
+        """
         super().clean()
-        if not self.heure_debut or not self.heure_fin:
-            raise ValidationError("Horaires obligatoires.")
+        from EDT_app.validation_seance import (
+            valider_horaires,
+            valider_dimanche,
+            valider_annee_non_archivee,
+            valider_departement,
+            valider_coherence_module_semestre,
+            valider_bornes_semestre,
+            valider_conflit_enseignant,
+            valider_conflit_classe,
+            valider_volume_module,
+            valider_affectation,
+            valider_volume_journalier,
+        )
 
-        if self.heure_debut < self.MIN_HEURE_DEBUT:
-            raise ValidationError(
-                f"Les séances ne peuvent pas commencer avant {self.MIN_HEURE_DEBUT.strftime('%Hh%M')}.")
-
-        if self.heure_fin > self.HEURE_FIN_MAX:
-            raise ValidationError(f"L'heure de fin max est {self.HEURE_FIN_MAX.strftime('%Hh%M')}.")
-
-        if self.heure_debut >= self.heure_fin:
-            raise ValidationError("L'heure de début doit être avant la fin.")
-
-        if self.enseignant and self.module:
-            if self.enseignant.departement != self.module.matiere.departement:
-                raise ValidationError(
-                    f"L'enseignant ({self.enseignant.departement}) n'est pas du même département que la matière.")
+        valider_horaires(self.heure_debut, self.heure_fin)
 
         if self.date_seance:
-            if not (self.classe.semestre.date_debut <= self.date_seance <= self.classe.semestre.date_fin):
-                raise ValidationError("La date de séance est hors des limites du semestre.")
+            valider_dimanche(self.date_seance)
+
+        if self.annee_id:
+            valider_annee_non_archivee(self.annee)
+
+        if self.enseignant_id and self.module_id:
+            valider_departement(self.enseignant, self.module)
+
+        if self.module_id and self.classe_id:
+            valider_coherence_module_semestre(self.module, self.classe)
+
+        if self.date_seance and self.classe_id:
+            valider_bornes_semestre(self.date_seance, self.classe)
 
         # Conflit enseignant : levé si la séance conflictuelle est la séance liée (mutualisée)
-        conflits_ens = Seance.objects.filter(
-            enseignant=self.enseignant,
-            date_seance=self.date_seance,
-            heure_debut__lt=self.heure_fin,
-            heure_fin__gt=self.heure_debut,
-        ).exclude(pk=self.pk)
-        # Exclure la séance liée (mutualisée) du conflit
-        if self.seance_liee_id:
-            conflits_ens = conflits_ens.exclude(pk=self.seance_liee_id)
-        if conflits_ens.exists():
-            raise ValidationError("L'enseignant a déjà une séance prévue à cette heure.")
+        valider_conflit_enseignant(
+            self.enseignant,
+            self.date_seance,
+            self.heure_debut,
+            self.heure_fin,
+            self.pk,
+            seance_liee_pk=self.seance_liee_id,
+        )
 
-        # ── CORRECTIF : vérification du plafond horaire du module ──────────────
-        if self.module and self.heure_debut and self.heure_fin:
+        valider_conflit_classe(
+            self.classe if self.classe_id else None,
+            self.date_seance,
+            self.heure_debut,
+            self.heure_fin,
+            self.pk,
+        )
+
+        if self.heure_debut and self.heure_fin:
             duree = self.calculer_duree_effective(self.heure_debut, self.heure_fin)
-            heures_restantes = self.module.heures_restantes(exclure_seance_pk=self.pk)
-            if duree > heures_restantes:
-                raise ValidationError(
-                    f"Cette séance ({duree}h) dépasse le volume horaire restant du module "
-                    f"'{self.module.libelle}' "
-                    f"({heures_restantes}h restantes sur {self.module.heures_max()}h max)."
+
+            if self.module_id:
+                valider_volume_module(self.module, duree, self.pk)
+
+            if self.module_id and self.enseignant_id and self.type_seance:
+                valider_affectation(
+                    self.module, self.enseignant, self.type_seance, duree, self.pk
                 )
-        # ───────────────────────────────────────────────────────────────────────
+
+            valider_volume_journalier(
+                self.classe if self.classe_id else None,
+                self.date_seance,
+                self.heure_debut,
+                self.heure_fin,
+                self.pk,
+            )
 
         if self.statut == 'Reportée':
             self._valider_creneau_report()

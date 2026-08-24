@@ -11,7 +11,7 @@ from EDT_app.models import (
     Faculte, Departement, Filiere, Parcours,
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
-    Matiere, Module, Seance, ReferentClasse,
+    Matiere, Module, AffectationModule, Seance, ReferentClasse,
     DocumentPedagogique,
 )
 
@@ -534,6 +534,34 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 # 4. PLANIFICATION
 # ==========================================
 
+class AffectationModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
+    module_id = serializers.PrimaryKeyRelatedField(
+        queryset=Module.objects.all(), source='module', write_only=True
+    )
+    module = ModuleSerializer(read_only=True)
+    enseignant_id = serializers.PrimaryKeyRelatedField(
+        queryset=Enseignant.objects.all(), source='enseignant', write_only=True
+    )
+    enseignant = EnseignantSerializer(read_only=True)
+    heures_consommees = serializers.SerializerMethodField()
+    heures_restantes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AffectationModule
+        fields = [
+            'id', 'module', 'module_id', 'enseignant', 'enseignant_id',
+            'type_seance', 'heures_prevues', 'created_at',
+            'heures_consommees', 'heures_restantes'
+        ]
+        read_only_fields = ['created_at']
+
+    def get_heures_consommees(self, obj):
+        return round(obj.heures_consommees(), 2)
+
+    def get_heures_restantes(self, obj):
+        return round(obj.heures_restantes(), 2)
+
+
 class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     """
     Règles métier réimplémentées (en plus du full_clean() du modèle) :
@@ -601,38 +629,72 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         """Vrai si la séance est liée à une autre (cours mutualisé)."""
         return obj.seance_liee_id is not None or obj.seances_associees.exists()
 
-    # ── Validations champ par champ ──────────────────────────────────────────
+    @staticmethod
+    def _to_drf_error(field, exc):
+        """
+        Convertit une django.core.exceptions.ValidationError
+        en erreur DRF 400 ciblée sur le champ JSON `field`.
+        """
+        from django.core.exceptions import ValidationError as DjangoVE
+        if isinstance(exc, DjangoVE):
+            raise serializers.ValidationError({field: exc.messages})
+        raise exc
+
+    # ── Validations champ par champ ──────────────────────────────────────────────
 
     def validate_heure_debut(self, value):
         """
-        Aligné sur Seance.MIN_HEURE_DEBUT :
-        avant 09h00 est interdit, mais n'importe quelle heure >= 09h00 est valide.
+        Délègue à validation_seance.valider_horaires (partiel — heure_debut seule).
+        La validation complète (ordre debut/fin) se fait dans validate().
         """
-        if value < Seance.MIN_HEURE_DEBUT:
+        from EDT_app.validation_seance import MIN_HEURE_DEBUT
+        if value < MIN_HEURE_DEBUT:
             raise serializers.ValidationError(
                 f"Les séances ne peuvent pas commencer avant "
-                f"{Seance.MIN_HEURE_DEBUT.strftime('%Hh:%M')}."
+                f"{MIN_HEURE_DEBUT.strftime('%Hh:%M')}."
             )
         return value
 
     def validate_heure_fin(self, value):
-        if value > Seance.HEURE_FIN_MAX:
+        from EDT_app.validation_seance import HEURE_FIN_MAX
+        if value > HEURE_FIN_MAX:
             raise serializers.ValidationError(
                 f"L'heure de fin ne peut pas dépasser "
-                f"{Seance.HEURE_FIN_MAX.strftime('%Hh:%M')}."
+                f"{HEURE_FIN_MAX.strftime('%Hh:%M')}."
             )
         return value
 
     def validate_date_seance(self, value):
-        if value.weekday() == 6:
-            raise serializers.ValidationError(
-                "Impossible de planifier une séance un dimanche."
-            )
+        from EDT_app.validation_seance import valider_dimanche
+        try:
+            valider_dimanche(value)
+        except Exception as exc:
+            self._to_drf_error('date_seance', exc)
         return value
 
-    # ── Validations croisées ─────────────────────────────────────────────────
+    # ── Validations croisées ─────────────────────────────────────────────────────
 
     def validate(self, data):
+        """
+        Délègue toutes les validations croisées aux fonctions pures
+        de EDT_app.validation_seance (source unique de vérité partagée
+        avec Seance.clean() du modèle).
+        """
+        from EDT_app.validation_seance import (
+            valider_horaires,
+            valider_annee_non_archivee,
+            valider_departement,
+            valider_coherence_module_semestre,
+            valider_bornes_semestre,
+            valider_conflit_enseignant,
+            valider_conflit_classe,
+            valider_volume_module,
+            valider_affectation,
+            valider_volume_journalier,
+            MAX_HEURES_JOUR,
+        )
+        from EDT_app.validation_seance import _calculer_duree_effective
+
         heure_debut = data.get('heure_debut')
         heure_fin   = data.get('heure_fin')
         date_seance = data.get('date_seance')
@@ -641,29 +703,30 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         classe      = data.get('classe')
         annee       = data.get('annee')
         statut      = data.get('statut', 'Confirmée')
+        seance_liee = data.get('seance_liee')
         pk          = self.instance.pk if self.instance else None
 
         # 1. Ordre heure_debut / heure_fin
-        if heure_debut and heure_fin and heure_debut >= heure_fin:
-            raise serializers.ValidationError(
-                {'heure_fin': "L'heure de fin doit être après l'heure de début."}
-            )
+        try:
+            valider_horaires(heure_debut, heure_fin)
+        except Exception as exc:
+            self._to_drf_error('heure_fin', exc)
 
         # 2. Année archivée
-        if annee and annee.statut == 'archivée':
-            raise serializers.ValidationError(
-                {'annee_id': "Impossible de créer une séance sur une année archivée."}
-            )
+        try:
+            valider_annee_non_archivee(annee)
+        except Exception as exc:
+            self._to_drf_error('annee_id', exc)
 
         if heure_debut and heure_fin:
-            duree = Seance.calculer_duree_effective(heure_debut, heure_fin)
+            duree = _calculer_duree_effective(heure_debut, heure_fin)
 
             # 3. Durée effective max par séance
-            if duree > Seance.MAX_HEURES_JOUR:
+            if duree > MAX_HEURES_JOUR:
                 raise serializers.ValidationError(
                     {
                         'heure_fin': (
-                            f"La durée effective dépasse {Seance.MAX_HEURES_JOUR}h "
+                            f"La durée effective dépasse {MAX_HEURES_JOUR}h "
                             f"(durée calculée : {duree:.2f}h)."
                         )
                     }
@@ -671,221 +734,87 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
             # 4. Volume horaire du module non dépassé
             if module:
-                heures_consommees = module.heures_consommees(exclure_seance_pk=pk)
-                heures_max        = module.heures_max()
-                if heures_consommees + duree > heures_max:
-                    restant = heures_max - heures_consommees
-                    raise serializers.ValidationError(
-                        {
-                            'module_id': (
-                                f"Volume horaire de '{module.libelle}' dépassé. "
-                                f"Restant : {restant:.2f}h, "
-                                f"durée demandée : {duree:.2f}h."
-                            )
-                        }
-                    )
+                try:
+                    valider_volume_module(module, duree, pk)
+                except Exception as exc:
+                    self._to_drf_error('module_id', exc)
 
-        # 5. Cohérence module / semestre de la classe
-        if module and classe and module.semestre != classe.semestre:
-            raise serializers.ValidationError(
-                {
-                    'module_id': (
-                        f"Le module appartient au semestre '{module.semestre}' "
-                        f"mais la classe est en '{classe.semestre}'."
+            # 5. Affectation de l'enseignant + volume restant
+            if module and enseignant and data.get('type_seance'):
+                try:
+                    valider_affectation(
+                        module, enseignant, data.get('type_seance'), duree, pk
                     )
-                }
-            )
+                except Exception as exc:
+                    self._to_drf_error('enseignant_id', exc)
 
-        # 6. Date dans les bornes du semestre
+            # 6. Volume journalier de la classe
+            try:
+                valider_volume_journalier(classe, date_seance, heure_debut, heure_fin, pk)
+            except Exception as exc:
+                self._to_drf_error('date_seance', exc)
+
+        # 7. Cohérence module / semestre de la classe
+        if module and classe:
+            try:
+                valider_coherence_module_semestre(module, classe)
+            except Exception as exc:
+                self._to_drf_error('module_id', exc)
+
+        # 8. Date dans les bornes du semestre
         if date_seance and classe:
-            sem = classe.semestre
-            if not (sem.date_debut <= date_seance <= sem.date_fin):
-                raise serializers.ValidationError(
-                    {
-                        'date_seance': (
-                            f"La date est hors du semestre "
-                            f"({sem.date_debut} → {sem.date_fin})."
-                        )
-                    }
-                )
+            try:
+                valider_bornes_semestre(date_seance, classe)
+            except Exception as exc:
+                self._to_drf_error('date_seance', exc)
 
-        # 7. Cohérence département enseignant ↔ matière du module
+        # 9. Cohérence département enseignant ↔ matière du module
         if enseignant and module:
-            if enseignant.departement != module.matiere.departement:
-                raise serializers.ValidationError(
-                    {
-                        'enseignant_id': (
-                            f"L'enseignant est du département "
-                            f"'{enseignant.departement}', "
-                            f"la matière appartient au département "
-                            f"'{module.matiere.departement}'."
-                        )
-                    }
-                )
+            try:
+                valider_departement(enseignant, module)
+            except Exception as exc:
+                self._to_drf_error('enseignant_id', exc)
 
-        # 8. Conflit enseignant sur le même créneau
-        # Levé si la séance conflictuelle est la séance liée (mutualisée)
-        seance_liee = data.get('seance_liee')
-        if enseignant and date_seance and heure_debut and heure_fin:
-            conflit_ens_qs = Seance.objects.filter(
-                enseignant=enseignant,
-                date_seance=date_seance,
-                heure_debut__lt=heure_fin,
-                heure_fin__gt=heure_debut,
-            ).exclude(pk=pk)
-            if seance_liee:
-                conflit_ens_qs = conflit_ens_qs.exclude(pk=seance_liee.pk)
-            if conflit_ens_qs.exists():
-                raise serializers.ValidationError(
-                    {
-                        'enseignant_id': (
-                            f"L'enseignant a déjà une séance le "
-                            f"{date_seance} sur ce créneau."
-                        )
-                    }
-                )
+        # 10. Conflit enseignant (levé si séance liée / mutualisée)
+        try:
+            valider_conflit_enseignant(
+                enseignant, date_seance, heure_debut, heure_fin, pk,
+                seance_liee_pk=seance_liee.pk if seance_liee else None,
+            )
+        except Exception as exc:
+            self._to_drf_error('enseignant_id', exc)
 
-        # 9. Conflit classe sur le même créneau
-        if classe and date_seance and heure_debut and heure_fin:
-            if Seance.objects.filter(
-                classe=classe,
-                date_seance=date_seance,
-                heure_debut__lt=heure_fin,
-                heure_fin__gt=heure_debut,
-            ).exclude(pk=pk).exists():
-                raise serializers.ValidationError(
-                    {
-                        'classe_id': (
-                            f"La classe a déjà une séance le "
-                            f"{date_seance} sur ce créneau."
-                        )
-                    }
-                )
+        # 11. Conflit classe
+        try:
+            valider_conflit_classe(classe, date_seance, heure_debut, heure_fin, pk)
+        except Exception as exc:
+            self._to_drf_error('classe_id', exc)
 
-        # 10. Volume horaire journalier de la classe
-        if classe and date_seance and heure_debut and heure_fin:
-            seances_jour = Seance.objects.filter(
-                classe=classe,
-                date_seance=date_seance,
-                statut='Confirmée',
-            ).exclude(pk=pk)
-            total_jour = sum(
-                Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
-                for s in seances_jour
-            ) + Seance.calculer_duree_effective(heure_debut, heure_fin)
-
-            if total_jour > Seance.MAX_HEURES_JOUR:
-                raise serializers.ValidationError(
-                    {
-                        'date_seance': (
-                            f"Le volume journalier de la classe dépasse "
-                            f"{Seance.MAX_HEURES_JOUR}h "
-                            f"(total : {total_jour:.2f}h)."
-                        )
-                    }
-                )
-
-        # 11. Champs de report obligatoires si statut == 'Reportée'
+        # 12. Champs de report obligatoires si statut == 'Reportée'
         if statut == 'Reportée':
             data = self._validate_report(data, pk)
 
         return data
 
+
     def _validate_report(self, data, pk):
         """
-        Valide le créneau de report.
-        Aligné sur Seance._valider_creneau_report() du modèle mis à jour.
+        Délègue à validation_seance.valider_creneau_report().
+        Aligné automatiquement sur Seance._valider_creneau_report() du modèle.
         """
-        date_report        = data.get('date_report')
-        heure_debut_report = data.get('heure_debut_report')
-        heure_fin_report   = data.get('heure_fin_report')
-        classe             = data.get('classe')
-        annee              = data.get('annee')
-        enseignant         = data.get('enseignant')
-
-        if not date_report or not heure_debut_report or not heure_fin_report:
-            raise serializers.ValidationError(
-                {
-                    'date_report': (
-                        "La date et les horaires de report sont obligatoires "
-                        "lorsque le statut est 'Reportée'."
-                    )
-                }
+        from EDT_app.validation_seance import valider_creneau_report
+        try:
+            valider_creneau_report(
+                enseignant=data.get('enseignant'),
+                classe=data.get('classe'),
+                annee=data.get('annee'),
+                date_report=data.get('date_report'),
+                heure_debut_report=data.get('heure_debut_report'),
+                heure_fin_report=data.get('heure_fin_report'),
+                pk=pk,
             )
-
-        if date_report.weekday() == 6:
-            raise serializers.ValidationError(
-                {'date_report': "Impossible de reporter une séance un dimanche."}
-            )
-
-        # Aligné sur MIN_HEURE_DEBUT : avant 09h00 interdit
-        if heure_debut_report < Seance.MIN_HEURE_DEBUT:
-            raise serializers.ValidationError(
-                {
-                    'heure_debut_report': (
-                        f"Le créneau de report ne peut pas commencer avant "
-                        f"{Seance.MIN_HEURE_DEBUT.strftime('%Hh:%M')}."
-                    )
-                }
-            )
-
-        if heure_fin_report > Seance.HEURE_FIN_MAX:
-            raise serializers.ValidationError(
-                {
-                    'heure_fin_report': (
-                        f"L'heure de fin du report ne peut pas dépasser "
-                        f"{Seance.HEURE_FIN_MAX.strftime('%Hh:%M')}."
-                    )
-                }
-            )
-
-        if classe:
-            sem = classe.semestre
-            if not (sem.date_debut <= date_report <= sem.date_fin):
-                raise serializers.ValidationError(
-                    {'date_report': "La date de report est hors du semestre."}
-                )
-
-        if annee:
-            if not (annee.date_debut <= date_report <= annee.date_fin):
-                raise serializers.ValidationError(
-                    {
-                        'date_report': (
-                            "La date de report est hors de l'année académique."
-                        )
-                    }
-                )
-
-        if enseignant and heure_debut_report and heure_fin_report:
-            if Seance.objects.filter(
-                enseignant=enseignant,
-                date_seance=date_report,
-                heure_debut__lt=heure_fin_report,
-                heure_fin__gt=heure_debut_report,
-            ).exclude(pk=pk).exists():
-                raise serializers.ValidationError(
-                    {
-                        'date_report': (
-                            "L'enseignant a déjà une séance sur le créneau de report."
-                        )
-                    }
-                )
-
-        if classe and heure_debut_report and heure_fin_report:
-            if Seance.objects.filter(
-                classe=classe,
-                date_seance=date_report,
-                heure_debut__lt=heure_fin_report,
-                heure_fin__gt=heure_debut_report,
-            ).exclude(pk=pk).exists():
-                raise serializers.ValidationError(
-                    {
-                        'date_report': (
-                            "La classe a déjà une séance sur le créneau de report."
-                        )
-                    }
-                )
-
+        except Exception as exc:
+            self._to_drf_error('date_report', exc)
         return data
 
 
@@ -903,64 +832,52 @@ class SeanceReportSerializer(serializers.Serializer):
     heure_fin_report   = serializers.TimeField()
 
     def validate_date_report(self, value):
-        if value.weekday() == 6:
-            raise serializers.ValidationError(
-                "Impossible de reporter une séance un dimanche."
-            )
+        from EDT_app.validation_seance import valider_dimanche
+        try:
+            valider_dimanche(value)
+        except Exception as exc:
+            raise serializers.ValidationError(str(exc)) from exc
         return value
 
     def validate_heure_debut_report(self, value):
-        if value < Seance.MIN_HEURE_DEBUT:
+        from EDT_app.validation_seance import MIN_HEURE_DEBUT
+        if value < MIN_HEURE_DEBUT:
             raise serializers.ValidationError(
                 f"Le créneau de report ne peut pas commencer avant "
-                f"{Seance.MIN_HEURE_DEBUT.strftime('%Hh%M')}."
+                f"{MIN_HEURE_DEBUT.strftime('%Hh%M')}."
             )
         return value
 
     def validate_heure_fin_report(self, value):
-        if value > Seance.HEURE_FIN_MAX:
+        from EDT_app.validation_seance import HEURE_FIN_MAX
+        if value > HEURE_FIN_MAX:
             raise serializers.ValidationError(
                 f"L'heure de fin du report ne peut pas dépasser "
-                f"{Seance.HEURE_FIN_MAX.strftime('%Hh%M')}."
+                f"{HEURE_FIN_MAX.strftime('%Hh%M')}."
             )
         return value
 
     def validate(self, data):
-        seance             = self.context['seance']
-        date_report        = data['date_report']
-        heure_debut_report = data['heure_debut_report']
-        heure_fin_report   = data['heure_fin_report']
+        """
+        Délègue à validation_seance.valider_creneau_report().
+        La séance existante est récupérée depuis le contexte.
+        """
+        from EDT_app.validation_seance import valider_creneau_report
+        from django.core.exceptions import ValidationError as DjangoVE
 
-        sem = seance.classe.semestre
-        if not (sem.date_debut <= date_report <= sem.date_fin):
-            raise serializers.ValidationError(
-                {'date_report': "La date de report est hors du semestre."}
+        seance = self.context['seance']
+        try:
+            valider_creneau_report(
+                enseignant=seance.enseignant,
+                classe=seance.classe,
+                annee=seance.annee,
+                date_report=data['date_report'],
+                heure_debut_report=data['heure_debut_report'],
+                heure_fin_report=data['heure_fin_report'],
+                pk=seance.pk,
             )
-
-        if not (seance.annee.date_debut <= date_report <= seance.annee.date_fin):
-            raise serializers.ValidationError(
-                {'date_report': "La date de report est hors de l'année académique."}
-            )
-
-        if Seance.objects.filter(
-            enseignant=seance.enseignant,
-            date_seance=date_report,
-            heure_debut__lt=heure_fin_report,
-            heure_fin__gt=heure_debut_report,
-        ).exclude(pk=seance.pk).exists():
-            raise serializers.ValidationError(
-                {'date_report': "L'enseignant est déjà occupé sur ce créneau."}
-            )
-
-        if Seance.objects.filter(
-            classe=seance.classe,
-            date_seance=date_report,
-            heure_debut__lt=heure_fin_report,
-            heure_fin__gt=heure_debut_report,
-        ).exclude(pk=seance.pk).exists():
-            raise serializers.ValidationError(
-                {'date_report': "La classe a déjà une séance sur ce créneau."}
-            )
+        except DjangoVE as exc:
+            raise serializers.ValidationError({'date_report': exc.messages}) from exc
 
         return data
 

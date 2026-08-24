@@ -192,6 +192,8 @@ class TestAnneeAcademiqueSerializerArchivage(TestCase):
     def test_archivage_bloque_si_seance_future_confirmee(self):
         """Impossible d'archiver une année avec des séances confirmées dans le futur."""
         future = date.today() + timedelta(days=30)
+        AnneeAcademique.objects.filter(pk=self.annee.pk).update(date_fin=future + timedelta(days=20))
+        self.annee.refresh_from_db()
         Semestre.objects.filter(pk=self.sem.pk).update(date_fin=future + timedelta(days=10))
         self.sem.refresh_from_db()
 
@@ -228,8 +230,10 @@ class TestAnneeAcademiqueSerializerArchivage(TestCase):
     def test_archivage_autorise_si_seances_annulees_futures(self):
         """Les séances annulées ne bloquent pas l'archivage."""
         future = date.today() + timedelta(days=30)
-        self.sem.date_fin = future + timedelta(days=10)
-        self.sem.save()
+        AnneeAcademique.objects.filter(pk=self.annee.pk).update(date_fin=future + timedelta(days=20))
+        self.annee.refresh_from_db()
+        Semestre.objects.filter(pk=self.sem.pk).update(date_fin=future + timedelta(days=10))
+        self.sem.refresh_from_db()
 
         SeanceFactory(
             annee=self.annee,

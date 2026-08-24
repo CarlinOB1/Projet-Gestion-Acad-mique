@@ -213,6 +213,13 @@ class SeanceFactory(DjangoModelFactory):
         return ClasseFactory(
             semestre=self.module.semestre,
             annee=self.module.semestre.annee,
-            filiere=self.module.matiere.departement.filieres.first() or FiliereFactory(
-                departement=self.module.matiere.departement)
         )
+
+class AffectationModuleFactory(DjangoModelFactory):
+    class Meta:
+        model = 'EDT_app.AffectationModule'
+    
+    module = factory.SubFactory(ModuleFactory)
+    enseignant = factory.SubFactory(EnseignantFactory, departement=factory.SelfAttribute('..module.matiere.departement'))
+    type_seance = None
+    heures_prevues = 12.0

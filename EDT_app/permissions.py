@@ -28,7 +28,7 @@ class IsChefDepartementOrReadOnly(BasePermission):
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
-        if request.user.is_superuser:
+        if request.user.is_superuser or request.user.groups.filter(name='responsable').exists():
             return True
         return (
             hasattr(request.user, 'profil')
@@ -73,7 +73,7 @@ class IsChefDepartement(BasePermission):
     message = "Accès réservé aux chefs de département."
 
     def has_permission(self, request, view):
-        if request.user.is_superuser:
+        if request.user.is_superuser or request.user.groups.filter(name='responsable').exists():
             return True
         return (
             hasattr(request.user, 'profil')
@@ -116,7 +116,7 @@ class IsChefOrReferentOrReadOnly(BasePermission):
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
-        if request.user.is_superuser:
+        if request.user.is_superuser or request.user.groups.filter(name='responsable').exists():
             return True
         if not hasattr(request.user, 'profil'):
             return False
@@ -142,7 +142,7 @@ class IsOwnerOrChefDepartement(BasePermission):
         return request.user and request.user.is_authenticated
 
     def has_object_permission(self, request, view, obj):
-        if request.user.is_superuser:
+        if request.user.is_superuser or request.user.groups.filter(name='responsable').exists():
             return True
         
         # Check if user is chef_departement

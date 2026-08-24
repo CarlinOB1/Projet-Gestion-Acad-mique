@@ -77,6 +77,8 @@ export default function SeanceForm({
     setSelectedModuleId,
     enseignants, isLoadingEnseignants,
     moduleSelectionne,
+    selectedEnseignantId, setSelectedEnseignantId,
+    affectationsEnseignant,
   } = useCascadeSelects({ semestreId });
 
   useEffect(() => {
@@ -99,6 +101,19 @@ export default function SeanceForm({
       ...formData,
       annee_id: classeSelectionnee?.annee?.id,
     });
+  };
+
+  /**
+   * Calcule le solde (heures restantes) de l'affectation correspondant au type
+   * de séance sélectionné pour l'enseignant choisi.
+   * Retourne null si aucune affectation n'est trouvée (pas de contrainte).
+   */
+  const getSoldeAffectation = (typeSeance) => {
+    if (!affectationsEnseignant || affectationsEnseignant.length === 0) return null;
+    const aff =
+      affectationsEnseignant.find((a) => a.type_seance === typeSeance) ??
+      affectationsEnseignant.find((a) => a.type_seance === null);
+    return aff ? { restantes: aff.heures_restantes, prevues: aff.heures_prevues, type: aff.type_seance } : null;
   };
 
   const getHeuresColor = (h) => {
@@ -184,7 +199,11 @@ export default function SeanceForm({
       <div className="space-y-2">
         <Label>Enseignant</Label>
         <Controller name="enseignant_id" control={control} render={({ field }) => (
-          <Select disabled={isLoadingEnseignants} value={field.value} onValueChange={field.onChange}>
+          <Select disabled={isLoadingEnseignants} value={field.value}
+            onValueChange={(v) => {
+              field.onChange(v);
+              setSelectedEnseignantId(v);
+            }}>
             <SelectTrigger>
               <SelectValue placeholder={moduleSelectionne ? "Sélectionnez un enseignant" : "Choisissez d'abord un module"} />
             </SelectTrigger>
@@ -198,6 +217,22 @@ export default function SeanceForm({
           </Select>
         )} />
         {errors.enseignant_id && <p className="text-xs text-destructive">{errors.enseignant_id.message}</p>}
+        {/* Solde d'affectation de l'enseignant sélectionné */}
+        {selectedEnseignantId && (() => {
+          const typeSeance = control._formValues?.type_seance;
+          const solde = getSoldeAffectation(typeSeance);
+          if (!solde) return null;
+          const cls = solde.restantes > 2 ? 'text-green-600 dark:text-green-400'
+            : solde.restantes > 0 ? 'text-orange-600 dark:text-orange-400'
+            : 'text-red-600 dark:text-red-400';
+          return (
+            <p className={`text-xs font-medium flex items-center gap-1 ${cls}`}>
+              <AlertTriangle className="h-3 w-3" />
+              Solde affectation ({solde.type ?? 'Générique'}) :
+              {' '}{solde.restantes}h restantes / {solde.prevues}h prévues
+            </p>
+          );
+        })()}
       </div>
 
       {/* 5. Date */}

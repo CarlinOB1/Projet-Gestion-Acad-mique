@@ -9,7 +9,7 @@ from .models import (
     Faculte, Departement, Filiere, Parcours,
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
-    Matiere, Module, Seance, ReferentClasse,
+    Matiere, Module, AffectationModule, Seance, ReferentClasse,
     DocumentPedagogique,
 )
 from EDT_app.serializers import (
@@ -17,6 +17,7 @@ from EDT_app.serializers import (
     ParcoursSerializer, AnneeAcademiqueSerializer, SemestreSerializer,
     ClasseSerializer, ProfilSerializer, EnseignantSerializer,
     EtudiantSerializer, MatiereSerializer, ModuleSerializer,
+    AffectationModuleSerializer,
     SeanceSerializer, SeanceReportSerializer, ProfilSuspensionSerializer,
     DocumentPedagogiqueSerializer,
 )
@@ -545,6 +546,26 @@ class ModuleViewSet(BaseViewSet):
 # 4. PLANIFICATION
 # ──────────────────────────────────────────────────────────────────────────────
 
+class AffectationModuleViewSet(BaseViewSet):
+    queryset = AffectationModule.objects.select_related(
+        'module__matiere__departement',
+        'enseignant__profil__user'
+    ).all()
+    serializer_class = AffectationModuleSerializer
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        module_id = self.request.query_params.get('module_id')
+        enseignant_id = self.request.query_params.get('enseignant_id')
+        
+        if module_id:
+            qs = qs.filter(module_id=module_id)
+        if enseignant_id:
+            qs = qs.filter(enseignant_id=enseignant_id)
+        return qs
+
+
 class SeanceViewSet(BaseViewSet):
     """
     Actions supplémentaires :
@@ -579,6 +600,9 @@ class SeanceViewSet(BaseViewSet):
           - référent de classe      : accès aux séances de ses classes assignées
         Les lectures (GET) restent libères pour tout utilisateur actif.
         """
+        if self.action in ['conflits', 'reporter', 'seances_liees']:
+            return super().get_permissions()
+            
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [IsAuthenticated(), ProfilActifPermission()]
         return [IsAuthenticated(), ProfilActifPermission(), IsChefOrReferentOrReadOnly()]
@@ -631,6 +655,18 @@ class SeanceViewSet(BaseViewSet):
                     "Vous n'avez pas les droits pour modifier des séances dans cette classe."
                 )
         serializer.save()
+
+    def perform_destroy(self, instance):
+        """Vérifie que la classe cible de la séance est dans le périmètre autorisé avant suppression."""
+        classes_autorisees = self._get_classes_autorisees()
+        if classes_autorisees is not None:
+            classe = instance.classe
+            if classe and classe.id not in classes_autorisees:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    "Vous n'avez pas les droits pour supprimer des séances dans cette classe."
+                )
+        instance.delete()
 
     def get_queryset(self):
         qs            = super().get_queryset()
@@ -740,6 +776,18 @@ class SeanceViewSet(BaseViewSet):
                 {'detail': "Le paramètre 'semestre_id' est obligatoire."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        user = request.user
+        if not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+            # C'est un chef de département, on vérifie que le semestre lui appartient
+            if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+                departements = user.profil.enseignant.departements_diriges.all()
+                if not Semestre.objects.filter(
+                    id=semestre_id,
+                    classes__filiere__departement__in=departements
+                ).exists():
+                    from rest_framework.exceptions import PermissionDenied
+                    raise PermissionDenied("Ce semestre n'appartient pas à votre département.")
 
         seances = Seance.objects.filter(
             classe__semestre_id=semestre_id,
