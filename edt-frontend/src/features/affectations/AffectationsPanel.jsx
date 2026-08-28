@@ -121,22 +121,23 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-6 pt-2">
       {/* Enseignant */}
-      <div className="space-y-1.5">
-        <Label>Enseignant *</Label>
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold">Enseignant <span className="text-destructive">*</span></Label>
         <Select
           disabled={loadingEns}
           value={enseignantId}
           onValueChange={setEnseignantId}
         >
-          <SelectTrigger>
-            <SelectValue placeholder="Sélectionnez un enseignant" />
+          <SelectTrigger className="h-11">
+            <SelectValue placeholder={loadingEns ? 'Chargement...' : 'Sélectionnez un enseignant'} />
           </SelectTrigger>
           <SelectContent>
             {enseignants.map((e) => (
               <SelectItem key={e.profil.user.id} value={String(e.profil.user.id)}>
-                {e.grade ? `[${e.grade}] ` : ''}{e.nom_complet}
+                <span className="font-medium">{e.nom_complet}</span>
+                {e.grade && <span className="ml-2 text-muted-foreground text-xs">[{e.grade}]</span>}
               </SelectItem>
             ))}
           </SelectContent>
@@ -144,49 +145,56 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
       </div>
 
       {/* Type de séance */}
-      <div className="space-y-1.5">
-        <Label>Type de séance</Label>
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold">Type de séance</Label>
         <Select value={typeSeance} onValueChange={setTypeSeance}>
-          <SelectTrigger>
-            <SelectValue placeholder="Générique (tous types)" />
+          <SelectTrigger className="h-11">
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="GENERIQUE">Générique (tous types)</SelectItem>
-            <SelectItem value="CM">CM</SelectItem>
-            <SelectItem value="TD">TD</SelectItem>
-            <SelectItem value="TP">TP</SelectItem>
+            <SelectItem value="GENERIQUE">
+              <span className="font-medium">Générique</span>
+              <span className="ml-2 text-xs text-muted-foreground">— couvre tous les types</span>
+            </SelectItem>
+            <SelectItem value="CM">CM — Cours Magistral</SelectItem>
+            <SelectItem value="TD">TD — Travaux Dirigés</SelectItem>
+            <SelectItem value="TP">TP — Travaux Pratiques</SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-[11px] text-muted-foreground">
-          Laisser vide = affectation générique (couvre tous les types de séances).
+        <p className="text-xs text-muted-foreground pl-0.5">
+          Une affectation générique s'applique à tous les types de séances.
         </p>
       </div>
 
       {/* Heures prévues */}
-      <div className="space-y-1.5">
-        <Label>Heures prévues *</Label>
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold">Heures prévues <span className="text-destructive">*</span></Label>
         <Input
           type="number"
           min="0"
           step="0.5"
-          placeholder="Ex: 12"
+          placeholder="Ex : 16"
+          className="h-11"
           value={heuresPrevues}
           onChange={(e) => setHeuresPrevues(e.target.value)}
         />
+        <p className="text-xs text-muted-foreground pl-0.5">
+          Volume horaire alloué à cet enseignant pour ce module.
+        </p>
       </div>
 
       {/* Erreur serveur */}
       {serverError && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive">
-          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
           {serverError}
         </div>
       )}
 
-      <DialogFooter>
-        <Button type="button" variant="outline" onClick={onCancel}>Annuler</Button>
-        <Button type="submit" disabled={mutation.isPending}>
-          {mutation.isPending ? 'Enregistrement...' : affectation ? 'Modifier' : 'Ajouter'}
+      <DialogFooter className="pt-2 gap-2">
+        <Button type="button" variant="outline" onClick={onCancel} className="flex-1 sm:flex-none">Annuler</Button>
+        <Button type="submit" disabled={mutation.isPending} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white">
+          {mutation.isPending ? 'Enregistrement...' : affectation ? 'Enregistrer les modifications' : 'Ajouter l\'affectation'}
         </Button>
       </DialogFooter>
     </form>
@@ -252,37 +260,38 @@ export default function AffectationsPanel({ module }) {
           <p className="text-xs">Les séances seront acceptées sans restriction d'enseignant.</p>
         </div>
       ) : (
-        <div className="divide-y rounded-md border">
+        <div className="space-y-2">
           {affectations.map((aff) => (
-            <div key={aff.id} className="flex items-center justify-between p-3 hover:bg-muted/30">
+            <div key={aff.id} className="flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-muted/20 transition-colors">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">
-                  {aff.enseignant?.nom_complet ?? '—'}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-card-foreground">
+                    {aff.enseignant?.nom_complet ?? '—'}
+                  </p>
                   {aff.enseignant?.grade && (
-                    <span className="ml-1.5 text-xs text-muted-foreground">[{aff.enseignant.grade}]</span>
+                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{aff.enseignant.grade}</span>
                   )}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {aff.type_seance ? `Type: ${aff.type_seance}` : 'Générique'}
-                  {' · '}
-                  <span className="inline-block">
-                    <HeuresBadge consommees={aff.heures_consommees} prevues={aff.heures_prevues} />
+                </div>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <span className="text-xs font-medium text-muted-foreground bg-muted/60 px-2 py-0.5 rounded">
+                    {aff.type_seance ? aff.type_seance : 'Générique'}
                   </span>
-                </p>
+                  <HeuresBadge consommees={aff.heures_consommees} prevues={aff.heures_prevues} />
+                </div>
               </div>
-              <div className="flex gap-1.5 ml-2 shrink-0">
+              <div className="flex gap-2 ml-3 shrink-0">
                 <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-3 text-xs"
                   onClick={() => { setEditTarget(aff); setShowForm(true); }}
                 >
-                  <Pencil className="h-3.5 w-3.5" />
+                  <Pencil className="h-3 w-3 mr-1" /> Modifier
                 </Button>
                 <Button
-                  size="icon"
+                  size="sm"
                   variant="ghost"
-                  className="h-7 w-7 text-destructive hover:text-destructive"
+                  className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                   onClick={() => setDeleteTarget(aff)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -295,11 +304,16 @@ export default function AffectationsPanel({ module }) {
 
       {/* Dialog création/édition */}
       <Dialog open={showForm} onOpenChange={(open) => { if (!open) { setShowForm(false); setEditTarget(null); } }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader className="pb-2 border-b border-border">
+            <DialogTitle className="text-lg">
               {editTarget ? 'Modifier une affectation' : 'Nouvelle affectation'}
             </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              {editTarget
+                ? `Modifiez les détails de l'affectation de ${editTarget.enseignant?.nom_complet}.`
+                : `Affectez un enseignant à ce module pour le semestre en cours.`}
+            </p>
           </DialogHeader>
           <AffectationForm
             moduleId={moduleId}
