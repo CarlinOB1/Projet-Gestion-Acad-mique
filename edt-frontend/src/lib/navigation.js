@@ -1,6 +1,6 @@
 import {
   CalendarDays, Clock,
-  Users, BookOpen, Building2,
+  Users, BookOpen, Building2, BookMarked,
   GraduationCap, UserCheck, BarChart3, UserCircle, FileText
 } from 'lucide-react';
 
@@ -9,7 +9,7 @@ export const NAV_ITEMS = [
   { key: 'chef-planning', label: 'Planning des classes', path: '/chef/planning', icon: CalendarDays, roles: ['admin', 'chef_departement', 'referent_l1'], section: 'GESTION DU DÉPARTEMENT' },
   { key: 'chef-classes', label: 'Classes & Étudiants', path: '/chef/classes', icon: Users, roles: ['admin', 'chef_departement', 'referent_l1'], section: 'GESTION DU DÉPARTEMENT' },
   { key: 'chef-enseignants', label: 'Enseignants', path: '/chef/enseignants', icon: GraduationCap, roles: ['admin', 'chef_departement', 'referent_l1'], section: 'GESTION DU DÉPARTEMENT' },
-  { key: 'chef-organisation', label: 'Structure Académique', path: '/chef/organisation', icon: Building2, roles: ['admin', 'chef_departement'], section: 'GESTION DU DÉPARTEMENT' },
+  { key: 'chef-contenu', label: 'Contenu Pédagogique', path: '/chef/contenu', icon: BookMarked, roles: ['admin', 'chef_departement'], section: 'GESTION DU DÉPARTEMENT' },
 
   // Enseignant & Chef / Référent (Double casquette) - MON COMPTE
   { key: 'enseignant-planning', label: 'Mon planning', path: '/enseignant/planning', icon: CalendarDays, roles: ['enseignant', 'chef_departement', 'referent_l1'], section: 'MON COMPTE' },

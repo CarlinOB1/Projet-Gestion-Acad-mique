@@ -7,8 +7,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 
 // Primitives UI de shadcn/ui
@@ -37,8 +36,6 @@ import {
 } from '@/api/academique';
 
 export default function OrganisationPage() {
-    const navigate = useNavigate();
-    const location = useLocation();
     const [activeTab, setActiveTab] = useState('facultes');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
@@ -86,17 +83,6 @@ export default function OrganisationPage() {
                 </div>
             </div>
 
-            {/* ── Onglets de Navigation Structure / Modules ── */}
-            <Tabs value="organisation" onValueChange={(val) => {
-                if (val === 'modules') {
-                    navigate('/chef/modules');
-                }
-            }} className="w-fit">
-                <TabsList variant="line">
-                    <TabsTrigger value="organisation">Organisation</TabsTrigger>
-                    <TabsTrigger value="modules">Modules (Matières)</TabsTrigger>
-                </TabsList>
-            </Tabs>
 
             {/* Onglets applicatifs */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-6">

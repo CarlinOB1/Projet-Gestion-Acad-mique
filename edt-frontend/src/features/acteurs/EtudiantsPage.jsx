@@ -171,7 +171,7 @@ export default function EtudiantsPage() {
         // CORRECTION : STATUT_COLORS retourne { bg, text, border }
         const c = STATUT_COLORS[statut] || {};
         return (
-          <Badge className={`${c.bg} ${c.text} ${c.border}`}>
+          <Badge variant="outline" className={`${c.bg} ${c.text} ${c.border}`}>
             {statut}
           </Badge>
         );

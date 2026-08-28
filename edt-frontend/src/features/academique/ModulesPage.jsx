@@ -6,10 +6,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Layers, Users } from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from '@/components/ui/sheet';
@@ -43,8 +42,6 @@ import {
 } from '@/api/academique';
 
 export default function ModulesPage() {
-  const navigate = useNavigate();
-  const location = useLocation();
   const queryClient = useQueryClient();
 
   // États locaux de contrôle
@@ -270,17 +267,6 @@ export default function ModulesPage() {
         </div>
       </div>
 
-      {/* ── Onglets de Navigation Structure / Modules ── */}
-      <Tabs value="modules" onValueChange={(val) => {
-        if (val === 'organisation') {
-          navigate('/chef/organisation');
-        }
-      }} className="w-fit">
-        <TabsList variant="line">
-          <TabsTrigger value="organisation">Organisation</TabsTrigger>
-          <TabsTrigger value="modules">Modules (Matières)</TabsTrigger>
-        </TabsList>
-      </Tabs>
 
       {/* TABLEAU DE DONNÉES */}
       <DataTable

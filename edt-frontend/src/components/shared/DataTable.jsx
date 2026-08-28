@@ -55,7 +55,6 @@ export default function DataTable({
             ))}
             {hasRowActions && (
               <TableHead className="text-xs uppercase font-semibold text-muted-foreground text-right h-10 w-[100px]">
-                Actions
               </TableHead>
             )}
           </TableRow>
@@ -100,7 +99,7 @@ export default function DataTable({
               <TableRow 
                 key={row.id || rowIndex} 
                 className={`
-                  border-b last:border-b-0 transition-colors
+                  group border-b last:border-b-0 transition-colors
                   hover:bg-muted/40
                   ${rowIndex % 2 === 0 ? 'bg-background' : 'bg-muted/20'}
                 `}
@@ -115,7 +114,7 @@ export default function DataTable({
                 
                 {/* Cellule d'actions */}
                 {hasRowActions && (
-                  <TableCell className="py-2 text-right whitespace-nowrap space-x-1">
+                  <TableCell className="py-2 text-right whitespace-nowrap space-x-1 opacity-0 group-hover:opacity-100 transition-opacity focus-within:opacity-100">
                     {onEdit && (
                       <Button
                         variant="ghost"

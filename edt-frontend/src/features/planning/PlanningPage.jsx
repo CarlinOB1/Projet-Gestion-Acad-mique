@@ -184,6 +184,12 @@ export default function PlanningPage() {
     return getClassesDisponibles(events);
   }, [events, allClasses, effectiveRole]);
 
+  useEffect(() => {
+    if (GESTIONNAIRE_ROLES.includes(effectiveRole) && classesDisponibles.length > 0 && !filters.classeId) {
+      setFilters((f) => ({ ...f, classeId: String(classesDisponibles[0].id) }));
+    }
+  }, [effectiveRole, classesDisponibles, filters.classeId]);
+
   const filteredEvents = useMemo(
     () => applyPlanningFilters(events, filters),
     [events, filters],
@@ -192,7 +198,6 @@ export default function PlanningPage() {
   const isLoading = isLoadingSemestres || isLoadingSeances || isLoadingClasses;
   const isError = isErrorSemestres || isErrorSeances;
 
-  // Group semesters by year for the UI
   const semestersByYear = useMemo(() => {
     const groups = {};
     semestres.forEach((s) => {
@@ -207,9 +212,7 @@ export default function PlanningPage() {
     return semestres.find((s) => s.annee?.statut === "active");
   }, [semestres]);
 
-  // Handler unique pour le clic sur une séance (table view)
   const handleSeanceClick = (seance) => {
-    // Sur la vue perso du chef, on affiche les détails (pas les actions gestionnaire)
     if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
       setGestionnaireTarget(seance);
       return;
@@ -217,7 +220,6 @@ export default function PlanningPage() {
     setDetailsSeance(seance);
   };
 
-  // Handler pour le clic sur une case vide (+ Affecter)
   const handleEmptyCellClick = ({ date_seance, heure_debut, heure_fin }) => {
     if (!GESTIONNAIRE_ROLES.includes(effectiveRole)) return;
     const classeSelectionnee = classesDisponibles.find(
@@ -262,7 +264,6 @@ export default function PlanningPage() {
     html2pdf().set(opt).from(element).save();
   };
 
-  // Calcul du titre contextuel de la page
   const selectedClasse = useMemo(
     () =>
       classesDisponibles.find((c) => String(c.id) === String(filters.classeId)),
@@ -287,7 +288,6 @@ export default function PlanningPage() {
 
   return (
     <div className="space-y-5 w-full max-w-7xl mx-auto relative">
-      {/* ── En-tête Principal ── */}
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
@@ -363,7 +363,6 @@ export default function PlanningPage() {
         </div>
       </header>
 
-      {/* ── Sélecteur de Classe sous forme d'Onglets Pilules (Pill Tabs) pour Gestionnaires ── */}
       {GESTIONNAIRE_ROLES.includes(effectiveRole) &&
         classesDisponibles.length > 0 && (
           <div className="flex items-center gap-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar border-b border-border/40">
@@ -371,16 +370,6 @@ export default function PlanningPage() {
               <Layers className="w-3.5 h-3.5" />
               Classe :
             </span>
-            <button
-              type="button"
-              onClick={() => setFilters((f) => ({ ...f, classeId: "" }))}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${!filters.classeId
-                  ? "bg-blue-600 text-white shadow-xs"
-                  : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-            >
-              Toutes les classes
-            </button>
             {classesDisponibles.map((c) => {
               const isSelected = String(filters.classeId) === String(c.id);
               return (
@@ -402,7 +391,6 @@ export default function PlanningPage() {
           </div>
         )}
 
-      {/* ── Filtres de recherche texte et avancés ── */}
       <PlanningFilters
         filters={filters}
         onChange={setFilters}

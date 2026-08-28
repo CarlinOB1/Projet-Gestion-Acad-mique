@@ -8,6 +8,7 @@ import PlanningPage from "@/features/planning/PlanningPage";
 import OrganisationPage from "@/features/academique/OrganisationPage";
 import ModulesPage from "@/features/academique/ModulesPage";
 import ClassesPage from "@/features/academique/ClassesPage";
+import ContenuPedagogiquePage from "@/features/academique/ContenuPedagogiquePage";
 import EnseignantsPage from "@/features/acteurs/EnseignantsPage";
 import EtudiantsPage from "@/features/acteurs/EtudiantsPage";
 import TrombinoscopePage from "@/features/trombinoscope/TrombinoscopePage";
@@ -69,6 +70,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="planning" replace /> },
           { path: "planning", element: <PlanningPage /> },
           { path: "classes", element: <ClassesPage /> },
+          { path: "contenu", element: <ContenuPedagogiquePage /> },
           { path: "modules", element: <ModulesPage /> },
           { path: "organisation", element: <OrganisationPage /> },
           { path: "enseignants", element: <EnseignantsPage /> },

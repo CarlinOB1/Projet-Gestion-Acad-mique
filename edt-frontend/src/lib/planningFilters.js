@@ -88,5 +88,6 @@ export const FILTRES_VIDES = {
 };
 
 export function aDesFiltresActifs(filters) {
-    return Object.values(filters).some((v) => v !== '');
+    const { classeId, ...otherFilters } = filters;
+    return Object.values(otherFilters).some((v) => v !== '' && v !== undefined);
 }

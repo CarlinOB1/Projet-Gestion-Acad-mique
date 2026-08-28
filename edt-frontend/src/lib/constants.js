@@ -52,6 +52,16 @@ export const STATUT_COLORS = Object.freeze({
     text: 'text-amber-800 dark:text-amber-300',
     border: 'border-amber-300 dark:border-amber-800',
   },
+  actif: {
+    bg: 'bg-green-100 dark:bg-green-950/40',
+    text: 'text-green-800 dark:text-green-300',
+    border: 'border-green-300 dark:border-green-800 rounded-full',
+  },
+  suspendu: {
+    bg: 'bg-destructive/10 dark:bg-destructive/20',
+    text: 'text-destructive dark:text-destructive',
+    border: 'border-destructive/20 rounded-full',
+  }
 });
 
 export const RESPONSABLE_ROLES = Object.freeze([ROLES.ADMIN]);

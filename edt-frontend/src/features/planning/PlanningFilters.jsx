@@ -37,7 +37,7 @@ export default function PlanningFilters({
     };
 
     const handleReset = () => {
-        onChange({ search: '', typeSeance: '', enseignantId: '', statut: '' });
+        onChange({ ...filters, search: '', typeSeance: '', enseignantId: '', statut: '' });
     };
 
     const filtresActifs = aDesFiltresActifs(filters);

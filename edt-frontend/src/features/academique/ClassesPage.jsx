@@ -24,11 +24,15 @@ import {
 } from '@/api/academique';
 import { getEtudiants } from '@/api/acteurs';
 import { STATUT_COLORS } from '@/lib/constants';
+import useAuthStore from '@/store/authStore';
 
 // ── Sous-composant : ligne étudiant ──────────────────────────────────────────
 function EtudiantRow({ etudiant, onStatut, readOnly = false }) {
   const statut = etudiant.profil?.statut ?? 'actif';
   const initiale = etudiant.profil?.user?.last_name?.[0] ?? etudiant.matricule?.[0] ?? '?';
+  const user = useAuthStore((state) => state.user);
+  const isChefDepartement = user?.role === 'chef_departement';
+  
   return (
     <div className="flex items-center justify-between px-4 py-2.5 hover:bg-muted/40 transition-colors rounded-md">
       <div className="flex items-center gap-3">
@@ -43,10 +47,10 @@ function EtudiantRow({ etudiant, onStatut, readOnly = false }) {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <Badge variant={statut === 'actif' ? 'outline' : 'destructive'} className="text-xs">
+        <Badge variant="outline" className={`text-xs ${STATUT_COLORS[statut]?.bg} ${STATUT_COLORS[statut]?.text} ${STATUT_COLORS[statut]?.border}`}>
           {statut}
         </Badge>
-        {!readOnly && (
+        {!readOnly && !isChefDepartement && (
           <Button
             variant="ghost" size="icon" className="h-7 w-7"
             title={statut === 'actif' ? 'Suspendre' : 'Réactiver'}
