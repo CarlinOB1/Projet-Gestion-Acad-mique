@@ -264,6 +264,7 @@ export default function ContenuPedagogiquePage() {
   const [libelle,     setLibelle]     = useState('');
   const [matiereId,   setMatiereId]   = useState('');
   const [semestreId,  setSemestreId]  = useState('');
+  const [classeId,    setClasseId]    = useState('');
   const [credits,     setCredits]     = useState(1);
   const [description, setDescription] = useState('');
 
@@ -361,12 +362,14 @@ export default function ContenuPedagogiquePage() {
         setLibelle(editingModule.libelle || '');
         setMatiereId(editingModule.matiere?.id?.toString() || '');
         setSemestreId(editingModule.semestre?.id?.toString() || '');
+        setClasseId(editingModule.classe?.id?.toString() || '');
         setCredits(editingModule.credits || 1);
         setDescription(editingModule.description || '');
       } else {
         setLibelle('');
         setMatiereId('');
         setSemestreId(targetClasse?.semestre?.id?.toString() || '');
+        setClasseId(targetClasse?.id?.toString() || '');
         setCredits(1);
         setDescription('');
       }
@@ -394,6 +397,7 @@ export default function ContenuPedagogiquePage() {
       libelle,
       matiere_id:  parseInt(matiereId, 10),
       semestre_id: parseInt(semestreId, 10),
+      classe_id:   parseInt(classeId, 10) || null,
       credits:     parseInt(credits, 10),
       description: description || null,
     };

@@ -33,6 +33,12 @@ export const useCascadeSelects = ({ semestreId }) => {
     setSelectedEnseignantId(null);
   }, [semestreId]);
 
+  // Reset module/enseignant quand la classe change
+  useEffect(() => {
+    setSelectedModuleId(null);
+    setSelectedEnseignantId(null);
+  }, [selectedClasseId]);
+
   const { data: classes = [], isLoading: isLoadingClasses } = useQuery({
     queryKey: ["classes", semestreId, selectedFiliereId],
     queryFn: async () => {
@@ -45,14 +51,14 @@ export const useCascadeSelects = ({ semestreId }) => {
   });
 
   const { data: modules = [], isLoading: isLoadingModules } = useQuery({
-    queryKey: ["modules", semestreId],
+    queryKey: ["modules", "classe", selectedClasseId],
     queryFn: async () => {
       const response = await apiClient.get("/modules/", {
-        params: { semestre_id: semestreId },
+        params: { classe_id: selectedClasseId },
       });
       return response.data?.results ?? response.data;
     },
-    enabled: !!semestreId,
+    enabled: !!selectedClasseId,
   });
 
   const moduleSelectionne = useMemo(() => {

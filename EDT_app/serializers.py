@@ -506,6 +506,9 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     semestre_id = serializers.PrimaryKeyRelatedField(
         queryset=Semestre.objects.all(), source='semestre', write_only=True,
     )
+    classe_id = serializers.PrimaryKeyRelatedField(
+        queryset=Classe.objects.all(), source='classe', write_only=True, allow_null=True, required=False,
+    )
     heures_max        = serializers.SerializerMethodField()
     heures_consommees = serializers.SerializerMethodField()
     heures_restantes  = serializers.SerializerMethodField()
@@ -516,6 +519,7 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'id', 'libelle', 'description', 'credits', 'created_at',
             'matiere',  'matiere_id',
             'semestre', 'semestre_id',
+            'classe_id',
             'heures_max', 'heures_consommees', 'heures_restantes',
         ]
         read_only_fields = ['created_at']
