@@ -13,6 +13,7 @@ export const TYPE_SEANCE = Object.freeze({
 });
 
 export const STATUT_SEANCE = Object.freeze({
+  BROUILLON: 'brouillon',
   CONFIRMEE: 'Confirmée',
   ANNULEE: 'Annulée',
   REPORTEE: 'Reportée',
@@ -37,6 +38,11 @@ export const SEANCE_COLORS = Object.freeze({
 });
 
 export const STATUT_COLORS = Object.freeze({
+  [STATUT_SEANCE.BROUILLON]: {
+    bg: 'bg-slate-100 dark:bg-slate-800',
+    text: 'text-slate-600 dark:text-slate-300',
+    border: 'border-slate-200',
+  },
   [STATUT_SEANCE.CONFIRMEE]: {
     bg: 'bg-emerald-100 dark:bg-emerald-950/40',
     text: 'text-emerald-800 dark:text-emerald-300',

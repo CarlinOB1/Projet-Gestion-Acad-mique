@@ -68,3 +68,18 @@ export const getConflitsSeances = async (semestreId) => {
   });
   return response.data;
 };
+
+export const publierSeance = async (id) => {
+  const response = await apiClient.post(`/seances/${id}/publier/`);
+  return response.data;
+};
+
+export const depublierSeance = async (id) => {
+  const response = await apiClient.post(`/seances/${id}/depublier/`);
+  return response.data;
+};
+
+export const publierMasseSeances = async (seanceIds) => {
+  const response = await apiClient.post(`/seances/publier_masse/`, { seance_ids: seanceIds });
+  return response.data;
+};

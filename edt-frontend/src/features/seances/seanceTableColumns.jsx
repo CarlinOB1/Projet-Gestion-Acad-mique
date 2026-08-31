@@ -16,10 +16,12 @@ import { formatHeure, getDureeLabel } from '@/lib/utils';
  *   onEdit: (seance: Object) => void,
  *   onReport: (seance: Object) => void,
  *   onDelete: (seance: Object) => void,
+ *   onPublier?: (seance: Object) => void,
+ *   onDepublier?: (seance: Object) => void,
  * }} handlers
  * @returns {Array<Object>} Colonnes compatibles avec le composant DataTable existant.
  */
-export const getSeanceColumns = ({ onEdit, onReport, onDelete }) => [
+export const getSeanceColumns = ({ onEdit, onReport, onDelete, onPublier, onDepublier }) => [
     {
         key: 'horaire',
         label: 'Horaire',
@@ -78,6 +80,26 @@ export const getSeanceColumns = ({ onEdit, onReport, onDelete }) => [
         label: '',
         render: (row) => (
             <div className="flex items-center justify-end gap-1">
+                {row.statut === 'brouillon' && onPublier && (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950"
+                        onClick={() => onPublier(row)}
+                    >
+                        Publier
+                    </Button>
+                )}
+                {row.statut === 'Confirmée' && onDepublier && (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950"
+                        onClick={() => onDepublier(row)}
+                    >
+                        Dépublier
+                    </Button>
+                )}
                 <Button
                     variant="ghost"
                     size="sm"

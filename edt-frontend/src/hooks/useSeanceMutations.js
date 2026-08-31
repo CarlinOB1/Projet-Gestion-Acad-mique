@@ -4,7 +4,7 @@
  * Invalide automatiquement le cache ['seances'] après chaque opération.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { createSeance, updateSeance, deleteSeance, reporterSeance } from '@/api/seances';
+import { createSeance, updateSeance, deleteSeance, reporterSeance, publierSeance, depublierSeance, publierMasseSeances } from '@/api/seances';
 
 /** Crée une nouvelle séance. */
 export const useCreateSeance = () => {
@@ -38,6 +38,30 @@ export const useReporterSeance = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }) => reporterSeance(id, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+  });
+};
+
+export const usePublierSeance = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => publierSeance(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+  });
+};
+
+export const useDepublierSeance = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => depublierSeance(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+  });
+};
+
+export const usePublierMasseSeances = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (seanceIds) => publierMasseSeances(seanceIds),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
   });
 };

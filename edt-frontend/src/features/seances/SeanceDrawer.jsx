@@ -4,9 +4,9 @@
  */
 import { useState, useEffect } from 'react';
 import {
-  Drawer, DrawerContent, DrawerHeader,
-  DrawerTitle, DrawerDescription,
-} from '@/components/ui/drawer';
+  Dialog, DialogContent, DialogHeader,
+  DialogTitle, DialogDescription,
+} from '@/components/ui/dialog';
 import SeanceForm from './SeanceForm';
 import { useCreateSeance, useUpdateSeance } from '@/hooks/useSeanceMutations';
 
@@ -65,19 +65,19 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
   };
 
   return (
-    <Drawer open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DrawerContent>
-        <div className="mx-auto w-full max-w-xl p-6 overflow-y-auto max-h-[85vh]">
-          <DrawerHeader className="px-0 pt-0">
-            <DrawerTitle>
-              {isEditMode ? 'Modifier la séance' : 'Nouvelle séance'}
-            </DrawerTitle>
-            <DrawerDescription>
-              {isEditMode
-                ? 'Ajustez les détails de la séance sélectionnée.'
-                : 'Renseignez les champs pour planifier ce cours.'}
-            </DrawerDescription>
-          </DrawerHeader>
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+      <DialogContent className="sm:max-w-3xl w-[90vw] max-h-[90vh] overflow-y-auto p-8">
+        <DialogHeader>
+          <DialogTitle className="text-xl text-blue-900">
+            {isEditMode ? 'Modifier la séance' : 'Nouvelle séance'}
+          </DialogTitle>
+          <DialogDescription>
+            {isEditMode
+              ? 'Ajustez les détails de la séance sélectionnée.'
+              : 'Renseignez les champs pour planifier ce cours.'}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mt-4">
           <SeanceForm
             semestreId={semestreId}
             defaultValues={normalizedDefaults}
@@ -86,7 +86,7 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
             serverError={serverError}
           />
         </div>
-      </DrawerContent>
-    </Drawer>
+      </DialogContent>
+    </Dialog>
   );
 }

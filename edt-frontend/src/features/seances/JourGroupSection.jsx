@@ -12,18 +12,20 @@ import { formatDate } from '@/lib/utils';
  *   date: string,
  *   seances: Array<Object>,
  *   onEdit: Function,
- *   onReport: Function,
  *   onDelete: Function,
+ *   onPublier?: Function,
+ *   onDepublier?: Function,
  * }} props
  */
 export default function JourGroupSection({
     date,
     seances,
     onEdit,
-    onReport,
     onDelete,
+    onPublier,
+    onDepublier,
 }) {
-    const columns = getSeanceColumns({ onEdit, onReport, onDelete });
+    const columns = getSeanceColumns({ onEdit, onReport, onDelete, onPublier, onDepublier });
 
     return (
         <div className="space-y-2">

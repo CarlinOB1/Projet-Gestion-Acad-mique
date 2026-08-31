@@ -145,7 +145,7 @@ def valider_conflit_enseignant(enseignant, date_seance, heure_debut, heure_fin,
         date_seance=date_seance,
         heure_debut__lt=heure_fin,
         heure_fin__gt=heure_debut,
-        statut='Confirmée',
+        statut__in=['Confirmée', 'Reportée'],
     ).exclude(pk=pk)
 
     if seance_liee_pk:
@@ -169,7 +169,7 @@ def valider_conflit_classe(classe, date_seance, heure_debut, heure_fin, pk):
         date_seance=date_seance,
         heure_debut__lt=heure_fin,
         heure_fin__gt=heure_debut,
-        statut='Confirmée',
+        statut__in=['Confirmée', 'Reportée'],
     ).exclude(pk=pk).exists():
         raise ValidationError(
             f"La classe a déjà une séance le {date_seance} sur ce créneau."
@@ -253,7 +253,7 @@ def valider_volume_journalier(classe, date_seance, heure_debut, heure_fin, pk):
     seances_jour = Seance.objects.filter(
         classe=classe,
         date_seance=date_seance,
-        statut='Confirmée',
+        statut__in=['Confirmée', 'Reportée'],
     ).exclude(pk=pk)
 
     total_jour = sum(
@@ -324,6 +324,7 @@ def valider_creneau_report(enseignant, classe, annee, date_report,
             date_seance=date_report,
             heure_debut__lt=heure_fin_report,
             heure_fin__gt=heure_debut_report,
+            statut__in=['Confirmée', 'Reportée'],
         ).exclude(pk=pk).exists():
             raise ValidationError(
                 "Conflit d'horaire pour l'enseignant sur le créneau de report."
@@ -335,6 +336,7 @@ def valider_creneau_report(enseignant, classe, annee, date_report,
             date_seance=date_report,
             heure_debut__lt=heure_fin_report,
             heure_fin__gt=heure_debut_report,
+            statut__in=['Confirmée', 'Reportée'],
         ).exclude(pk=pk).exists():
             raise ValidationError(
                 "La classe a déjà une séance sur le créneau de report."

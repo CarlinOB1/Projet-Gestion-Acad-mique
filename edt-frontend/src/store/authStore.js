@@ -47,5 +47,6 @@ export const selectIsReferentL1      = (state) => state.user?.role === 'referent
 export const selectIsEnseignant      = (state) => ['enseignant', 'chef_departement', 'referent_l1'].includes(state.user?.role);
 export const selectIsEtudiant        = (state) => state.user?.role === 'etudiant';
 export const selectIsGestionnaire    = (state) => ['admin', 'responsable', 'chef_departement', 'referent_l1'].includes(state.user?.role);
+export const selectDepartementId     = (state) => state.user?.departement_id ?? null;
 
 export default useAuthStore;

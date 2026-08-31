@@ -192,6 +192,7 @@ export default function PlanningTableView({
   onWeekChange,
   semestre,
   isPrintMode = false,
+  readOnly = false,
   title = "Emploi du temps",
 }) {
   const [internalWeekStart, setInternalWeekStart] = useState(() => getMondayOf(new Date()));
@@ -496,7 +497,7 @@ export default function PlanningTableView({
                               heure_debut: slot.heureDebut,
                               heure_fin: slot.heureFin,
                             })}
-                            disabled={!onEmptyCellClick}
+                            disabled={readOnly || !onEmptyCellClick}
                           />
                         ) : null}
                       </td>

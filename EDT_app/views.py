@@ -83,9 +83,24 @@ class FiliereViewSet(BaseViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        user = self.request.user
+
+        # Filtre explicite prioritaire (admin/responsable peuvent filtrer manuellement)
         dept_id = self.request.query_params.get('departement_id')
         if dept_id:
-            qs = qs.filter(departement_id=dept_id)
+            return qs.filter(departement_id=dept_id)
+
+        # Cloisonnement automatique : le chef de département ne voit que ses filières
+        if (
+            not user.is_superuser
+            and not user.groups.filter(name='responsable').exists()
+            and hasattr(user, 'profil')
+            and hasattr(user.profil, 'enseignant')
+        ):
+            dept_dirige = user.profil.enseignant.departements_diriges.first()
+            if dept_dirige:
+                return qs.filter(departement_id=dept_dirige.pk)
+
         return qs
 
 
@@ -514,6 +529,10 @@ class ModuleViewSet(BaseViewSet):
         qs          = super().get_queryset()
         semestre_id = self.request.query_params.get('semestre_id')
         matiere_id  = self.request.query_params.get('matiere_id')
+        classe_id   = self.request.query_params.get('classe_id')
+        
+        if classe_id:
+            qs = qs.filter(classe_id=classe_id)
         if semestre_id:
             qs = qs.filter(semestre_id=semestre_id)
         if matiere_id:
@@ -672,7 +691,18 @@ class SeanceViewSet(BaseViewSet):
         qs            = super().get_queryset()
         user          = self.request.user
 
-        # Filtre pour Chef de Département
+        # Filtrage par rôle (brouillons invisibles pour étudiants et profs simples)
+        is_gestionnaire = (
+            user.is_superuser
+            or user.groups.filter(name='responsable').exists()
+            or (hasattr(user, 'profil') and hasattr(user.profil, 'enseignant')
+                and (user.profil.enseignant.departements_diriges.exists()
+                     or hasattr(user.profil.enseignant, 'referent_classes')))
+        )
+        if not is_gestionnaire:
+            qs = qs.filter(statut__in=['Confirmée', 'Annulée', 'Reportée'])
+
+        # Filtre pour Chef de Département (uniquement les filières de ses départements)
         if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
@@ -753,6 +783,83 @@ class SeanceViewSet(BaseViewSet):
             SeanceSerializer(seance_maj).data,
             status=status.HTTP_200_OK,
         )
+
+    # ── Action : publier / depublier ─────────────────────────────────────────
+
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, IsChefDepartement],
+        url_path='publier',
+    )
+    def publier(self, request, pk=None):
+        """Publie une séance brouillon → statut 'Confirmée'. Rejoue toutes les validations."""
+        seance = self.get_object()
+        if seance.statut != 'brouillon':
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Seules les séances en brouillon peuvent être publiées.")
+        
+        seance.statut = 'Confirmée'
+        seance.full_clean()  # Rejoue toutes les validations (dont les conflits)
+        seance.save(update_fields=['statut'])
+        return Response(SeanceSerializer(seance).data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, IsChefDepartement],
+        url_path='depublier',
+    )
+    def depublier(self, request, pk=None):
+        """Remet une séance confirmée en brouillon."""
+        seance = self.get_object()
+        if seance.statut not in ['Confirmée']:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Seules les séances confirmées peuvent être dépubliées.")
+        
+        seance.statut = 'brouillon'
+        seance.save(update_fields=['statut'])
+        return Response(SeanceSerializer(seance).data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, IsChefDepartement],
+        url_path='publier_masse',
+    )
+    def publier_masse(self, request):
+        """Publie une liste de séances brouillons de manière transactionnelle (tout ou rien)."""
+        seance_ids = request.data.get('seance_ids', [])
+        if not seance_ids:
+            return Response({'detail': 'Aucune séance fournie.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        seances = list(self.get_queryset().filter(id__in=seance_ids, statut='brouillon'))
+        if len(seances) != len(seance_ids):
+            return Response({'detail': 'Certaines séances sont introuvables ou ne sont pas en brouillon.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.db import transaction
+        from django.core.exceptions import ValidationError
+        
+        erreurs = []
+        try:
+            with transaction.atomic():
+                for seance in seances:
+                    seance.statut = 'Confirmée'
+                    try:
+                        seance.full_clean()
+                        seance.save(update_fields=['statut'])
+                    except ValidationError as e:
+                        msg = ", ".join(e.messages) if hasattr(e, 'messages') else str(e)
+                        erreurs.append(f"Le {seance.date_seance} ({seance.module.libelle}) : {msg}")
+                if erreurs:
+                    raise ValidationError(erreurs)
+        except ValidationError as e:
+            return Response({
+                'detail': "Impossible de publier l'emploi du temps en raison de conflits.",
+                'erreurs': e.messages
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        return Response({'detail': 'Toutes les séances ont été publiées avec succès.'}, status=status.HTTP_200_OK)
 
     # ── Action : conflits ────────────────────────────────────────────────────
 

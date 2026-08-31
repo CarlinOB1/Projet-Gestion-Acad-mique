@@ -415,7 +415,7 @@ export default function PlanningPage() {
           isError={isError}
           onSeanceClick={handleSeanceClick}
           onEmptyCellClick={
-            GESTIONNAIRE_ROLES.includes(role) ? handleEmptyCellClick : null
+            GESTIONNAIRE_ROLES.includes(effectiveRole) ? handleEmptyCellClick : null
           }
           weekStart={weekStart}
           onWeekChange={setWeekStart}

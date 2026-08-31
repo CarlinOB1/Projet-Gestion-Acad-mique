@@ -498,6 +498,7 @@ class Module(models.Model):
     )
     matiere = models.ForeignKey(Matiere, on_delete=models.CASCADE)
     semestre = models.ForeignKey(Semestre, on_delete=models.CASCADE)
+    classe = models.ForeignKey(Classe, on_delete=models.CASCADE, null=True, blank=True, related_name='modules')
     # CORRECTION : champ présent en base mais absent du modèle — réintégré
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -735,14 +736,19 @@ class Seance(models.Model):
     HEURES_PAR_CREDIT = 12
 
     TYPE_CHOICES   = [('CM', 'CM'), ('TD', 'TD'), ('TP', 'TP')]
-    STATUT_CHOICES = [('Confirmée', 'Confirmée'), ('Annulée', 'Annulée'), ('Reportée', 'Reportée')]
+    STATUT_CHOICES = [
+        ('brouillon', 'Brouillon'),
+        ('Confirmée', 'Confirmée'),
+        ('Annulée', 'Annulée'),
+        ('Reportée', 'Reportée'),
+    ]
 
     libelle     = models.CharField(max_length=100, blank=True)
     date_seance = models.DateField(null=False)
     heure_debut = models.TimeField(null=False)
     heure_fin   = models.TimeField(null=False)
     type_seance = models.CharField(max_length=5, choices=TYPE_CHOICES)
-    statut      = models.CharField(max_length=20, choices=STATUT_CHOICES, default='Confirmée')
+    statut      = models.CharField(max_length=20, choices=STATUT_CHOICES, default='brouillon')
 
     date_report        = models.DateField(blank=True, null=True)
     heure_debut_report = models.TimeField(blank=True, null=True)

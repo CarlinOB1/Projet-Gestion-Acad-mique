@@ -94,9 +94,9 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
   const semestreId = classe?.semestre?.id;
 
   const { data: modules = [], isLoading, isError } = useQuery({
-    queryKey: ['modules', semestreId ? semestreId.toString() : 'none'],
-    queryFn: () => getModules({ semestre_id: semestreId }),
-    enabled: !!semestreId,
+    queryKey: ['modules', classe?.id ? `classe-${classe.id}` : 'none'],
+    queryFn: () => getModules({ classe_id: classe?.id }),
+    enabled: !!classe?.id,
   });
 
   const totalCredits = modules.reduce((sum, m) => sum + (m.credits || 0), 0);

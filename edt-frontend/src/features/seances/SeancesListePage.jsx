@@ -9,7 +9,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { getSeances } from '@/api/seances';
 import { getSemestres, getClasses } from '@/api/academique';
 import { getEnseignants, getMonProfil } from '@/api/acteurs';
-import { useDeleteSeance } from '@/hooks/useSeanceMutations';
+import { useDeleteSeance, usePublierSeance, useDepublierSeance, usePublierMasseSeances } from '@/hooks/useSeanceMutations';
 import { useSeancesGrouped } from '@/hooks/useSeancesGrouped';
 import useAuthStore from '@/store/authStore';
 import SeancesFiltersBar from './SeancesFiltersBar';
@@ -60,8 +60,10 @@ export default function SeancesListePage() {
     const [selectedSeance, setSelectedSeance] = useState(null);
     const [reportDrawerOpen, setReportDrawerOpen] = useState(false);
     const [seanceToReport, setSeanceToReport] = useState(null);
-
     const deleteSeanceMutation = useDeleteSeance();
+    const publierSeanceMutation = usePublierSeance();
+    const depublierSeanceMutation = useDepublierSeance();
+    const publierMasseMutation = usePublierMasseSeances();
 
     // ── Données de référence pour les filtres ────────────────────────────────
     const { data: semestres = [] } = useQuery({
@@ -177,6 +179,43 @@ export default function SeancesListePage() {
         }
     };
 
+    const handlePublier = (seance) => {
+        publierSeanceMutation.mutate(seance.id, {
+            onError: (err) => {
+                if (err.response?.data?.non_field_errors) {
+                    alert('Erreur de publication : ' + err.response.data.non_field_errors[0]);
+                } else if (err.response?.data?.detail) {
+                    alert('Erreur : ' + err.response.data.detail);
+                } else {
+                    alert('Une erreur est survenue lors de la publication.');
+                }
+            }
+        });
+    };
+
+    const handleDepublier = (seance) => {
+        depublierSeanceMutation.mutate(seance.id);
+    };
+
+    const handlePublierMasse = (classeId, seanceIds) => {
+        if (!window.confirm(`Vous êtes sur le point de publier ${seanceIds.length} séance(s) en brouillon pour cette classe.\nVoulez-vous continuer ?`)) {
+            return;
+        }
+        publierMasseMutation.mutate(seanceIds, {
+            onSuccess: (res) => {
+                alert(res.detail);
+            },
+            onError: (err) => {
+                const data = err.response?.data;
+                if (data?.erreurs) {
+                    alert(`${data.detail}\n\nErreurs :\n- ` + data.erreurs.join('\n- '));
+                } else {
+                    alert('Une erreur est survenue lors de la publication en masse.');
+                }
+            }
+        });
+    };
+
 
     return (
         <div className="space-y-6 w-full max-w-7xl mx-auto">
@@ -279,6 +318,9 @@ export default function SeancesListePage() {
                             onEdit={handleEdit}
                             onReport={handleReport}
                             onDelete={handleDelete}
+                            onPublier={handlePublier}
+                            onDepublier={handleDepublier}
+                            onPublierMasse={handlePublierMasse}
                         />
                     ))}
                 </div>

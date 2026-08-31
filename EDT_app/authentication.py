@@ -58,12 +58,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 photo_url = user.profil.photo.url
 
         data['user'] = {
-            'id'         : user.pk,
-            'username'   : user.username,
-            'nom_complet': self._get_nom_complet(user),
-            'role'       : role,
-            'statut'     : user.profil.statut if hasattr(user, 'profil') else 'actif',
-            'photo'      : photo_url,
+            'id'            : user.pk,
+            'username'      : user.username,
+            'nom_complet'   : self._get_nom_complet(user),
+            'role'          : role,
+            'statut'        : user.profil.statut if hasattr(user, 'profil') else 'actif',
+            'photo'         : photo_url,
+            'departement_id': self._get_departement_id(user),
         }
 
         return data
@@ -94,6 +95,14 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             if hasattr(user.profil, 'etudiant'):
                 return 'etudiant'
         return 'inconnu'
+
+    @staticmethod
+    def _get_departement_id(user):
+        """Retourne l'id du département dirigé par l'utilisateur, ou None."""
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+            dept = user.profil.enseignant.departements_diriges.first()
+            return dept.pk if dept else None
+        return None
 
     @staticmethod
     def _get_nom_complet(user):
