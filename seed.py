@@ -696,28 +696,23 @@ for line in lines:
         profil = ProfilFactory(user=user, genre=genre, telephone=phone, statut='actif')
         matricule = generate_matricule()
 
+        # parcours/filiere ne sont plus des champs de Etudiant : ils sont
+        # derives de classe.parcours / classe.filiere (cf. migration 0012).
+        # Seule la classe est donc necessaire ici.
         classe_obj = None
-        filiere_obj = None
-        parcours_obj = None
 
         if current_niveau == 'L1' and current_groupe:
             # Les étudiants sont rattachés au semestre 2 (courant)
             classe_obj = classes_l1_s2.get(current_groupe)
-            parcours_obj = parcours_l1
         elif current_niveau == 'L2' and current_groupe:
             groupe = current_groupe if current_groupe in filieres else 'Informatique'
             classe_obj = classes_l2_s2.get(groupe)
-            filiere_obj = filieres.get(groupe)
-            parcours_obj = parcours_l2
         elif current_niveau == 'L3' and current_groupe:
             classe_obj = classes_l3_s2.get(current_groupe)
-            filiere_obj = filieres.get(current_groupe)
-            parcours_obj = parcours_l3
 
-        if classe_obj and parcours_obj:
+        if classe_obj:
             Etudiant.objects.create(
-                profil=profil, matricule=matricule,
-                parcours=parcours_obj, filiere=filiere_obj, classe=classe_obj
+                profil=profil, matricule=matricule, classe=classe_obj
             )
 
 nb_etudiants = Etudiant.objects.count()
