@@ -130,7 +130,7 @@ class EnseignantAdmin(admin.ModelAdmin):
 class EtudiantAdmin(admin.ModelAdmin):
     list_display = ('matricule', 'profil', 'parcours', 'filiere', 'classe')
     search_fields = ('matricule', 'profil__user__last_name')
-    list_filter = ('parcours', 'filiere', 'classe')
+    list_filter = ('classe__parcours', 'classe__filiere', 'classe')
 
 
 # ==========================================

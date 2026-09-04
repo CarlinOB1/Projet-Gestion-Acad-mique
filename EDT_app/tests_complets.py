@@ -16,6 +16,8 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from django.core.files.uploadedfile import SimpleUploadedFile
+
 from EDT_app.factories import (
     AnneeAcademiqueFactory,
     ClasseFactory,
@@ -35,6 +37,7 @@ from EDT_app.models import (
     AnneeAcademique,
     Classe,
     Departement,
+    DocumentPedagogique,
     Enseignant,
     Etudiant,
     Profil,
@@ -569,8 +572,6 @@ class TestPlanningEtudiant(TestCase):
         etu_profil = ProfilFactory(user=etu_user)
         self.etudiant = EtudiantFactory(
             profil=etu_profil,
-            parcours=parcours,
-            filiere=filiere,
             classe=self.classe_a,
         )
 
@@ -590,6 +591,60 @@ class TestPlanningEtudiant(TestCase):
         client = auth_client("enseignant_test", "pass1234")
         resp = client.get("/api/etudiants/mon_planning/")
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class TestDocumentsEtudiant(TestCase):
+    """
+    Régression sur le bug statut='confirmee' (views.py, DocumentViewSet) :
+    un étudiant doit voir les documents des modules pour lesquels sa classe
+    a une séance Confirmée ou Reportée, et aucun autre.
+    """
+
+    def setUp(self):
+        annee = AnneeAcademiqueFactory()
+        sem = Semestre1Factory(annee=annee)
+        dept = DepartementFactory()
+        filiere = FiliereFactory(departement=dept)
+        parcours = ParcoursFactory()
+
+        self.classe = ClasseFactory(
+            parcours=parcours, filiere=filiere, semestre=sem, annee=annee,
+        )
+        matiere = MatiereFactory(departement=dept)
+        self.module_avec_seance = ModuleFactory(matiere=matiere, semestre=sem, credits=6)
+        self.module_sans_seance = ModuleFactory(matiere=matiere, semestre=sem, credits=6)
+        enseignant = EnseignantFactory(departement=dept)
+
+        SeanceFactory(
+            module=self.module_avec_seance, enseignant=enseignant,
+            classe=self.classe, annee=annee,
+            date_seance=sem.date_debut,
+            heure_debut=time(9, 0), heure_fin=time(11, 0),
+            statut='Confirmée',
+        )
+
+        def make_document(module, titre):
+            return DocumentPedagogique.objects.create(
+                titre=titre,
+                fichier=SimpleUploadedFile(f"{titre}.pdf", b"contenu", content_type="application/pdf"),
+                module=module,
+                enseignant=enseignant,
+            )
+
+        self.doc_visible = make_document(self.module_avec_seance, "cours_visible")
+        self.doc_invisible = make_document(self.module_sans_seance, "cours_invisible")
+
+        etu_user, self.etu_pwd = make_user("etudiant_doc", "pass1234")
+        etu_profil = ProfilFactory(user=etu_user)
+        EtudiantFactory(profil=etu_profil, classe=self.classe)
+
+    def test_etudiant_voit_documents_des_modules_avec_seance_confirmee(self):
+        client = auth_client("etudiant_doc", "pass1234")
+        resp = client.get("/api/documents/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        ids = [d["id"] for d in resp.data["results"]]
+        self.assertIn(self.doc_visible.pk, ids)
+        self.assertNotIn(self.doc_invisible.pk, ids)
 
 
 class TestAccesResponsable(TestCase):
@@ -863,16 +918,14 @@ class TestActionPasserSemestre(TestCase):
         etu1_user, _ = make_user("etu_passer1", "x")
         etu1_profil = ProfilFactory(user=etu1_user, statut="actif")
         self.etudiant_actif = EtudiantFactory(
-            profil=etu1_profil, parcours=parcours,
-            filiere=filiere, classe=self.classe_s1,
+            profil=etu1_profil, classe=self.classe_s1,
         )
         etu2_user, _ = make_user("etu_passer2", "x")
         etu2_profil = ProfilFactory(
             user=etu2_user, statut="suspendu", motif_suspension="Retard"
         )
         self.etudiant_suspendu = EtudiantFactory(
-            profil=etu2_profil, parcours=parcours,
-            filiere=filiere, classe=self.classe_s1,
+            profil=etu2_profil, classe=self.classe_s1,
         )
 
     def test_passer_semestre_succes(self):
@@ -1011,6 +1064,24 @@ class TestSeanceModeleRegles(TestCase):
                 classe=self.classe, annee=self.annee,
                 date_seance=self.sem.date_debut,
                 heure_debut=time(8, 0), heure_fin=time(10, 0),
+            )
+
+    def test_annee_incoherente_avec_classe_rejette(self):
+        """
+        Régression : Seance.annee et Seance.classe.annee sont deux FK
+        indépendantes vers AnneeAcademique — elles doivent correspondre.
+        """
+        autre_annee = AnneeAcademiqueFactory(
+            libelle='2026-2027',
+            date_debut=date(2026, 9, 1),
+            date_fin=date(2027, 6, 30),
+        )
+        with self.assertRaises(ValidationError):
+            SeanceFactory(
+                module=self.module, enseignant=self.enseignant,
+                classe=self.classe, annee=autre_annee,
+                date_seance=self.sem.date_debut,
+                heure_debut=time(9, 0), heure_fin=time(11, 0),
             )
 
     def test_calcul_duree_avec_pause_11h(self):

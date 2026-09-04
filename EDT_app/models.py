@@ -394,16 +394,26 @@ class Etudiant(models.Model):
     """
     Étudiant dont :
     - Le matricule doit respecter le format ETU-XXXXX
-    - La classe doit correspondre au parcours et à la filière
     - L'inscription est impossible dans une année archivée
+
+    Le parcours et la filière ne sont pas stockés sur l'étudiant : ils sont
+    toujours ceux de sa classe (parcours/filiere/classe sont décidés ensemble
+    à l'inscription — cf. Classe). Les exposer en doublon ici ne ferait que
+    créer une source de désynchronisation.
     """
     MATRICULE_PATTERN = r'^ETU-\d{5}$'
 
     profil = models.OneToOneField(Profil, on_delete=models.CASCADE, primary_key=True)
     matricule = models.CharField(max_length=20, unique=True, blank=False)
-    parcours = models.ForeignKey(Parcours, on_delete=models.PROTECT)
-    filiere = models.ForeignKey(Filiere, on_delete=models.PROTECT, null=True, blank=True)
     classe = models.ForeignKey(Classe, on_delete=models.PROTECT)
+
+    @property
+    def parcours(self):
+        return self.classe.parcours
+
+    @property
+    def filiere(self):
+        return self.classe.filiere
 
     def clean(self):
         # Validation 1 : format matricule ETU-XXXXX
@@ -413,21 +423,7 @@ class Etudiant(models.Model):
                 "(ex: ETU-00123)."
             )
 
-        # Validation 2 : cohérence classe / parcours
-        if self.classe and self.parcours:
-            if self.classe.parcours != self.parcours:
-                raise ValidationError(
-                    "La classe ne correspond pas au parcours de l'étudiant."
-                )
-
-        # Validation 3 : cohérence classe / filière (seulement si l'étudiant a une filière)
-        if self.classe and self.filiere:
-            if self.classe.filiere and self.classe.filiere != self.filiere:
-                raise ValidationError(
-                    "La classe ne correspond pas à la filière de l'étudiant."
-                )
-
-        # Validation 4 : année archivée
+        # Validation 2 : année archivée
         if self.classe and self.classe.annee.statut == 'archivée':
             raise ValidationError(
                 "Impossible d'inscrire un étudiant dans une classe "
@@ -810,6 +806,7 @@ class Seance(models.Model):
             valider_horaires,
             valider_dimanche,
             valider_annee_non_archivee,
+            valider_coherence_annee_classe,
             valider_departement,
             valider_coherence_module_semestre,
             valider_bornes_semestre,
@@ -827,6 +824,9 @@ class Seance(models.Model):
 
         if self.annee_id:
             valider_annee_non_archivee(self.annee)
+
+        if self.annee_id and self.classe_id:
+            valider_coherence_annee_classe(self.annee, self.classe)
 
         if self.enseignant_id and self.module_id:
             valider_departement(self.enseignant, self.module)

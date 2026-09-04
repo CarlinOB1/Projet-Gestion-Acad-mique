@@ -969,7 +969,7 @@ class DocumentViewSet(BaseViewSet):
             # Simplification : modules des séances planifiées pour sa classe
             modules_ids = Seance.objects.filter(
                 classe=user.profil.etudiant.classe,
-                statut='confirmee'
+                statut__in=['Confirmée', 'Reportée']
             ).values_list('module_id', flat=True).distinct()
             qs = qs.filter(module_id__in=modules_ids)
             

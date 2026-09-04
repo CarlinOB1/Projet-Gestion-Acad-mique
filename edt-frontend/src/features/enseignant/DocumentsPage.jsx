@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FileText, Plus, Download, Trash2, FileIcon, FileBarChart, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import FormModal from '@/components/shared/FormModal';
 import { getDocuments, createDocument, deleteDocument } from '@/api/documents';
@@ -125,10 +125,22 @@ export default function DocumentsPage({ readOnly = false }) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tous les modules</SelectItem>
-                {modules.map((mod) => (
-                  <SelectItem key={mod.id} value={mod.id.toString()}>
-                    {mod.libelle}
-                  </SelectItem>
+                {Object.entries(
+                  modules.reduce((acc, mod) => {
+                    const classLabel = mod.classe?.libelle || 'Modules transverses / Sans classe';
+                    if (!acc[classLabel]) acc[classLabel] = [];
+                    acc[classLabel].push(mod);
+                    return acc;
+                  }, {})
+                ).map(([classLabel, classModules]) => (
+                  <SelectGroup key={classLabel}>
+                    <SelectLabel className="bg-muted/50 text-muted-foreground font-semibold py-1">{classLabel}</SelectLabel>
+                    {classModules.map((mod) => (
+                      <SelectItem key={mod.id} value={mod.id.toString()} className="pl-6">
+                        {mod.libelle}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>
@@ -247,10 +259,22 @@ export default function DocumentsPage({ readOnly = false }) {
                 <SelectValue placeholder="Sélectionner un module" />
               </SelectTrigger>
               <SelectContent>
-                {modules.map((mod) => (
-                  <SelectItem key={mod.id} value={mod.id.toString()}>
-                    {mod.libelle}
-                  </SelectItem>
+                {Object.entries(
+                  modules.reduce((acc, mod) => {
+                    const classLabel = mod.classe?.libelle || 'Modules transverses / Sans classe';
+                    if (!acc[classLabel]) acc[classLabel] = [];
+                    acc[classLabel].push(mod);
+                    return acc;
+                  }, {})
+                ).map(([classLabel, classModules]) => (
+                  <SelectGroup key={classLabel}>
+                    <SelectLabel className="bg-muted/50 text-muted-foreground font-semibold py-1">{classLabel}</SelectLabel>
+                    {classModules.map((mod) => (
+                      <SelectItem key={mod.id} value={mod.id.toString()} className="pl-6">
+                        {mod.libelle}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>

@@ -140,15 +140,10 @@ class EtudiantFactory(DjangoModelFactory):
 
     profil = factory.SubFactory(ProfilFactory)
     matricule = factory.Sequence(lambda n: f'ETU-{n:05d}')
-    parcours = factory.SubFactory(ParcoursFactory)
-    filiere = factory.SubFactory(FiliereFactory)
-
-    # Correction : Lier la classe au même parcours/filière que l'étudiant
-    classe = factory.SubFactory(
-        ClasseFactory,
-        parcours=factory.SelfAttribute('..parcours'),
-        filiere=factory.SelfAttribute('..filiere')
-    )
+    # parcours/filiere ne sont plus des champs de Etudiant : ils sont dérivés
+    # de classe.parcours / classe.filiere. Pour choisir un parcours/filiere
+    # précis dans un test, passer classe=ClasseFactory(parcours=..., filiere=...).
+    classe = factory.SubFactory(ClasseFactory)
 
 
 # ==========================================

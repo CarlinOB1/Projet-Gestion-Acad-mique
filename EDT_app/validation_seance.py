@@ -108,6 +108,19 @@ def valider_annee_non_archivee(annee):
         )
 
 
+def valider_coherence_annee_classe(annee, classe):
+    """
+    L'année académique de la séance doit correspondre à celle de sa classe.
+    `Seance.annee` et `Seance.classe.annee` sont deux FK indépendantes vers
+    AnneeAcademique : cette règle empêche leur désynchronisation.
+    """
+    if annee and classe and classe.annee_id and annee.pk != classe.annee_id:
+        raise ValidationError(
+            f"L'année de la séance ({annee}) ne correspond pas à "
+            f"l'année académique de la classe ({classe.annee})."
+        )
+
+
 def valider_bornes_semestre(date_seance, classe):
     """
     La date de la séance doit être dans les bornes du semestre de la classe.

@@ -423,14 +423,10 @@ class EtudiantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     profil_id   = serializers.PrimaryKeyRelatedField(
         queryset=Profil.objects.all(), source='profil', write_only=True,
     )
+    # parcours/filiere sont dérivés de la classe (voir Etudiant.parcours/filiere) :
+    # lecture seule, jamais écrits directement.
     parcours    = ParcoursSerializer(read_only=True)
-    parcours_id = serializers.PrimaryKeyRelatedField(
-        queryset=Parcours.objects.all(), source='parcours', write_only=True,
-    )
     filiere     = FiliereSerializer(read_only=True)
-    filiere_id  = serializers.PrimaryKeyRelatedField(
-        queryset=Filiere.objects.all(), source='filiere', write_only=True,
-    )
     classe      = ClasseSerializer(read_only=True)
     classe_id   = serializers.PrimaryKeyRelatedField(
         queryset=Classe.objects.all(), source='classe', write_only=True,
@@ -440,8 +436,8 @@ class EtudiantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         model  = Etudiant
         fields = [
             'profil_id', 'profil', 'matricule',
-            'parcours', 'parcours_id',
-            'filiere',  'filiere_id',
+            'parcours',
+            'filiere',
             'classe',   'classe_id',
         ]
 
@@ -453,23 +449,12 @@ class EtudiantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        profil   = data.get('profil')
-        classe   = data.get('classe')
-        parcours = data.get('parcours')
-        filiere  = data.get('filiere')
+        profil = data.get('profil')
+        classe = data.get('classe')
 
         if profil and hasattr(profil, 'enseignant'):
             raise serializers.ValidationError(
                 {'profil_id': "Ce profil est déjà enregistré comme enseignant."}
-            )
-        if classe and parcours and classe.parcours != parcours:
-            raise serializers.ValidationError(
-                {'classe_id': "La classe ne correspond pas au parcours sélectionné."}
-            )
-        # Vérification filière seulement si la classe en a une
-        if classe and filiere and classe.filiere and classe.filiere != filiere:
-            raise serializers.ValidationError(
-                {'classe_id': "La classe ne correspond pas à la filière sélectionnée."}
             )
         if classe and classe.annee.statut == 'archivée':
             raise serializers.ValidationError(
@@ -687,6 +672,7 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         from EDT_app.validation_seance import (
             valider_horaires,
             valider_annee_non_archivee,
+            valider_coherence_annee_classe,
             valider_departement,
             valider_coherence_module_semestre,
             valider_bornes_semestre,
@@ -721,6 +707,13 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             valider_annee_non_archivee(annee)
         except Exception as exc:
             self._to_drf_error('annee_id', exc)
+
+        # 2b. Cohérence entre l'année de la séance et celle de la classe
+        if annee and classe:
+            try:
+                valider_coherence_annee_classe(annee, classe)
+            except Exception as exc:
+                self._to_drf_error('annee_id', exc)
 
         if heure_debut and heure_fin:
             duree = _calculer_duree_effective(heure_debut, heure_fin)
