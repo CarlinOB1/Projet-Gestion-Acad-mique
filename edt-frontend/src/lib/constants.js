@@ -77,5 +77,13 @@ export const GESTIONNAIRE_ROLES = Object.freeze([
   ROLES.REFERENT_L1
 ]);
 
-export const HEURE_MIN = '07:30';
-export const HEURE_MAX = '18:30';
+// Bornes de la journee, alignees sur le backend
+// (EDT_app/validation_seance.py : MIN_HEURE_DEBUT / HEURE_FIN_MAX).
+// Elles etaient auparavant a 07h30-18h30 : les formulaires validaient donc
+// des creneaux que l'API rejetait ensuite en 400.
+export const HEURE_MIN = '09:00';
+export const HEURE_MAX = '16:20';
+
+// Pause meridienne non enseignable (validation_seance.PAUSE_MERIDIENNE_*).
+export const PAUSE_MERIDIENNE_DEBUT = '13:15';
+export const PAUSE_MERIDIENNE_FIN   = '14:15';

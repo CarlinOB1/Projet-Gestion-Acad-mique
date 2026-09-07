@@ -30,6 +30,24 @@ PAUSE_DEBUT     = time_type(11, 0)
 PAUSE_FIN       = time_type(11, 15)
 
 
+# ── Grille horaire canonique de la journée ───────────────────────────────────
+# Source unique de vérité pour les créneaux : `seed.py` l'importe, et
+# `edt-frontend/src/features/planning/PlanningTableView.jsx` (TIME_SLOTS) doit
+# rester aligné dessus. Trois blocs de 2h séparés par la pause courte
+# (11h00–11h15, déduite de la durée effective) et la pause méridienne.
+BLOCS_JOURNEE = [
+    (time_type(9, 0),  time_type(11, 0)),
+    (time_type(11, 15), time_type(13, 15)),
+    (time_type(14, 15), time_type(16, 15)),
+]
+
+# Pause méridienne : aucune séance ne peut la chevaucher.
+PAUSE_MERIDIENNE_DEBUT = time_type(13, 15)
+PAUSE_MERIDIENNE_FIN   = time_type(14, 15)
+
+JOURS_OUVRES = [0, 1, 2, 3, 4]  # lundi=0 .. vendredi=4
+
+
 # ── Utilitaire interne ───────────────────────────────────────────────────────
 
 def _calculer_duree_effective(heure_debut, heure_fin):
@@ -64,6 +82,7 @@ def valider_horaires(heure_debut, heure_fin):
       - heure_debut >= MIN_HEURE_DEBUT (09h00).
       - heure_fin   <= HEURE_FIN_MAX  (16h20).
       - heure_debut < heure_fin.
+      - le créneau ne chevauche pas la pause méridienne (13h15–14h15).
     """
     if not heure_debut or not heure_fin:
         raise ValidationError("Horaires obligatoires.")
@@ -82,11 +101,31 @@ def valider_horaires(heure_debut, heure_fin):
     if heure_debut >= heure_fin:
         raise ValidationError("L'heure de début doit être avant la fin.")
 
+    valider_hors_pause_meridienne(heure_debut, heure_fin)
+
 
 def valider_dimanche(date_seance):
     """Interdit les séances le dimanche (weekday == 6)."""
     if date_seance and date_seance.weekday() == 6:
         raise ValidationError("Impossible de planifier une séance un dimanche.")
+
+
+def valider_hors_pause_meridienne(heure_debut, heure_fin):
+    """
+    Interdit toute séance qui chevauche la pause méridienne
+    (13h15–14h15). Contrairement à la pause courte de 11h00–11h15 — qui est
+    simplement déduite de la durée effective — la pause méridienne est un
+    créneau non enseignable : la grille de l'emploi du temps l'affiche comme tel.
+    """
+    if not heure_debut or not heure_fin:
+        return
+
+    if heure_debut < PAUSE_MERIDIENNE_FIN and heure_fin > PAUSE_MERIDIENNE_DEBUT:
+        raise ValidationError(
+            f"Une séance ne peut pas empiéter sur la pause méridienne "
+            f"({PAUSE_MERIDIENNE_DEBUT.strftime('%Hh%M')}–"
+            f"{PAUSE_MERIDIENNE_FIN.strftime('%Hh%M')})."
+        )
 
 
 def valider_departement(enseignant, module):
@@ -317,6 +356,8 @@ def valider_creneau_report(enseignant, classe, annee, date_report,
             f"Le report ne peut pas finir après "
             f"{HEURE_FIN_MAX.strftime('%Hh%M')}."
         )
+
+    valider_hors_pause_meridienne(heure_debut_report, heure_fin_report)
 
     if classe:
         sem = classe.semestre

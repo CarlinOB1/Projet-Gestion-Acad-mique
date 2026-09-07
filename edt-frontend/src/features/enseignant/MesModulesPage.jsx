@@ -23,10 +23,20 @@ export default function MesModulesPage() {
       label: 'Matière', 
       render: (row) => row.matiere?.libelle || <span className="text-muted-foreground">-</span>
     },
-    { 
-      key: 'semestre', 
-      label: 'Semestre', 
-      render: (row) => <Badge variant="outline">{row.semestre?.libelle || '-'}</Badge>
+    {
+      key: 'classe',
+      label: 'Classe',
+      render: (row) => row.classe?.libelle || <span className="text-muted-foreground">-</span>
+    },
+    {
+      key: 'semestre',
+      label: 'Semestre',
+      render: (row) => (
+        <Badge variant="outline">
+          {row.semestre?.libelle || '-'}
+          {row.semestre?.annee?.libelle ? ` · ${row.semestre.annee.libelle}` : ''}
+        </Badge>
+      )
     },
     { 
       key: 'credits', 

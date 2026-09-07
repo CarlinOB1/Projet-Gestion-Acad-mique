@@ -12,7 +12,7 @@ from EDT_app.models import (
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
     Matiere, Module, AffectationModule, Seance, ReferentClasse,
-    DocumentPedagogique,
+    DocumentPedagogique, Inscription,
 )
 
 
@@ -389,8 +389,11 @@ class ProfilSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
 class EnseignantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     profil         = ProfilSerializer(read_only=True)
+    # `profil` est la cle primaire d'Enseignant : il n'y a pas de champ `id`.
+    # profil_id doit donc rester LISIBLE, sinon l'API renvoie des enseignants
+    # sans identifiant et tout filtrage cote client devient impossible.
     profil_id      = serializers.PrimaryKeyRelatedField(
-        queryset=Profil.objects.all(), source='profil', write_only=True,
+        queryset=Profil.objects.all(), source='profil',
     )
     departement    = DepartementSerializer(read_only=True)
     departement_id = serializers.PrimaryKeyRelatedField(
@@ -420,8 +423,9 @@ class EnseignantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
 class EtudiantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     profil      = ProfilSerializer(read_only=True)
+    # Meme situation que pour Enseignant : `profil` est la cle primaire.
     profil_id   = serializers.PrimaryKeyRelatedField(
-        queryset=Profil.objects.all(), source='profil', write_only=True,
+        queryset=Profil.objects.all(), source='profil',
     )
     # parcours/filiere sont dérivés de la classe (voir Etudiant.parcours/filiere) :
     # lecture seule, jamais écrits directement.
@@ -467,6 +471,28 @@ class EtudiantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         return data
 
 
+class InscriptionSerializer(serializers.ModelSerializer):
+    """
+    Historique du parcours d'un étudiant (lecture seule côté EDT).
+
+    L'acte d'inscription/réinscription — et tout ce qui touche aux frais de
+    scolarité — appartient à l'application de scolarité ; `reference_externe`
+    fait le lien. Côté EDT on se contente de restituer le parcours.
+    """
+    etudiant    = EtudiantSerializer(read_only=True)
+    classe      = ClasseSerializer(read_only=True)
+    annee       = AnneeAcademiqueSerializer(read_only=True)
+
+    class Meta:
+        model  = Inscription
+        fields = [
+            'id', 'etudiant', 'classe', 'annee',
+            'type_inscription', 'date_inscription', 'statut',
+            'reference_externe', 'created_at',
+        ]
+        read_only_fields = fields
+
+
 # ==========================================
 # 3. CONTENU PÉDAGOGIQUE
 # ==========================================
@@ -491,12 +517,19 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     semestre_id = serializers.PrimaryKeyRelatedField(
         queryset=Semestre.objects.all(), source='semestre', write_only=True,
     )
+    # `classe` doit etre expose en lecture : sans lui, le formulaire d'edition
+    # du contenu pedagogique renvoyait classe_id=null et effacait le
+    # rattachement du module a sa classe.
+    classe    = ClasseSerializer(read_only=True)
     classe_id = serializers.PrimaryKeyRelatedField(
         queryset=Classe.objects.all(), source='classe', write_only=True, allow_null=True, required=False,
     )
     heures_max        = serializers.SerializerMethodField()
     heures_consommees = serializers.SerializerMethodField()
     heures_restantes  = serializers.SerializerMethodField()
+    # heures_consommees = volume planifie (base du controle de volume) ;
+    # heures_effectuees = volume deja dispense (base de la progression).
+    heures_effectuees = serializers.SerializerMethodField()
 
     class Meta:
         model  = Module
@@ -504,8 +537,10 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'id', 'libelle', 'description', 'credits', 'created_at',
             'matiere',  'matiere_id',
             'semestre', 'semestre_id',
-            'classe_id',
+            'classe', 'classe_id',
+            'heures_cm', 'heures_td', 'heures_tp',
             'heures_max', 'heures_consommees', 'heures_restantes',
+            'heures_effectuees',
         ]
         read_only_fields = ['created_at']
 
@@ -517,6 +552,9 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
     def get_heures_restantes(self, obj):
         return round(obj.heures_restantes(), 2)
+
+    def get_heures_effectuees(self, obj):
+        return round(obj.heures_effectuees(), 2)
 
 
 # ==========================================
@@ -534,13 +572,14 @@ class AffectationModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializ
     enseignant = EnseignantSerializer(read_only=True)
     heures_consommees = serializers.SerializerMethodField()
     heures_restantes = serializers.SerializerMethodField()
+    heures_effectuees = serializers.SerializerMethodField()
 
     class Meta:
         model = AffectationModule
         fields = [
             'id', 'module', 'module_id', 'enseignant', 'enseignant_id',
             'type_seance', 'heures_prevues', 'created_at',
-            'heures_consommees', 'heures_restantes'
+            'heures_consommees', 'heures_restantes', 'heures_effectuees',
         ]
         read_only_fields = ['created_at']
 
@@ -549,6 +588,45 @@ class AffectationModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializ
 
     def get_heures_restantes(self, obj):
         return round(obj.heures_restantes(), 2)
+
+    def get_heures_effectuees(self, obj):
+        return round(obj.heures_effectuees(), 2)
+
+    def validate(self, data):
+        """
+        Un chef de département ne peut affecter que dans son propre département.
+
+        La cohérence enseignant ↔ département de la matière est déjà garantie
+        par AffectationModule.clean() ; on ajoute ici la règle de *qui* affecte,
+        qui n'est pas exprimable au niveau du modèle.
+        """
+        data = super().validate(data)
+
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated or user.is_superuser:
+            return data
+
+        profil = getattr(user, 'profil', None)
+        enseignant_courant = getattr(profil, 'enseignant', None) if profil else None
+        if not enseignant_courant:
+            return data
+
+        departements_diriges = list(
+            enseignant_courant.departements_diriges.values_list('pk', flat=True)
+        )
+        if not departements_diriges:
+            return data  # simple enseignant : la permission de vue tranche déjà
+
+        module = data.get('module') or getattr(self.instance, 'module', None)
+        if module and module.matiere.departement_id not in departements_diriges:
+            raise serializers.ValidationError({
+                'module_id': (
+                    "Vous ne pouvez affecter que des modules de votre "
+                    "département."
+                )
+            })
+        return data
 
 
 class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):

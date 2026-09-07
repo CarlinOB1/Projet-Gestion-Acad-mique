@@ -461,7 +461,7 @@ export default function ContenuPedagogiquePage() {
             </div>
           ) : (
             <div className="space-y-6">
-                <div className="flex flex-col xl:flex-row gap-6">
+                <div className="flex flex-col gap-6">
                   <SemestreCard
                     classe={classeS1}
                     onAddModule={handleAddModule}

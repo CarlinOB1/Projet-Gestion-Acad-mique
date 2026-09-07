@@ -224,7 +224,7 @@ class Classe(models.Model):
     à une filière (L2 et plus) ou identifiée par un code libre (L1 : MIP, BCG, PCG).
 
     - Classes L2+ : filiere renseignée, code vide.
-    - Classes L1  : filiere=None, code = 'MIP' | 'BCG' | 'PCG' (rattachées à la faculté).
+    - Classes L1  : filiere=None, code = 'MIP' | 'BGC' | 'PCG' (rattachées à la faculté).
 
     Le libellé est généré automatiquement selon le cas.
     """
@@ -232,7 +232,7 @@ class Classe(models.Model):
     code     = models.CharField(
         max_length=20,
         blank=True,
-        help_text="Code libre pour les classes sans filière (ex: MIP, BCG, PCG)."
+        help_text="Code libre pour les classes sans filière (ex: MIP, BGC, PCG)."
     )
     parcours = models.ForeignKey(Parcours, on_delete=models.CASCADE)
     filiere  = models.ForeignKey(
@@ -430,12 +430,138 @@ class Etudiant(models.Model):
                 "appartenant à une année académique archivée."
             )
 
+    def reinscrire(self, nouvelle_classe, date_inscription=None,
+                   reference_externe=''):
+        """
+        Fait passer l'étudiant sur `nouvelle_classe` :
+        clôt l'inscription active en cours, en crée une nouvelle et met à jour
+        le pointeur `classe`.
+
+        Point d'entrée unique pour l'application de scolarité : le type
+        (Inscription / Réinscription) est déduit de l'historique, jamais fourni.
+        """
+        from django.db import transaction
+
+        date_inscription = date_inscription or date_type.today()
+
+        with transaction.atomic():
+            deja_inscrit = self.inscriptions.exists()
+            self.inscriptions.filter(statut='active').exclude(
+                classe=nouvelle_classe
+            ).update(statut='terminée')
+
+            inscription, _ = Inscription.objects.get_or_create(
+                etudiant=self,
+                classe=nouvelle_classe,
+                defaults={
+                    'annee': nouvelle_classe.annee,
+                    'type_inscription': (
+                        Inscription.TYPE_REINSCRIPTION if deja_inscrit
+                        else Inscription.TYPE_INSCRIPTION
+                    ),
+                    'date_inscription': date_inscription,
+                    'statut': 'active',
+                    'reference_externe': reference_externe,
+                },
+            )
+
+            self.classe = nouvelle_classe
+            self.save()
+
+        return inscription
+
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.matricule} - {self.profil.user.last_name}"
+
+
+class Inscription(models.Model):
+    """
+    Trace historisée du rattachement d'un étudiant à une classe.
+
+    Une `Classe` étant datée (parcours + semestre + année), un étudiant qui
+    progresse de S1 vers S2 puis de L1 vers L2 change de classe : `Etudiant.classe`
+    ne conserve que la classe *courante*. Ce modèle conserve le parcours complet
+    et distingue la première inscription de la réinscription annuelle.
+
+    Périmètre volontairement **pédagogique** : les frais, paiements et quittances
+    sont gérés par l'application de scolarité. `reference_externe` sert de point
+    de raccrochement vers l'enregistrement correspondant de cette application.
+    """
+    TYPE_INSCRIPTION = 'Inscription'
+    TYPE_REINSCRIPTION = 'Réinscription'
+    TYPE_CHOICES = [
+        (TYPE_INSCRIPTION, 'Inscription'),
+        (TYPE_REINSCRIPTION, 'Réinscription'),
+    ]
+    STATUT_CHOICES = [
+        ('active', 'Active'),
+        ('terminée', 'Terminée'),
+        ('abandonnée', 'Abandonnée'),
+    ]
+
+    etudiant = models.ForeignKey(
+        Etudiant,
+        on_delete=models.CASCADE,
+        related_name='inscriptions',
+    )
+    classe = models.ForeignKey(
+        Classe,
+        on_delete=models.PROTECT,
+        related_name='inscriptions',
+    )
+    annee = models.ForeignKey(
+        AnneeAcademique,
+        on_delete=models.PROTECT,
+        related_name='inscriptions',
+    )
+    type_inscription = models.CharField(max_length=15, choices=TYPE_CHOICES)
+    date_inscription = models.DateField()
+    statut = models.CharField(max_length=12, choices=STATUT_CHOICES, default='active')
+    reference_externe = models.CharField(
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="Identifiant de l'inscription dans l'application de scolarité.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['etudiant', 'classe'],
+                name='unique_inscription_etudiant_classe',
+            ),
+        ]
+        ordering = ['-annee__date_debut', 'classe']
+
+    def clean(self):
+        super().clean()
+
+        # Cohérence année / classe : la classe porte déjà son année académique.
+        if self.classe_id and self.annee_id and self.classe.annee_id != self.annee_id:
+            raise ValidationError(
+                "L'année de l'inscription ne correspond pas à l'année "
+                "académique de la classe."
+            )
+
+        # Une inscription *active* sur une année archivée n'a pas de sens ;
+        # les lignes historiques ('terminée'/'abandonnée') restent créables.
+        if self.statut == 'active' and self.annee_id and self.annee.statut == 'archivée':
+            raise ValidationError(
+                "Impossible d'ouvrir une inscription active sur une année "
+                "académique archivée."
+            )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.etudiant.matricule} → {self.classe} ({self.type_inscription})"
 
 
 # ==========================================
@@ -534,6 +660,33 @@ class Module(models.Model):
                 total += Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
         return total
 
+    def heures_effectuees(self):
+        """
+        Heures réellement dispensées, c'est-à-dire celles des séances déjà
+        passées.
+
+        `heures_consommees()` compte tout ce qui est *planifié* — c'est ce que
+        doit vérifier le contrôle de volume, sans quoi on pourrait planifier
+        deux fois le quota. Mais un indicateur de progression a besoin de ce
+        qui a effectivement eu lieu : sinon un module planifié sur tout le
+        semestre affiche 100 % dès la première semaine.
+        """
+        return self._heures(self.seance_set.all(), passees_seulement=True)
+
+    @staticmethod
+    def _heures(seances, passees_seulement=False):
+        aujourdhui = date_type.today()
+        total = 0
+        for s in seances.filter(statut__in=['Confirmée', 'Reportée']):
+            if s.statut == 'Reportée' and s.heure_debut_report and s.heure_fin_report:
+                jour, debut, fin = s.date_report, s.heure_debut_report, s.heure_fin_report
+            else:
+                jour, debut, fin = s.date_seance, s.heure_debut, s.heure_fin
+            if passees_seulement and jour and jour > aujourdhui:
+                continue
+            total += Seance.calculer_duree_effective(debut, fin)
+        return total
+
     def heures_restantes(self, exclure_seance_pk=None):
         return self.heures_max() - self.heures_consommees(exclure_seance_pk)
 
@@ -572,7 +725,10 @@ class Module(models.Model):
         return f"{self.libelle} ({self.semestre.libelle})"
 
     class Meta:
-        unique_together = ('libelle', 'semestre')
+        # La classe fait partie de l'identite du module : deux classes d'un
+        # meme semestre peuvent porter un module homonyme (tronc commun,
+        # modules mutualises entre filieres).
+        unique_together = ('libelle', 'semestre', 'classe')
 
 
 # ==========================================
@@ -635,6 +791,14 @@ class AffectationModule(models.Model):
         if not self.module_id or not self.enseignant_id:
             return  # FKs pas encore résolues, on laisse passer
 
+        # ── Cohérence de département ─────────────────────────────────────────
+        # Même règle que pour une séance (validation_seance.valider_departement) :
+        # un enseignant ne peut porter que des modules de son propre département.
+        # Sans ce verrou, un chef pouvait affecter un module d'un autre
+        # département — incohérence rendue visible sur les fiches enseignant.
+        from EDT_app.validation_seance import valider_departement
+        valider_departement(self.enseignant, self.module)
+
         # ── Règle de non-ambiguïté par couple (module, enseignant) ────────────
         autres = AffectationModule.objects.filter(
             module=self.module_id,
@@ -691,6 +855,16 @@ class AffectationModule(models.Model):
             else:
                 total += Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
         return total
+
+    def heures_effectuees(self):
+        """Heures deja dispensees par cet enseignant sur cette affectation."""
+        seances = Seance.objects.filter(
+            module=self.module_id,
+            enseignant=self.enseignant_id,
+        )
+        if self.type_seance:
+            seances = seances.filter(type_seance=self.type_seance)
+        return Module._heures(seances, passees_seulement=True)
 
     def heures_restantes(self, exclure_seance_pk=None):
         """Volume horaire encore disponible sur cette affectation."""
@@ -962,4 +1136,4 @@ class DocumentPedagogique(models.Model):
         return f"{self.titre} ({self.module.libelle})"
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['-created_at']

@@ -10,6 +10,9 @@ import { SEANCE_COLORS } from '@/lib/constants';
 
 // ── Créneaux horaires du planning UCCB ─────────────────────────────────────────
 const TIME_SLOTS = [
+  // ⚠ Source de verite : EDT_app/validation_seance.py -> BLOCS_JOURNEE et
+  // PAUSE_MERIDIENNE_DEBUT / _FIN. Toute modification ici doit y etre repercutee
+  // (et inversement) : un ecart fait tomber les seances dans la mauvaise ligne.
   { id: 'slot1', label: '9h – 11h',      heureDebut: '09:00', heureFin: '11:00', sub: null,    startMin: 9*60,     endMin: 11*60,    isPause: false, rowH: '9rem'  },
   { id: 'slot2', label: '11h15 – 13h15', heureDebut: '11:15', heureFin: '13:15', sub: null,    startMin: 11*60,    endMin: 13*60+15, isPause: false, rowH: '9rem'  },
   { id: 'pause', label: '13h15 – 14h15', heureDebut: '13:15', heureFin: '14:15', sub: 'Pause', startMin: 13*60+15, endMin: 14*60+15, isPause: true,  rowH: '3.5rem'},
@@ -143,7 +146,7 @@ function CourseCard({ seance, onClick, isPrintMode }) {
         ${typeStyle.bg} ${typeStyle.border}
         ${estAnnulee ? 'opacity-55' : ''}
       `}
-      style={{ flex: 1, minHeight: isPrintMode ? 'min-content' : '0', overflow: isPrintMode ? 'visible' : 'hidden' }}
+      style={{ flex: 1, minHeight: 'min-content', overflow: 'visible' }}
     >
       {/* Top : badge type + statuts */}
       <div>
@@ -464,7 +467,7 @@ export default function PlanningTableView({
                         style={{
                           height: slot.rowH,
                           position: 'relative',
-                          overflow: isPrintMode ? 'visible' : 'hidden',
+                          overflow: 'visible',
                         }}
                       >
                         {/* Case en conflit */}
@@ -473,12 +476,10 @@ export default function PlanningTableView({
                         ) : cellSeances.length > 0 ? (
                           <div
                             style={{
-                              position: 'absolute',
-                              top: 6, left: 6, right: 6, bottom: 6,
                               display: 'flex',
                               flexDirection: 'column',
                               gap: 4,
-                              overflowY: isPrintMode ? 'visible' : 'auto',
+                              height: '100%',
                             }}
                           >
                             {cellSeances.map((seance, i) => (

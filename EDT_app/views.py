@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -10,7 +11,7 @@ from .models import (
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
     Matiere, Module, AffectationModule, Seance, ReferentClasse,
-    DocumentPedagogique,
+    DocumentPedagogique, Inscription,
 )
 from EDT_app.serializers import (
     FaculteSerializer, DepartementSerializer, FiliereSerializer,
@@ -19,7 +20,7 @@ from EDT_app.serializers import (
     EtudiantSerializer, MatiereSerializer, ModuleSerializer,
     AffectationModuleSerializer,
     SeanceSerializer, SeanceReportSerializer, ProfilSuspensionSerializer,
-    DocumentPedagogiqueSerializer,
+    DocumentPedagogiqueSerializer, InscriptionSerializer,
 )
 from .permissions import (
     ProfilActifPermission,
@@ -118,6 +119,13 @@ class AnneeAcademiqueViewSet(BaseViewSet):
     queryset           = AnneeAcademique.objects.all()
     serializer_class   = AnneeAcademiqueSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        statut = self.request.query_params.get('statut')
+        if statut:
+            qs = qs.filter(statut=statut)
+        return qs
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsChefDepartement])
     def archiver(self, request, pk=None):
@@ -420,7 +428,7 @@ class EtudiantViewSet(BaseViewSet):
       Retourne les séances de la classe de l'étudiant connecté.
     """
     queryset = Etudiant.objects.select_related(
-        'profil__user', 'parcours', 'filiere',
+        'profil__user', 'classe__parcours', 'classe__filiere',
         'classe__semestre__annee',
     ).all()
     serializer_class   = EtudiantSerializer
@@ -447,10 +455,12 @@ class EtudiantViewSet(BaseViewSet):
         parcours_id = self.request.query_params.get('parcours_id')
         if classe_id:
             qs = qs.filter(classe_id=classe_id)
+        # parcours et filiere sont derives de la classe depuis la migration 0012 :
+        # filtrer sur les champs directs leverait une FieldError.
         if filiere_id:
-            qs = qs.filter(filiere_id=filiere_id)
+            qs = qs.filter(classe__filiere_id=filiere_id)
         if parcours_id:
-            qs = qs.filter(parcours_id=parcours_id)
+            qs = qs.filter(classe__parcours_id=parcours_id)
         return qs
 
     @action(
@@ -499,6 +509,47 @@ class EtudiantViewSet(BaseViewSet):
 
         serializer = SeanceSerializer(seances, many=True)
         return Response(serializer.data)
+
+
+class InscriptionViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Historique des inscriptions / réinscriptions — **lecture seule**.
+
+    L'écriture appartient à l'application de scolarité : côté EDT on ne fait
+    que restituer le parcours d'un étudiant (`?etudiant_id=`) ou la composition
+    d'une promotion (`?annee_id=`, `?classe_id=`).
+    """
+    queryset = Inscription.objects.select_related(
+        'etudiant__profil__user',
+        'classe__parcours', 'classe__filiere', 'classe__semestre',
+        'annee',
+    ).all()
+    serializer_class   = InscriptionSerializer
+    permission_classes = [IsAuthenticated, ProfilActifPermission]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+
+        # Un étudiant ne voit que son propre parcours.
+        profil = getattr(user, 'profil', None)
+        if profil and hasattr(profil, 'etudiant') and not user.is_superuser:
+            return qs.filter(etudiant=profil.etudiant)
+
+        etudiant_id = self.request.query_params.get('etudiant_id')
+        annee_id    = self.request.query_params.get('annee_id')
+        classe_id   = self.request.query_params.get('classe_id')
+        statut      = self.request.query_params.get('statut')
+
+        if etudiant_id:
+            qs = qs.filter(etudiant_id=etudiant_id)
+        if annee_id:
+            qs = qs.filter(annee_id=annee_id)
+        if classe_id:
+            qs = qs.filter(classe_id=classe_id)
+        if statut:
+            qs = qs.filter(statut=statut)
+        return qs
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -554,7 +605,11 @@ class ModuleViewSet(BaseViewSet):
             raise PermissionDenied("Seuls les enseignants peuvent voir leurs modules.")
             
         enseignant = request.user.profil.enseignant
-        modules = Module.objects.filter(seance__enseignant=enseignant).distinct()
+        # Un module affecte mais pas encore planifie doit apparaitre : on part
+        # des affectations, completees par les seances effectivement assurees.
+        modules = Module.objects.filter(
+            Q(affectations__enseignant=enseignant) | Q(seance__enseignant=enseignant)
+        ).distinct()
         
         # On utilise le serializer de module
         serializer = self.get_serializer(modules, many=True)
@@ -578,10 +633,19 @@ class AffectationModuleViewSet(BaseViewSet):
         module_id = self.request.query_params.get('module_id')
         enseignant_id = self.request.query_params.get('enseignant_id')
         
+        annee_id = self.request.query_params.get('annee_id')
+        semestre_id = self.request.query_params.get('semestre_id')
+
         if module_id:
             qs = qs.filter(module_id=module_id)
         if enseignant_id:
             qs = qs.filter(enseignant_id=enseignant_id)
+        # Sans filtre d'annee, la fiche d'un enseignant cumule ses affectations
+        # de toutes les annees academiques et affiche les memes modules en double.
+        if annee_id:
+            qs = qs.filter(module__semestre__annee_id=annee_id)
+        if semestre_id:
+            qs = qs.filter(module__semestre_id=semestre_id)
         return qs
 
 

@@ -96,8 +96,11 @@ export default function SeancesListePage() {
     // ── Séances filtrées côté serveur ────────────────────────────────────────
     const apiParams = useMemo(() => {
         const params = buildApiParams(filters);
-        if (role === 'enseignant' && profil?.enseignant?.id) {
-            params.enseignant_id = String(profil.enseignant.id);
+        // profil_id est la cle primaire d'Enseignant ; `id` n'existe pas sur ce
+        // modele, le filtre n'etait donc jamais pose et la liste montrait les
+        // seances de toute la faculte.
+        if (role === 'enseignant' && profil?.enseignant?.profil_id) {
+            params.enseignant_id = String(profil.enseignant.profil_id);
         }
         return params;
     }, [filters, role, profil]);

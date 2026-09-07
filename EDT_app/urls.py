@@ -33,6 +33,7 @@ router.register(r'classes',     views.ClasseViewSet,          basename='classe')
 router.register(r'profils',      views.ProfilViewSet,    basename='profil')
 router.register(r'enseignants',  views.EnseignantViewSet, basename='enseignant')
 router.register(r'etudiants',    views.EtudiantViewSet,  basename='etudiant')
+router.register(r'inscriptions', views.InscriptionViewSet, basename='inscription')
 
 # Contenu pédagogique
 router.register(r'matieres', views.MatiereViewSet, basename='matiere')

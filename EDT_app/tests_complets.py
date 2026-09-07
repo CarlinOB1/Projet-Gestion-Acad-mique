@@ -451,7 +451,9 @@ class TestSeanceCreationConflits(TestCase):
 
     def test_seance_sans_conflit_cree_201(self):
         """Créneau différent (après-midi) → succès."""
-        payload = self._payload(heure_debut="13:00:00", heure_fin="15:00:00")
+        # 14h15-16h15 : le 3e bloc de la grille. 13h00-15h00 empietait sur la
+        # pause meridienne (13h15-14h15), desormais interdite.
+        payload = self._payload(heure_debut="14:15:00", heure_fin="16:15:00")
         resp = self.client.post("/api/seances/", payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
 
@@ -729,8 +731,8 @@ class TestActionReporter(TestCase):
             f"/api/seances/{self.seance.pk}/reporter/",
             {
                 "date_report": date_r.isoformat(),
-                "heure_debut_report": "14:00:00",
-                "heure_fin_report": "16:00:00",
+                "heure_debut_report": "14:15:00",
+                "heure_fin_report": "16:15:00",
             },
             format="json",
         )
@@ -1105,26 +1107,23 @@ class TestSeanceModeleRegles(TestCase):
             libelle="Module 1 crédit",
         )
 
-        # 1. Créer les séances en base (nécessaire pour que l'agrégation fonctionne)
-        SeanceFactory(
-            module=module_1cr, enseignant=self.enseignant,
-            classe=self.classe, annee=self.annee,
-            date_seance=self.sem.date_debut,
-            heure_debut=time(9, 0), heure_fin=time(15, 15),  # 6h
-        )
-        SeanceFactory(
-            module=module_1cr, enseignant=self.enseignant,
-            classe=self.classe, annee=self.annee,
-            date_seance=self.sem.date_debut + timedelta(days=1),
-            heure_debut=time(9, 0), heure_fin=time(15, 15),  # + 6h = 12h
-        )
+        # 1. Créer les séances en base (nécessaire pour que l'agrégation fonctionne).
+        # 9h00-13h15 = 4h effectives (15 min de pause deduites) : c'est la plus
+        # longue seance possible sans empieter sur la pause meridienne.
+        for jour in range(3):
+            SeanceFactory(
+                module=module_1cr, enseignant=self.enseignant,
+                classe=self.classe, annee=self.annee,
+                date_seance=self.sem.date_debut + timedelta(days=jour),
+                heure_debut=time(9, 0), heure_fin=time(13, 15),  # 3 x 4h = 12h
+            )
 
         # 2. Préparer la séance qui dépasse
         s_depasse = SeanceFactory.build(
             module=module_1cr, enseignant=self.enseignant,
             classe=self.classe, annee=self.annee,
-            date_seance=self.sem.date_debut + timedelta(days=2),
-            heure_debut=time(9, 0), heure_fin=time(11, 0),  # + 2h = 14h
+            date_seance=self.sem.date_debut + timedelta(days=3),
+            heure_debut=time(9, 0), heure_fin=time(11, 0),  # + 2h = 14h > 12h
         )
 
         # 3. Vérifier que la validation échoue

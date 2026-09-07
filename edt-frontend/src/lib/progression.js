@@ -22,8 +22,14 @@ export function buildProgression(events = []) {
         if (map.has(module.id)) return; // déjà traité — les valeurs viennent du serializer, pas besoin de cumul
 
         const heuresMax = Number(module.heures_max) || 0;
-        const heuresConsommees = Number(module.heures_consommees) || 0;
+        const heuresPlanifiees = Number(module.heures_consommees) || 0;
         const heuresRestantes = Number(module.heures_restantes) || 0;
+        // La progression se mesure sur les heures deja dispensees. Se baser sur
+        // heures_consommees (= tout le volume planifie sur le semestre) afficherait
+        // 100 % des la premiere semaine de cours.
+        const heuresConsommees = module.heures_effectuees !== undefined
+            ? Number(module.heures_effectuees) || 0
+            : heuresPlanifiees;
 
         const pourcentage =
             heuresMax > 0
@@ -37,6 +43,7 @@ export function buildProgression(events = []) {
             credits: module.credits,
             heuresMax,
             heuresConsommees,
+            heuresPlanifiees,
             heuresRestantes,
             pourcentage,
             statutAvancement: getStatutAvancement(pourcentage),

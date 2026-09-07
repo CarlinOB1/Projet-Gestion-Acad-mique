@@ -1,6 +1,20 @@
 """
-seed.py - Genere le jeu de donnees pour la FST.
-Semestres 1 et 2, modules reels par filiere, emplois du temps, semestre 2 = courant.
+seed.py - Genere le jeu de donnees de la FST.
+
+Deux annees academiques (l'annee en cours et la precedente, archivee), des
+semestres de 15 semaines, et pour chaque classe une grille hebdomadaire
+recurrente : chaque couple (module, CM/TD/TP) occupe une case fixe de la
+semaine et s'y repete jusqu'a epuisement de son quota horaire.
+
+Principes :
+  - la grille horaire vient de EDT_app/validation_seance.py (source unique) ;
+  - les volumes horaires des modules sont DEDUITS de la grille, jamais l'inverse,
+    ce qui garantit que le moteur de validation accepte toutes les seances ;
+  - les creneaux sont reserves en memoire avant toute ecriture : aucun conflit
+    d'enseignant ou de classe n'est genere puis rattrape silencieusement ;
+  - chaque module est rattache a sa classe (Module.classe), sans quoi il reste
+    invisible dans le contenu pedagogique ;
+  - aucune classe n'est creee sans etudiant.
 """
 import sys
 import io
@@ -16,16 +30,18 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'Gestion_edt.settings')
 django.setup()
 
 from django.contrib.auth.models import User
+from django.db import transaction
+from django.db.models import Count
 from EDT_app.models import (
     Faculte, Departement, Filiere, Parcours,
     AnneeAcademique, Semestre, Classe,
     Profil, Enseignant, Etudiant,
-    Matiere, Module, Seance, AffectationModule,
+    Matiere, Module, Seance, AffectationModule, Inscription,
 )
+from EDT_app.validation_seance import BLOCS_JOURNEE, JOURS_OUVRES
 from EDT_app.factories import (
     FaculteFactory, DepartementFactory, FiliereFactory,
-    ParcoursFactory, ClasseFactory,
-    ProfilFactory, MatiereFactory, ModuleFactory,
+    ParcoursFactory, ProfilFactory, MatiereFactory,
 )
 
 RAW_STUDENTS = """
@@ -239,6 +255,7 @@ def flush_data():
     Seance.objects.all().delete()
     Module.objects.all().delete()
     Matiere.objects.all().delete()
+    Inscription.objects.all().delete()
     Etudiant.objects.all().delete()
     Enseignant.objects.all().delete()
     Profil.objects.all().delete()
@@ -276,6 +293,8 @@ def creer_enseignant(username, first_name, last_name, departement, grade='Docteu
     )
 
 
+PORTAILS_L1 = ['BGC', 'MIP', 'PCG']
+
 matricule_counter = 1
 
 
@@ -286,449 +305,887 @@ def generate_matricule():
     return mat
 
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CONSTANTES DE PLANIFICATION
+# ═════════════════════════════════════════════════════════════════════════════
+
+STATUT_CONFIRME = 'Confirmée'
+STATUT_ANNULEE  = 'Annulée'
+STATUT_REPORTEE = 'Reportée'
+
+# La grille horaire vient du backend : c'est la seule source de verite
+# (cf. EDT_app/validation_seance.py, aligne sur PlanningTableView.jsx).
+BLOCS = list(BLOCS_JOURNEE)                      # 9h-11h, 11h15-13h15, 14h15-16h15
+JOURS = list(JOURS_OUVRES)                       # lundi -> vendredi
+CRENEAUX = [(j, b) for j in JOURS for b in range(len(BLOCS))]   # 15 creneaux/semaine
+
+# Un semestre universitaire dure ~15 semaines de cours, pas 25 ou 34.
+NB_SEMAINES_SEMESTRE = 15
+
+# Recule le debut du semestre courant pour que la date du jour tombe en milieu
+# de semestre : sans cela, un seed lance en septembre place tout le monde en
+# semaine 1 (aucune seance passee, progression a 0 %, aucun cas d'annulation ni
+# de report a observer). Mettre 0 pour coller au calendrier reel.
+DECALAGE_DEMO_SEMAINES = 5
+
+# ── Maquette pedagogique d'un semestre ───────────────────────────────────────
+# 5 modules par classe et par semestre. Pour chaque module :
+#   (type_seance, nb_blocs_consecutifs, periodicite_semaines, occurrences, offset)
+#
+# `nb_blocs_consecutifs = 2` produit un cours long occupant deux blocs a la
+# suite le meme jour (ex. lundi 9h00 -> 13h15), comme dans un emploi du temps reel.
+# Les `offset` decalent les TD/TP d'un module a l'autre pour que chaque semaine
+# reste dense au lieu d'alterner semaines pleines et semaines vides.
+#
+# Les volumes horaires du module sont DEDUITS de cette maquette
+# (heures = blocs x occurrences x 2h), jamais l'inverse : c'est ce qui garantit
+# que valider_volume_module() et valider_affectation() passent toujours.
+MAQUETTE_SEMESTRE = [
+    ('majeur',   [('CM', 2, 1, 12, 0), ('TD', 1, 1, 12, 0)]),                     # 3 creneaux, 72h
+    ('standard', [('CM', 1, 1, 14, 0), ('TD', 1, 2, 7, 0), ('TP', 1, 2, 7, 1)]),  # 3 creneaux, 56h
+    ('standard', [('CM', 1, 1, 14, 0), ('TD', 1, 2, 7, 1), ('TP', 1, 2, 7, 0)]),  # 3 creneaux, 56h
+    ('mineur',   [('CM', 1, 1, 13, 0), ('TD', 1, 2, 6, 1)]),                      # 2 creneaux, 38h
+    ('mineur',   [('CM', 1, 1, 12, 0), ('TD', 1, 3, 5, 0)]),                      # 2 creneaux, 34h
+]                                                                                 # total : 13 / 15
+
+
+def premier_lundi(annee, mois):
+    d = date(annee, mois, 1)
+    while d.weekday() != 0:
+        d += timedelta(days=1)
+    return d
+
+
+def semaines_du_semestre(date_debut):
+    """Les 15 lundis de cours du semestre."""
+    return [date_debut + timedelta(weeks=w) for w in range(NB_SEMAINES_SEMESTRE)]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PLANIFICATEUR — alloue la grille hebdomadaire AVANT toute ecriture en base
+# ═════════════════════════════════════════════════════════════════════════════
+
+class Planificateur:
+    """
+    Reserve les creneaux hebdomadaires en tenant deux registres d'occupation :
+
+      - par classe : une classe ne peut avoir qu'un cours sur un creneau donne ;
+      - par (semestre, enseignant) : un enseignant ne peut pas etre dans deux
+        classes au meme moment — ses seances se repetant chaque semaine, un
+        conflit sur le creneau est un conflit sur tout le semestre.
+
+    Tout est resolu ici, en memoire : aucune seance n'est ecrite puis rattrapee
+    par un `except` silencieux, et `valider_conflit_*` n'a jamais rien a rejeter.
+    """
+
+    def __init__(self):
+        self.occ_classe = set()        # (classe_pk, jour, bloc)
+        self.occ_ens = set()           # (semestre_pk, enseignant_pk, jour, bloc)
+        self.charge_ens = {}           # enseignant_pk -> nb de creneaux hebdo
+
+    def _charge_jour(self, classe, jour):
+        return sum(1 for b in range(len(BLOCS)) if (classe.pk, jour, b) in self.occ_classe)
+
+    def _creneaux_candidats(self, classe, nb_blocs):
+        """
+        Suites de `nb_blocs` blocs consecutifs libres pour la classe, les jours
+        les moins charges d'abord. Sans cet equilibrage, l'allocation remplit
+        lundi -> jeudi et laisse le vendredi vide dans tous les emplois du temps.
+        """
+        candidats = []
+        for jour in JOURS:
+            for bloc in range(len(BLOCS) - nb_blocs + 1):
+                suite = [(jour, bloc + k) for k in range(nb_blocs)]
+                if all((classe.pk, j, b) not in self.occ_classe for j, b in suite):
+                    candidats.append(suite)
+        candidats.sort(key=lambda suite: (self._charge_jour(classe, suite[0][0]), suite))
+        return candidats
+
+    def reserver(self, classe, semestre, enseignants, nb_blocs):
+        """
+        Choisit une suite de creneaux libre pour la classe ET un enseignant du
+        vivier libre sur toute la suite. Renvoie (enseignant, suite), ou
+        (None, None) si la capacite est saturee.
+        """
+        candidats = self._creneaux_candidats(classe, nb_blocs)
+        # Vivier trie par charge croissante : la charge se repartit d'elle-meme
+        # entre le chef et les autres enseignants du departement.
+        vivier = sorted(enseignants, key=lambda e: (self.charge_ens.get(e.pk, 0), e.pk))
+
+        for suite in candidats:
+            for ens in vivier:
+                if all((semestre.pk, ens.pk, j, b) not in self.occ_ens for j, b in suite):
+                    for j, b in suite:
+                        self.occ_classe.add((classe.pk, j, b))
+                        self.occ_ens.add((semestre.pk, ens.pk, j, b))
+                    self.charge_ens[ens.pk] = self.charge_ens.get(ens.pk, 0) + nb_blocs
+                    return ens, suite
+        return None, None
+
+    def creneau_commun(self, classes, semestre, enseignant):
+        """Premier creneau libre simultanement pour toutes les classes et l'enseignant."""
+        for jour, bloc in CRENEAUX:
+            if any((c.pk, jour, bloc) in self.occ_classe for c in classes):
+                continue
+            if (semestre.pk, enseignant.pk, jour, bloc) in self.occ_ens:
+                continue
+            for c in classes:
+                self.occ_classe.add((c.pk, jour, bloc))
+            self.occ_ens.add((semestre.pk, enseignant.pk, jour, bloc))
+            return jour, bloc
+        return None, None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CURRICULA — 5 modules par filiere, par niveau et par semestre
+# ═════════════════════════════════════════════════════════════════════════════
+
+MODULES_L2_PAR_FILIERE = {
+    'Biologie': [
+        ('Biologie Cellulaire et Moléculaire', 'S1'),
+        ('Biochimie Structurale', 'S1'),
+        ('Anatomie Végétale', 'S1'),
+        ('Statistiques Biologiques', 'S1'),
+        ('Zoologie Générale', 'S1'),
+        ('Génétique Classique', 'S2'),
+        ('Physiologie Animale', 'S2'),
+        ('Microbiologie Générale', 'S2'),
+        ('Écologie Fondamentale', 'S2'),
+        ('Botanique Systématique', 'S2'),
+    ],
+    'Chimie': [
+        ('Chimie Organique I', 'S1'),
+        ('Thermodynamique Chimique', 'S1'),
+        ('Chimie Analytique', 'S1'),
+        ('Mathématiques pour Chimistes', 'S1'),
+        ('Chimie du Solide', 'S1'),
+        ('Cinétique Chimique', 'S2'),
+        ('Chimie Minérale', 'S2'),
+        ('Chimie des Solutions', 'S2'),
+        ('Spectroscopie', 'S2'),
+        ('Travaux Pratiques de Synthèse', 'S2'),
+    ],
+    'Géosciences': [
+        ('Géologie Générale', 'S1'),
+        ('Cartographie et Topographie', 'S1'),
+        ('Sédimentologie', 'S1'),
+        ('Mathématiques Appliquées', 'S1'),
+        ('Cristallographie', 'S1'),
+        ('Minéralogie', 'S2'),
+        ('Pétrographie', 'S2'),
+        ('Géochimie', 'S2'),
+        ('Télédétection', 'S2'),
+        ('Stratigraphie', 'S2'),
+    ],
+    'Informatique': [
+        ('Algorithmique et Structures de Données', 'S1'),
+        ('Architecture des Ordinateurs', 'S1'),
+        ('Programmation en C', 'S1'),
+        ('Mathématiques Discrètes', 'S1'),
+        ('Théorie des Graphes', 'S1'),
+        ('Programmation Orientée Objet', 'S2'),
+        ('Bases de Données Relationnelles', 'S2'),
+        ('Réseaux Informatiques', 'S2'),
+        ("Systèmes d'Exploitation", 'S2'),
+        ('Probabilités et Statistiques', 'S2'),
+    ],
+    'Physique': [
+        ('Mécanique du Point et du Solide', 'S1'),
+        ('Optique Géométrique', 'S1'),
+        ('Mathématiques pour Physiciens', 'S1'),
+        ('Informatique Scientifique', 'S1'),
+        ('Électrocinétique', 'S1'),
+        ('Électromagnétisme', 'S2'),
+        ('Thermodynamique Physique', 'S2'),
+        ('Mécanique Quantique I', 'S2'),
+        ('Physique Numérique', 'S2'),
+        ('Ondes et Vibrations', 'S2'),
+    ],
+}
+
+MODULES_L3_PAR_FILIERE = {
+    'Biologie': [
+        ('Biologie Moléculaire Avancée', 'S1'),
+        ('Endocrinologie', 'S1'),
+        ('Immunologie', 'S1'),
+        ('Biostatistiques Appliquées', 'S1'),
+        ('Parasitologie', 'S1'),
+        ('Biotechnologies', 'S2'),
+        ('Physiologie Comparée', 'S2'),
+        ('Écologie des Populations', 'S2'),
+        ('Génie Génétique', 'S2'),
+        ('Méthodologie de la Recherche', 'S2'),
+    ],
+    'Chimie': [
+        ('Chimie Organique II', 'S1'),
+        ('Chimie Quantique', 'S1'),
+        ('Génie Chimique', 'S1'),
+        ('Chimie Analytique Avancée', 'S1'),
+        ('Chimie de Coordination', 'S1'),
+        ('Catalyse', 'S2'),
+        ('Chimie des Polymères', 'S2'),
+        ('Électrochimie', 'S2'),
+        ('Chimie Industrielle', 'S2'),
+        ("Chimie de l'Environnement", 'S2'),
+    ],
+    'Géosciences': [
+        ('Géologie Structurale', 'S1'),
+        ('Hydrogéologie', 'S1'),
+        ('Volcanologie', 'S1'),
+        ('Géostatistique', 'S1'),
+        ('Géomorphologie', 'S1'),
+        ('Géophysique', 'S2'),
+        ('Ressources Minières', 'S2'),
+        ('Paléontologie', 'S2'),
+        ('Géologie Appliquée', 'S2'),
+        ("Systèmes d'Information Géographique", 'S2'),
+    ],
+    'Informatique': [
+        ('Génie Logiciel', 'S1'),
+        ('Intelligence Artificielle', 'S1'),
+        ('Sécurité Informatique', 'S1'),
+        ('Compilation', 'S1'),
+        ('Analyse et Conception Objet', 'S1'),
+        ('Développement Web Avancé', 'S2'),
+        ('Systèmes Distribués', 'S2'),
+        ('Cloud Computing', 'S2'),
+        ('Apprentissage Automatique', 'S2'),
+        ("Projet de Fin d'Études", 'S2'),
+    ],
+    'Physique': [
+        ('Mécanique Quantique II', 'S1'),
+        ('Physique du Solide', 'S1'),
+        ('Astrophysique', 'S1'),
+        ('Méthodes Numériques', 'S1'),
+        ('Physique Statistique', 'S1'),
+        ('Physique Nucléaire', 'S2'),
+        ('Relativité Restreinte', 'S2'),
+        ('Physique des Matériaux', 'S2'),
+        ('Physique Théorique', 'S2'),
+        ('Instrumentation et Mesures', 'S2'),
+    ],
+}
+
+# Tronc commun L1 : 5 modules par semestre, chacun porte par un departement
+# different. Le portail (BGC / MIP / PCG) suffixe le libelle : les trois portails
+# suivent le meme programme mais dans des classes distinctes, avec leurs propres
+# creneaux, leurs propres enseignants et leur propre progression.
+MODULES_L1_COMMUNS = [
+    ('Mathématiques Générales',   'Informatique', 'S1'),
+    ('Physique Générale',         'Physique',     'S1'),
+    ('Chimie Générale',           'Chimie',       'S1'),
+    ('Biologie Générale',         'Biologie',     'S1'),
+    ('Géosciences Introductives', 'Géosciences',  'S1'),
+    ('Informatique Générale',     'Informatique', 'S2'),
+    ('Physique Appliquée',        'Physique',     'S2'),
+    ('Chimie Appliquée',          'Chimie',       'S2'),
+    ('Biologie Cellulaire Intro', 'Biologie',     'S2'),
+    ('Géologie Introductive',     'Géosciences',  'S2'),
+]
+
+# Filiere d'origine (L2) -> portail suivi en L1 l'annee precedente.
+FILIERE_VERS_PORTAIL = {
+    'Biologie': 'BGC',
+    'Géosciences': 'BGC',
+    'Chimie': 'PCG',
+    'Physique': 'MIP',
+    'Informatique': 'MIP',
+}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CONSTRUCTION D'UN SEMESTRE
+# ═════════════════════════════════════════════════════════════════════════════
+
+def construire_semestre(classe, curriculum, matiere_de, enseignants_de,
+                        planif, seances_buffer, stats):
+    """
+    Cree les 5 modules d'une classe pour un semestre, leurs affectations
+    typees CM/TD/TP, et toutes leurs seances de la grille hebdomadaire.
+
+    `curriculum` : liste de 5 tuples (libelle, nom_du_departement_porteur).
+    Les modules sont apparies a MAQUETTE_SEMESTRE dans l'ordre : le premier
+    est le module majeur (cours long de 4h), les deux derniers sont mineurs.
+    """
+    semestre = classe.semestre
+    lundis = semaines_du_semestre(semestre.date_debut)
+
+    for (libelle, dept_nom), (role, besoins) in zip(curriculum, MAQUETTE_SEMESTRE):
+        vivier = enseignants_de[dept_nom]
+        matiere = matiere_de[dept_nom]
+
+        # 1. Reserver les creneaux et l'enseignant de chaque type de seance.
+        planning = []   # [(type_seance, enseignant, [(jour, bloc), ...], periodicite, occurrences, offset)]
+        heures = {'CM': 0, 'TD': 0, 'TP': 0}
+        for type_seance, nb_blocs, periodicite, occurrences, offset in besoins:
+            ens, suite = planif.reserver(classe, semestre, vivier, nb_blocs)
+            if ens is None:
+                stats['creneaux_introuvables'] += 1
+                continue
+            planning.append((type_seance, ens, suite, periodicite, occurrences, offset))
+            heures[type_seance] += nb_blocs * occurrences * 2
+
+        if not planning:
+            continue
+
+        # 2. Volume et credits DEDUITS de la grille (1 credit = 12h).
+        total = sum(heures.values())
+        credits = max(1, min(6, -(-total // 12)))
+
+        module = Module.objects.create(
+            libelle=libelle,
+            matiere=matiere,
+            semestre=semestre,
+            classe=classe,
+            credits=credits,
+            description=f"{libelle} — {classe.libelle} ({role}).",
+            heures_cm=heures['CM'],
+            heures_td=heures['TD'],
+            heures_tp=heures['TP'],
+        )
+        stats['modules'] += 1
+
+        # 3. Une affectation typee par type de seance : CM, TD et TP sont
+        #    portes par des enseignants distincts du meme departement.
+        for type_seance, ens, _suite, _p, _o, _off in planning:
+            AffectationModule.objects.create(
+                module=module,
+                enseignant=ens,
+                type_seance=type_seance,
+                heures_prevues=float(heures[type_seance]),
+            )
+            stats['affectations'] += 1
+
+        # 4. Seances : la meme case chaque semaine, jusqu'a epuisement du quota.
+        for type_seance, ens, suite, periodicite, occurrences, offset in planning:
+            for n in range(occurrences):
+                semaine = offset + n * periodicite
+                if semaine >= len(lundis):
+                    break
+                for jour, bloc in suite:
+                    heure_debut, heure_fin = BLOCS[bloc]
+                    seances_buffer.append(Seance(
+                        libelle=f"{type_seance} — {libelle}",
+                        module=module,
+                        enseignant=ens,
+                        classe=classe,
+                        annee=classe.annee,
+                        date_seance=lundis[semaine] + timedelta(days=jour),
+                        heure_debut=heure_debut,
+                        heure_fin=heure_fin,
+                        type_seance=type_seance,
+                        statut=STATUT_CONFIRME,
+                    ))
+                    stats['seances'] += 1
+
+
+def creer_annee_complete(year_start, deps_names, filieres, parcours,
+                         enseignants_de, matiere_de, niveaux, stats,
+                         decalage_semaines=0):
+    """
+    Construit une annee academique : semestres, classes des `niveaux` demandes,
+    modules, affectations et emplois du temps complets.
+
+    `niveaux` permet de ne creer que les niveaux reellement peuples : l'annee
+    precedente n'accueille que les L1 et L2 (la promotion L3 d'alors est sortie
+    et n'existe pas dans le fichier des etudiants). Aucune classe vide n'est
+    donc generee.
+    """
+    # 15 semaines de cours par semestre : S1 a la rentree, S2 en fevrier.
+    debut_s1 = premier_lundi(year_start, 9) - timedelta(weeks=decalage_semaines)
+    debut_s2 = premier_lundi(year_start + 1, 2)
+
+    annee = AnneeAcademique.objects.create(
+        libelle=f"{year_start}-{year_start + 1}",
+        date_debut=min(date(year_start, 9, 1), debut_s1),
+        date_fin=date(year_start + 1, 8, 31),
+        statut='active',
+    )
+
+    semestre1 = Semestre.objects.create(
+        libelle='Semestre 1',
+        date_debut=debut_s1,
+        date_fin=debut_s1 + timedelta(weeks=NB_SEMAINES_SEMESTRE) - timedelta(days=3),
+        annee=annee,
+    )
+    semestre2 = Semestre.objects.create(
+        libelle='Semestre 2',
+        date_debut=debut_s2,
+        date_fin=debut_s2 + timedelta(weeks=NB_SEMAINES_SEMESTRE) - timedelta(days=3),
+        annee=annee,
+    )
+    semestres = {'S1': semestre1, 'S2': semestre2}
+
+    classes = {'L1': {'S1': {}, 'S2': {}},
+               'L2': {'S1': {}, 'S2': {}},
+               'L3': {'S1': {}, 'S2': {}}}
+
+    if 'L1' in niveaux:
+        for code in PORTAILS_L1:
+            for sem in ('S1', 'S2'):
+                classes['L1'][sem][code] = Classe.objects.create(
+                    parcours=parcours['L1'], semestre=semestres[sem], annee=annee, code=code)
+    for niveau in ('L2', 'L3'):
+        if niveau not in niveaux:
+            continue
+        for f_name, f_obj in filieres.items():
+            for sem in ('S1', 'S2'):
+                classes[niveau][sem][f_name] = Classe.objects.create(
+                    parcours=parcours[niveau], semestre=semestres[sem],
+                    annee=annee, filiere=f_obj)
+
+    planif = Planificateur()
+    seances_buffer = []
+
+    # ── L2 / L3 : curriculum porte par le departement de la filiere ──────────
+    for niveau, table in (('L2', MODULES_L2_PAR_FILIERE), ('L3', MODULES_L3_PAR_FILIERE)):
+        if niveau not in niveaux:
+            continue
+        for f_name in deps_names:
+            for sem in ('S1', 'S2'):
+                curriculum = [(lib, f_name) for (lib, s) in table[f_name] if s == sem]
+                construire_semestre(
+                    classes[niveau][sem][f_name], curriculum,
+                    matiere_de, enseignants_de, planif, seances_buffer, stats,
+                )
+
+    # ── L1 : tronc commun, 5 departements contributeurs par portail ──────────
+    if 'L1' in niveaux:
+        for sem in ('S1', 'S2'):
+            for code in PORTAILS_L1:
+                curriculum = [
+                    (f"{lib} ({code})", dept)
+                    for (lib, dept, s) in MODULES_L1_COMMUNS if s == sem
+                ]
+                construire_semestre(
+                    classes['L1'][sem][code], curriculum,
+                    matiere_de, enseignants_de, planif, seances_buffer, stats,
+                )
+
+    Seance.objects.bulk_create(seances_buffer, batch_size=500)
+
+    return {'annee': annee, 'semestres': semestres, 'classes': classes,
+            'planif': planif}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ETUDIANTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+def parser_etudiants():
+    """
+    Lit RAW_STUDENTS et renvoie [{niveau, groupe, first_name, last_name,
+    genre, phone, email}] sans rien ecrire en base.
+    """
+    etudiants = []
+    niveau = None
+    groupe = None
+
+    for line in RAW_STUDENTS.strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('1. Niveau L1'):
+            niveau = 'L1'
+            continue
+        if line.startswith('2. Niveau L2'):
+            niveau = 'L2'
+            continue
+        if line.startswith('3. Niveau L3'):
+            niveau = 'L3'
+            continue
+        if line.startswith('Portail :') or line.startswith('Filière :'):
+            groupe = line.split(' : ')[1].strip()
+            continue
+        if not niveau or not groupe:
+            continue
+
+        parts = line.split(' – ')
+        name_genre = parts[0].strip()
+        genre = 'F' if '(F)' in name_genre else 'M'
+        name_part = name_genre.replace('(F)', '').replace('(M)', '').strip()
+        tokens = name_part.split(' ')
+        last_name = tokens[0]
+        first_name = ' '.join(tokens[1:]) if len(tokens) > 1 else last_name
+
+        contact = ' '.join(parts[2:]) if len(parts) > 2 else ''
+        if len(parts) == 2 and 'Tél' in parts[1]:
+            contact = parts[1]
+
+        phone = ''
+        email = ''
+        m = re.search(r'Tél\s*:\s*([\d-]+)', contact)
+        if m:
+            phone = m.group(1).replace('-', '')
+        m = re.search(r'Email\s*:\s*([^\s]+)', contact)
+        if m:
+            email = m.group(1)
+
+        etudiants.append({
+            'niveau': niveau, 'groupe': groupe,
+            'first_name': first_name, 'last_name': last_name,
+            'genre': genre, 'phone': phone, 'email': email,
+        })
+    return etudiants
+
+
+def classe_pour(donnees_annee, niveau, groupe, sem):
+    """Classe d'un niveau/groupe pour un semestre, ou None si non generee."""
+    table = donnees_annee['classes'].get(niveau, {}).get(sem, {})
+    if niveau == 'L1':
+        return table.get(groupe)
+    return table.get(groupe if groupe in table else 'Informatique')
+
+
+def niveau_precedent(niveau, groupe):
+    """Niveau et groupe suivis l'annee precedente. (None, None) pour un entrant L1."""
+    if niveau == 'L3':
+        return 'L2', groupe
+    if niveau == 'L2':
+        return 'L1', FILIERE_VERS_PORTAIL.get(groupe, 'MIP')
+    return None, None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EXECUTION
+# ═════════════════════════════════════════════════════════════════════════════
+
+random.seed(42)
 flush_data()
 
-# Status valide recupere directement depuis le modele (evite probleme d'encodage source)
-STATUT_CONFIRME = 'Confirm\u00e9e'  # = 'Confirmée'
-
-print("[*] Creation Faculte et Departements...")
+print("[*] Faculte, departements et filieres...")
 faculte = FaculteFactory(libelle='Faculté des Sciences et Technologie')
 
 deps_names = ['Biologie', 'Chimie', 'Géosciences', 'Informatique', 'Physique']
-deps = {}
-for d_name in deps_names:
-    deps[d_name] = DepartementFactory(libelle='Département ' + d_name, faculte=faculte)
+deps = {n: DepartementFactory(libelle='Département ' + n, faculte=faculte) for n in deps_names}
+filieres = {n: FiliereFactory(libelle=n, departement=deps[n]) for n in deps_names}
 
-print("[*] Creation Filieres...")
-filieres = {}
-for f_name in deps_names:
-    filieres[f_name] = FiliereFactory(libelle=f_name, departement=deps[f_name])
+print("[*] Parcours...")
+parcours = {
+    'L1': ParcoursFactory(type_parcours='Licence', niveau=1),
+    'L2': ParcoursFactory(type_parcours='Licence', niveau=2),
+    'L3': ParcoursFactory(type_parcours='Licence', niveau=3),
+}
 
-print("[*] Creation Parcours, Annee et Semestres...")
-parcours_l1 = ParcoursFactory(type_parcours='Licence', niveau=1)
-parcours_l2 = ParcoursFactory(type_parcours='Licence', niveau=2)
-parcours_l3 = ParcoursFactory(type_parcours='Licence', niveau=3)
+print("[*] Enseignants (4 par departement) et matieres...")
+enseignants_de = {}
+matiere_de = {}
+for f_name, dept in deps.items():
+    slug = slugify_name(f_name)
+    chef = creer_enseignant('chef.' + slug, 'Chef', 'Prof' + f_name, dept,
+                            grade='Professeur', contrat='Permanent')
+    dept.chef = chef
+    dept.save()
+    filieres[f_name].responsable = chef
+    filieres[f_name].save()
+
+    enseignants_de[f_name] = [
+        chef,
+        creer_enseignant('ens2.' + slug, 'Alice', 'Prof' + f_name, dept,
+                         grade='Docteur', contrat='Permanent'),
+        creer_enseignant('ens3.' + slug, 'Bob', 'Prof' + f_name, dept,
+                         grade='Docteur', contrat='Permanent'),
+        creer_enseignant('ens4.' + slug, 'Claude', 'Prof' + f_name, dept,
+                         grade='Ingénieur', contrat='Vacataire'),
+    ]
+    matiere_de[f_name] = MatiereFactory(
+        libelle='Matières Fondamentales ' + f_name, departement=dept)
+
+stats = {
+    'modules': 0, 'affectations': 0, 'seances': 0,
+    'creneaux_introuvables': 0, 'annulees': 0, 'reportees': 0,
+    'inscriptions': 0,
+}
 
 today = date.today()
 year_start = today.year if today.month >= 9 else today.year - 1
 
-annee = AnneeAcademique.objects.create(
-    libelle=str(year_start) + '-' + str(year_start + 1),
-    date_debut=date(year_start, 9, 1),
-    date_fin=date(year_start + 1, 10, 31),
-    statut='active',
-)
-
-# Semestre 1 : sept → jan (terminé)
-semestre1 = Semestre.objects.create(
-    libelle='Semestre 1',
-    date_debut=date(year_start, 9, 1),
-    date_fin=date(year_start + 1, 2, 28),
-    annee=annee,
-)
-
-# Semestre 2 : mars → oct (en cours / courant)
-semestre2 = Semestre.objects.create(
-    libelle='Semestre 2',
-    date_debut=date(year_start + 1, 3, 1),
-    date_fin=date(year_start + 1, 10, 31),
-    annee=annee,
-)
-
-print("[*] Creation Classes (S1 et S2) pour L1, L2, L3...")
-
-# Classes L1 — S1 et S2
-classes_l1_s1 = {}
-classes_l1_s2 = {}
-for code in ['BGC', 'MIP', 'PCG']:
-    classes_l1_s1[code] = Classe.objects.create(
-        parcours=parcours_l1, semestre=semestre1, annee=annee, code=code)
-    classes_l1_s2[code] = Classe.objects.create(
-        parcours=parcours_l1, semestre=semestre2, annee=annee, code=code)
-
-# Classes L2 et L3 — S1 et S2 par filière
-classes_l2_s1 = {}
-classes_l2_s2 = {}
-classes_l3_s1 = {}
-classes_l3_s2 = {}
-for f_name, f_obj in filieres.items():
-    classes_l2_s1[f_name] = Classe.objects.create(
-        parcours=parcours_l2, semestre=semestre1, annee=annee, filiere=f_obj)
-    classes_l2_s2[f_name] = Classe.objects.create(
-        parcours=parcours_l2, semestre=semestre2, annee=annee, filiere=f_obj)
-    classes_l3_s1[f_name] = Classe.objects.create(
-        parcours=parcours_l3, semestre=semestre1, annee=annee, filiere=f_obj)
-    classes_l3_s2[f_name] = Classe.objects.create(
-        parcours=parcours_l3, semestre=semestre2, annee=annee, filiere=f_obj)
-
-print("[*] Creation Enseignants, Matieres, Modules et Emplois du temps...")
-
-# ─────────────────────────────────────────────────────────────
-# Modules par filière : (libellé, crédits, semestre)
-# ─────────────────────────────────────────────────────────────
-MODULES_PAR_FILIERE = {
-    'Biologie': [
-        # Semestre 1
-        ('Biologie Cellulaire et Moléculaire', 4, 'S1'),
-        ('Biochimie Structurale', 3, 'S1'),
-        ('Anatomie Végétale', 2, 'S1'),
-        ('Statistiques Biologiques', 2, 'S1'),
-        # Semestre 2
-        ('Génétique Classique', 4, 'S2'),
-        ('Physiologie Animale', 3, 'S2'),
-        ('Microbiologie Générale', 3, 'S2'),
-        ('Écologie Fondamentale', 2, 'S2'),
-    ],
-    'Chimie': [
-        # Semestre 1
-        ('Chimie Organique I', 4, 'S1'),
-        ('Thermodynamique Chimique', 3, 'S1'),
-        ('Chimie Analytique', 2, 'S1'),
-        ('Mathématiques pour Chimistes', 2, 'S1'),
-        # Semestre 2
-        ('Cinétique Chimique', 4, 'S2'),
-        ('Chimie Minérale', 3, 'S2'),
-        ('Chimie des Solutions', 3, 'S2'),
-        ('Spectroscopie', 2, 'S2'),
-    ],
-    'Géosciences': [
-        # Semestre 1
-        ('Géologie Générale', 4, 'S1'),
-        ('Cartographie et Topographie', 3, 'S1'),
-        ('Sédimentologie', 2, 'S1'),
-        ('Mathématiques Appliquées', 2, 'S1'),
-        # Semestre 2
-        ('Minéralogie', 4, 'S2'),
-        ('Pétrographie', 3, 'S2'),
-        ('Géochimie', 3, 'S2'),
-        ('Télédétection', 2, 'S2'),
-    ],
-    'Informatique': [
-        # Semestre 1
-        ('Algorithmique et Structures de Données', 4, 'S1'),
-        ('Architecture des Ordinateurs', 3, 'S1'),
-        ('Programmation en C', 3, 'S1'),
-        ('Mathématiques Discrètes', 2, 'S1'),
-        # Semestre 2
-        ('Programmation Orientée Objet', 4, 'S2'),
-        ('Bases de Données Relationnelles', 4, 'S2'),
-        ('Réseaux Informatiques', 3, 'S2'),
-        ('Systèmes d\'Exploitation', 2, 'S2'),
-    ],
-    'Physique': [
-        # Semestre 1
-        ('Mécanique du Point et du Solide', 4, 'S1'),
-        ('Optique Géométrique', 3, 'S1'),
-        ('Mathématiques pour Physiciens', 3, 'S1'),
-        ('Informatique Scientifique', 2, 'S1'),
-        # Semestre 2
-        ('Électromagnétisme', 4, 'S2'),
-        ('Thermodynamique Physique', 3, 'S2'),
-        ('Mécanique Quantique I', 3, 'S2'),
-        ('Physique Numérique', 2, 'S2'),
-    ],
-}
-
-# Créneaux horaires disponibles sur la semaine
-CRENEAUX = [
-    (time(9, 0), time(11, 0)),
-    (time(11, 15), time(13, 15)),
-    (time(14, 0), time(16, 0)),
-]
-JOURS_SEMAINE = [0, 1, 2, 3, 4]  # lundi=0 .. vendredi=4
-
-# Dictionnaire global des modules créés : libellé -> Module
-tous_les_modules = {}
-# Dictionnaire enseignant affecté par module pk : module.pk -> Enseignant
-ens_par_module = {}
-
-# Pour stocker les enseignants par département
-enseignants_par_dept = {}
-
-for f_name, dept in deps.items():
-    print("    -> Departement:", f_name)
-
-    chef = creer_enseignant(
-        'chef.' + slugify_name(f_name), 'Chef', 'Prof' + f_name, dept)
-    dept.chef = chef
-    dept.save()
-
-    filieres[f_name].responsable = chef
-    filieres[f_name].save()
-
-    ens2 = creer_enseignant(
-        'ens2.' + slugify_name(f_name), 'Alice', 'Prof' + f_name, dept)
-    ens3 = creer_enseignant(
-        'ens3.' + slugify_name(f_name), 'Bob', 'Prof' + f_name, dept)
-
-    enseignants_par_dept[f_name] = [chef, ens2, ens3]
-
-    # Matière de base pour le département
-    mat = MatiereFactory(libelle='Matieres Fondamentales ' + f_name, departement=dept)
-
-    # Création des modules
-    for (m_libelle, credits, sem_code) in MODULES_PAR_FILIERE[f_name]:
-        sem_obj = semestre1 if sem_code == 'S1' else semestre2
-        mod = Module.objects.create(
-            libelle=m_libelle,
-            matiere=mat,
-            semestre=sem_obj,
-            credits=credits,
-            description='Module ' + m_libelle + ' - ' + f_name,
-            heures_cm=credits * 6,
-            heures_td=credits * 4,
-            heures_tp=credits * 2,
-        )
-        tous_les_modules[m_libelle] = mod
-
-        # Affectation de l'enseignant — on stocke le même pour les séances
-        ens_affect = random.choice(enseignants_par_dept[f_name])
-        AffectationModule.objects.create(
-            module=mod,
-            enseignant=ens_affect,
-            type_seance='CM',
-            heures_prevues=float(credits * 6),
-        )
-        ens_par_module[mod.pk] = ens_affect
-
-print("[*] Creation des emplois du temps (seances)...")
-
-random.seed(42)
-
-def generer_seances_classe(classe_obj, modules_avec_ens, debut_sem, fin_sem):
-    """
-    Genere des seances pour une classe en evitant les conflits.
-    Chaque module obtient des creneaux hebdomadaires distincts.
-    modules_avec_ens = liste de (module, enseignant)
-    """
-    SLOTS = [
-        (0, time(9, 0), time(11, 0)),
-        (0, time(14, 0), time(16, 0)),
-        (1, time(9, 0), time(11, 0)),
-        (1, time(14, 0), time(16, 0)),
-        (2, time(9, 0), time(11, 0)),
-        (2, time(14, 0), time(16, 0)),
-        (3, time(9, 0), time(11, 0)),
-        (3, time(14, 0), time(16, 0)),
-        (4, time(9, 0), time(11, 0)),
-        (4, time(14, 0), time(16, 0)),
-    ]
-
-    debut_lundi = debut_sem
-    while debut_lundi.weekday() != 0:
-        debut_lundi += timedelta(days=1)
-
-    nb_semaines_dispo = (fin_sem - debut_lundi).days // 7
-    if nb_semaines_dispo < 3:
-        nb_semaines_dispo = 3
-
-    for slot_idx, (mod, ens) in enumerate(modules_avec_ens):
-        slot = SLOTS[slot_idx % len(SLOTS)]
-        jour_rel, hd, hf = slot
-
-        semaines_choisies = [0, nb_semaines_dispo // 3, 2 * nb_semaines_dispo // 3]
-        for sem_offset in semaines_choisies:
-            lundi_sem = debut_lundi + timedelta(weeks=sem_offset)
-            d_seance = lundi_sem + timedelta(days=jour_rel)
-            if d_seance > fin_sem:
-                d_seance = fin_sem - timedelta(days=fin_sem.weekday() - jour_rel)
-            if d_seance.weekday() == 6:
-                d_seance -= timedelta(days=1)
-            try:
-                Seance.objects.create(
-                    module=mod,
-                    enseignant=ens,
-                    classe=classe_obj,
-                    annee=annee,
-                    date_seance=d_seance,
-                    heure_debut=hd,
-                    heure_fin=hf,
-                    type_seance='CM',
-                    statut=STATUT_CONFIRME,
-                )
-            except Exception:
-                try:
-                    Seance.objects.create(
-                        module=mod,
-                        enseignant=ens,
-                        classe=classe_obj,
-                        annee=annee,
-                        date_seance=d_seance,
-                        heure_debut=hd,
-                        heure_fin=hf,
-                        type_seance='CM',
-                        statut='brouillon',
-                    )
-                except Exception:
-                    pass
-
-# Pour chaque filière et chaque semestre, on crée des séances pour les classes L2 et L3
-for f_name in deps_names:
-    for sem_code, sem_obj, classes_l2, classes_l3, is_current in [
-        ('S1', semestre1, classes_l2_s1, classes_l3_s1, False),
-        ('S2', semestre2, classes_l2_s2, classes_l3_s2, True),
-    ]:
-        modules_du_sem = [
-            (tous_les_modules[m_libelle], ens_par_module[tous_les_modules[m_libelle].pk])
-            for (m_libelle, credits, s) in MODULES_PAR_FILIERE[f_name]
-            if s == sem_code
-        ]
-
-        if sem_code == 'S1':
-            debut_sem = date(year_start, 9, 1)
-            fin_sem = date(year_start + 1, 2, 28)
-        else:
-            debut_sem = date(year_start + 1, 3, 1)
-            fin_sem = date(year_start + 1, 10, 31)
-
-        for classe_dict, niveau_label in [
-            (classes_l2, 'L2'),
-            (classes_l3, 'L3'),
-        ]:
-            if f_name not in classe_dict:
-                continue
-            classe_obj = classe_dict[f_name]
-            generer_seances_classe(classe_obj, modules_du_sem, debut_sem, fin_sem)
-
-# Séances pour les classes L1 (S1 et S2) — cours généraux communs
-print("[*] Creation des seances pour les classes L1...")
-
-MODULES_L1_COMMUNS = [
-    ('Mathématiques Générales', 'Informatique', 4, 'S1'),
-    ('Physique Générale', 'Physique', 4, 'S1'),
-    ('Chimie Générale', 'Chimie', 4, 'S1'),
-    ('Biologie Générale', 'Biologie', 3, 'S1'),
-    ('Géosciences Introductives', 'Géosciences', 3, 'S1'),
-    ('Informatique Générale', 'Informatique', 4, 'S2'),
-    ('Physique Appliquée', 'Physique', 3, 'S2'),
-    ('Chimie Appliquée', 'Chimie', 3, 'S2'),
-    ('Biologie Cellulaire Intro', 'Biologie', 3, 'S2'),
-    ('Géologie Intro', 'Géosciences', 3, 'S2'),
-]
-
-mat_l1_info = MatiereFactory(libelle='Modules Transversaux L1', departement=deps['Informatique'])
-
-for (m_libelle, dept_name, credits, sem_code) in MODULES_L1_COMMUNS:
-    sem_obj = semestre1 if sem_code == 'S1' else semestre2
-    mod_l1 = Module.objects.create(
-        libelle=m_libelle,
-        matiere=mat_l1_info,
-        semestre=sem_obj,
-        credits=credits,
-        description='Module L1 commun : ' + m_libelle,
+print(f"[*] Annee en cours {year_start}-{year_start + 1} (L1, L2, L3)...")
+with transaction.atomic():
+    annee_n = creer_annee_complete(
+        year_start, deps_names, filieres, parcours, enseignants_de, matiere_de,
+        niveaux=('L1', 'L2', 'L3'), stats=stats,
+        decalage_semaines=DECALAGE_DEMO_SEMAINES,
     )
 
-    if sem_code == 'S1':
-        debut_sem = date(year_start, 9, 1)
-        fin_sem = date(year_start + 1, 2, 28)
-        classes_l1 = classes_l1_s1
-    else:
-        debut_sem = date(year_start + 1, 3, 1)
-        fin_sem = date(year_start + 1, 10, 31)
-        classes_l1 = classes_l1_s2
+# L'annee precedente n'accueille que les niveaux reellement occupes par la
+# cohorte actuelle : les L3 d'alors sont diplomes et absents du fichier, on ne
+# cree donc pas de classes L3 qui resteraient vides.
+print(f"[*] Annee precedente {year_start - 1}-{year_start} (L1, L2)...")
+with transaction.atomic():
+    annee_p = creer_annee_complete(
+        year_start - 1, deps_names, filieres, parcours, enseignants_de, matiere_de,
+        niveaux=('L1', 'L2'), stats=stats,
+    )
 
-    ens_l1 = random.choice(enseignants_par_dept[dept_name])
+# ── Seance mutualisee : un seminaire commun a deux classes L3 ────────────────
+print("[*] Seance mutualisee entre L3 Informatique et L3 Physique...")
+try:
+    sem2 = annee_n['semestres']['S2']
+    classe_a = annee_n['classes']['L3']['S2']['Informatique']
+    classe_b = annee_n['classes']['L3']['S2']['Physique']
+    ens_seminaire = enseignants_de['Informatique'][3]   # le vacataire
+
+    jour, bloc = annee_n['planif'].creneau_commun([classe_a, classe_b], sem2, ens_seminaire)
+    if jour is None:
+        raise RuntimeError("aucun creneau commun libre")
+
+    heure_debut, heure_fin = BLOCS[bloc]
+    module_seminaire = Module.objects.create(
+        libelle='Séminaire Scientifique Interdisciplinaire',
+        matiere=matiere_de['Informatique'],
+        semestre=sem2,
+        classe=classe_a,
+        credits=2,
+        description='Module électif mutualisé entre L3 Informatique et L3 Physique.',
+        heures_cm=24, heures_td=0, heures_tp=0,
+    )
     AffectationModule.objects.create(
-        module=mod_l1, enseignant=ens_l1, type_seance='CM', heures_prevues=float(credits * 6))
+        module=module_seminaire, enseignant=ens_seminaire,
+        type_seance='CM', heures_prevues=24.0,
+    )
+    lundis = semaines_du_semestre(sem2.date_debut)
+    for n in range(6):   # 6 seances x 2 classes x 2h = 24h, le quota du module
+        d = lundis[n] + timedelta(days=jour)
+        seance_a = Seance.objects.create(
+            libelle='CM — Séminaire Scientifique Interdisciplinaire',
+            module=module_seminaire, enseignant=ens_seminaire, classe=classe_a,
+            annee=annee_n['annee'], date_seance=d,
+            heure_debut=heure_debut, heure_fin=heure_fin,
+            type_seance='CM', statut=STATUT_CONFIRME,
+        )
+        Seance.objects.create(
+            libelle='CM — Séminaire Scientifique Interdisciplinaire',
+            module=module_seminaire, enseignant=ens_seminaire, classe=classe_b,
+            annee=annee_n['annee'], date_seance=d,
+            heure_debut=heure_debut, heure_fin=heure_fin,
+            type_seance='CM', statut=STATUT_CONFIRME,
+            seance_liee=seance_a,
+        )
+        stats['seances'] += 2
+except Exception as exc:
+    print("    [!] Seance mutualisee non creee :", exc)
 
-    for code in ['BGC', 'MIP', 'PCG']:
-        classe_obj = classes_l1[code]
-        generer_seances_classe(classe_obj, [(mod_l1, ens_l1)], debut_sem, fin_sem)
-
-print("[*] Integration des Etudiants...")
-lines = RAW_STUDENTS.strip().split('\n')
-current_niveau = None
-current_groupe = None
-used_usernames = set()
-
-for line in lines:
-    line = line.strip()
-    if not line:
-        continue
-    if line.startswith('1. Niveau L1'):
-        current_niveau = 'L1'
-    elif line.startswith('2. Niveau L2'):
-        current_niveau = 'L2'
-    elif line.startswith('3. Niveau L3'):
-        current_niveau = 'L3'
-    elif line.startswith('Portail :'):
-        current_groupe = line.split(' : ')[1].strip()
-    elif line.startswith('Filière :'):
-        current_groupe = line.split(' : ')[1].strip()
+# ── Cas limites : annulations et reports sur des seances deja passees ────────
+print("[*] Annulations et reports (cas limites du moteur de validation)...")
+passees = list(
+    Seance.objects.filter(annee=annee_n['annee'], statut=STATUT_CONFIRME,
+                          date_seance__lt=today)
+    .order_by('pk')[:400]
+)
+random.shuffle(passees)
+for i, seance in enumerate(passees[:30]):
+    if i % 2 == 0:
+        seance.statut = STATUT_ANNULEE
+        try:
+            seance.save()
+            stats['annulees'] += 1
+        except Exception:
+            pass
     else:
-        parts = line.split(' – ')
-        if len(parts) < 1:
-            continue
-        name_genre = parts[0].strip()
-        genre = 'F' if '(F)' in name_genre else 'M'
-        name_part = name_genre.replace('(F)', '').replace('(M)', '').strip()
+        semestre = seance.classe.semestre
+        for offset in (7, 14, 21, -7, -14):
+            report = seance.date_seance + timedelta(days=offset)
+            if not (semestre.date_debut <= report <= semestre.date_fin):
+                continue
+            seance.statut = STATUT_REPORTEE
+            seance.date_report = report
+            seance.heure_debut_report = seance.heure_debut
+            seance.heure_fin_report = seance.heure_fin
+            try:
+                seance.save()
+                stats['reportees'] += 1
+                break
+            except Exception:
+                continue
 
-        name_tokens = name_part.split(' ')
-        last_name = name_tokens[0]
-        first_name = " ".join(name_tokens[1:]) if len(name_tokens) > 1 else last_name
+# ── Etudiants et inscriptions ───────────────────────────────────────────────
+print("[*] Etudiants, rattachement S1 + S2 et historique d'inscriptions...")
 
-        fn_slug = slugify_name(first_name)[:15]
-        ln_slug = slugify_name(last_name)[:15]
-        base_username = fn_slug + '.' + ln_slug
-        username = base_username
-        i = 1
-        while username in used_usernames:
-            username = base_username + str(i)
-            i += 1
-        used_usernames.add(username)
+# Le pointeur Etudiant.classe designe la classe du semestre en cours ;
+# l'historique complet (S1, S2, annee precedente) vit dans Inscription.
+sem_courant = 'S1'
+for code in ('S1', 'S2'):
+    s = annee_n['semestres'][code]
+    if s.date_debut <= today <= s.date_fin:
+        sem_courant = code
+        break
+else:
+    if today > annee_n['semestres']['S2'].date_fin:
+        sem_courant = 'S2'
 
-        contact = " ".join(parts[2:]) if len(parts) > 2 else ""
-        if len(parts) == 2 and 'Tél' in parts[1]:
-            contact = parts[1]
+used_usernames = set()
+for donnees in parser_etudiants():
+    niveau, groupe = donnees['niveau'], donnees['groupe']
 
-        phone = ""
-        email = ""
-        if "Tél" in contact:
-            m = re.search(r'Tél\s*:\s*([\d-]+)', contact)
-            if m:
-                phone = m.group(1).replace('-', '')
-        if "Email" in contact:
-            m = re.search(r'Email\s*:\s*([^\s]+)', contact)
-            if m:
-                email = m.group(1)
+    classes_n = {sem: classe_pour(annee_n, niveau, groupe, sem) for sem in ('S1', 'S2')}
+    if not classes_n[sem_courant]:
+        continue
 
-        user = creer_utilisateur(username, first_name, last_name, email)
-        profil = ProfilFactory(user=user, genre=genre, telephone=phone, statut='actif')
-        matricule = generate_matricule()
+    fn = slugify_name(donnees['first_name'])[:15]
+    ln = slugify_name(donnees['last_name'])[:15]
+    base = f"{fn}.{ln}"
+    username = base
+    i = 1
+    while username in used_usernames:
+        username = base + str(i)
+        i += 1
+    used_usernames.add(username)
 
-        # parcours/filiere ne sont plus des champs de Etudiant : ils sont
-        # derives de classe.parcours / classe.filiere (cf. migration 0012).
-        # Seule la classe est donc necessaire ici.
-        classe_obj = None
+    user = creer_utilisateur(username, donnees['first_name'], donnees['last_name'],
+                             donnees['email'])
+    profil = ProfilFactory(user=user, genre=donnees['genre'],
+                           telephone=donnees['phone'], statut='actif')
+    etudiant = Etudiant.objects.create(
+        profil=profil,
+        matricule=generate_matricule(),
+        classe=classes_n[sem_courant],
+    )
 
-        if current_niveau == 'L1' and current_groupe:
-            # Les étudiants sont rattachés au semestre 2 (courant)
-            classe_obj = classes_l1_s2.get(current_groupe)
-        elif current_niveau == 'L2' and current_groupe:
-            groupe = current_groupe if current_groupe in filieres else 'Informatique'
-            classe_obj = classes_l2_s2.get(groupe)
-        elif current_niveau == 'L3' and current_groupe:
-            classe_obj = classes_l3_s2.get(current_groupe)
-
-        if classe_obj:
-            Etudiant.objects.create(
-                profil=profil, matricule=matricule, classe=classe_obj
+    # Annee precedente : la cohorte etait un niveau en dessous (sauf entrants L1).
+    niveau_prec, groupe_prec = niveau_precedent(niveau, groupe)
+    a_un_passe = False
+    if niveau_prec:
+        for sem in ('S1', 'S2'):
+            classe_prec = classe_pour(annee_p, niveau_prec, groupe_prec, sem)
+            if not classe_prec:
+                continue
+            Inscription.objects.create(
+                etudiant=etudiant, classe=classe_prec, annee=annee_p['annee'],
+                type_inscription=Inscription.TYPE_INSCRIPTION,
+                date_inscription=classe_prec.semestre.date_debut,
+                statut='terminée',
             )
+            stats['inscriptions'] += 1
+            a_un_passe = True
 
-nb_etudiants = Etudiant.objects.count()
-nb_seances = Seance.objects.count()
-nb_modules = Module.objects.count()
-nb_enseignants = Enseignant.objects.count()
-nb_classes = Classe.objects.count()
+    # Annee en cours : reinscription si l'etudiant a deja un passe academique.
+    type_courant = (Inscription.TYPE_REINSCRIPTION if a_un_passe
+                    else Inscription.TYPE_INSCRIPTION)
+    for sem in ('S1', 'S2'):
+        classe_courante = classes_n[sem]
+        if not classe_courante:
+            continue
+        Inscription.objects.create(
+            etudiant=etudiant, classe=classe_courante, annee=annee_n['annee'],
+            type_inscription=type_courant,
+            date_inscription=classe_courante.semestre.date_debut,
+            statut='active',
+        )
+        stats['inscriptions'] += 1
+
+# ── Archivage de l'annee precedente (apres creation de son historique) ───────
+print("[*] Archivage de l'annee precedente...")
+Inscription.objects.filter(annee=annee_p['annee']).update(statut='terminée')
+annee_prec = annee_p['annee']
+annee_prec.statut = 'archivée'
+annee_prec.save()
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CONTROLES D'INTEGRITE
+# ═════════════════════════════════════════════════════════════════════════════
 
 print("")
-print("=" * 55)
+print("[*] Controles d'integrite...")
+anomalies = []
+
+classes_vides = [c.libelle for c in Classe.objects.all()
+                 if not Inscription.objects.filter(classe=c).exists()]
+if classes_vides:
+    anomalies.append(f"{len(classes_vides)} classe(s) sans etudiant : {classes_vides[:5]}")
+
+modules_orphelins = Module.objects.filter(classe__isnull=True).count()
+if modules_orphelins:
+    anomalies.append(f"{modules_orphelins} module(s) sans classe (invisibles dans le contenu pedagogique)")
+
+heures_valides = {(hd, hf) for hd, hf in BLOCS}
+hors_grille = [
+    f"{s.heure_debut}-{s.heure_fin}"
+    for s in Seance.objects.all().only('heure_debut', 'heure_fin')
+    if (s.heure_debut, s.heure_fin) not in heures_valides
+]
+if hors_grille:
+    anomalies.append(f"{len(hors_grille)} seance(s) hors grille : {sorted(set(hors_grille))[:5]}")
+
+# Conflit enseignant : deux seances actives, meme enseignant, meme date/creneau,
+# sans lien de mutualisation.
+conflits_ens = (
+    Seance.objects.filter(statut__in=[STATUT_CONFIRME, STATUT_REPORTEE])
+    .values('enseignant_id', 'date_seance', 'heure_debut')
+    .annotate(n=Count('id')).filter(n__gt=1).count()
+)
+mutualisees = Seance.objects.filter(seance_liee__isnull=False).count()
+if conflits_ens > mutualisees:
+    anomalies.append(f"{conflits_ens - mutualisees} conflit(s) d'enseignant non mutualise(s)")
+
+conflits_classe = (
+    Seance.objects.filter(statut__in=[STATUT_CONFIRME, STATUT_REPORTEE])
+    .values('classe_id', 'date_seance', 'heure_debut')
+    .annotate(n=Count('id')).filter(n__gt=1).count()
+)
+if conflits_classe:
+    anomalies.append(f"{conflits_classe} conflit(s) de classe")
+
+if stats['creneaux_introuvables']:
+    anomalies.append(f"{stats['creneaux_introuvables']} creneau(x) non attribue(s) faute de capacite")
+
+# Revalidation d'un echantillon par le moteur metier de l'application.
+echantillon = list(
+    Seance.objects.filter(annee=annee_n['annee'], statut=STATUT_CONFIRME)
+    .order_by('?')[:150]
+)
+refus = 0
+for seance in echantillon:
+    try:
+        seance.full_clean()
+    except Exception as exc:
+        refus += 1
+        if refus == 1:
+            anomalies.append(f"validation refusee sur un echantillon : {exc}")
+if refus:
+    anomalies.append(f"{refus}/{len(echantillon)} seances de l'echantillon rejetees par full_clean()")
+
+# ═════════════════════════════════════════════════════════════════════════════
+# RESUME
+# ═════════════════════════════════════════════════════════════════════════════
+
+nb_classes = Classe.objects.count()
+seances_par_semaine = {}
+for s in Seance.objects.filter(annee=annee_n['annee']).values('classe_id', 'date_seance'):
+    cle = (s['classe_id'], s['date_seance'].isocalendar()[:2])
+    seances_par_semaine[cle] = seances_par_semaine.get(cle, 0) + 1
+charges = sorted(seances_par_semaine.values()) if seances_par_semaine else [0]
+
+print("")
+print("=" * 64)
 print("  RESUME DU JEU DE DONNEES")
-print("=" * 55)
-print("  Etudiants   :", nb_etudiants)
-print("  Enseignants :", nb_enseignants)
-print("  Modules     :", nb_modules)
-print("  Classes     :", nb_classes, "(S1 + S2 pour L1/L2/L3)")
-print("  Seances EDT :", nb_seances)
-print("  Semestre courant : Semestre 2")
-print("=" * 55)
+print("=" * 64)
+print("  Annees academiques :", AnneeAcademique.objects.count(),
+      "(archivees :", AnneeAcademique.objects.filter(statut='archivée').count(), ")")
+print("  Semestre courant   :", annee_n['semestres'][sem_courant])
+print("  Classes            :", nb_classes, "— sans etudiant :", len(classes_vides))
+print("  Etudiants          :", Etudiant.objects.count())
+print("  Inscriptions       :", Inscription.objects.count(),
+      "(reinscriptions :",
+      Inscription.objects.filter(type_inscription=Inscription.TYPE_REINSCRIPTION).count(), ")")
+print("  Enseignants        :", Enseignant.objects.count())
+print("  Modules            :", Module.objects.count(),
+      "— sans classe :", modules_orphelins)
+print("  Affectations       :", AffectationModule.objects.count(),
+      "— CM/TD/TP :",
+      AffectationModule.objects.filter(type_seance='CM').count(),
+      AffectationModule.objects.filter(type_seance='TD').count(),
+      AffectationModule.objects.filter(type_seance='TP').count())
+print("  Seances            :", Seance.objects.count(),
+      "— annulees :", stats['annulees'], "— reportees :", stats['reportees'])
+print("  Seances/semaine/classe (annee en cours) : min",
+      charges[0], "| median", charges[len(charges) // 2], "| max", charges[-1])
+print("-" * 64)
+if anomalies:
+    print("  ANOMALIES :")
+    for a in anomalies:
+        print("    -", a)
+else:
+    print("  Aucune anomalie detectee.")
+print("=" * 64)

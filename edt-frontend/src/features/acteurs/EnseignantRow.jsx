@@ -1,16 +1,30 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getAffectations } from "@/api/affectations";
+import { getAnnees } from "@/api/academique";
 import { Badge } from "@/components/ui/badge";
 import { STATUT_COLORS } from "@/lib/constants";
 
 export default function EnseignantRow({ enseignant }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const { data: affectations = [], isLoading: loadingAffectations } = useQuery({
-    queryKey: ["affectations", "enseignant", enseignant.profil_id],
-    queryFn: () => getAffectations({ enseignant_id: enseignant.profil_id }),
+  // Les affectations sont historisees par annee academique : sans ce filtre,
+  // la fiche cumule toutes les annees et affiche les memes modules en double.
+  const { data: annees = [] } = useQuery({
+    queryKey: ["annees", "active"],
+    queryFn: () => getAnnees({ statut: "active" }),
     enabled: isExpanded,
+    staleTime: 5 * 60 * 1000,
+  });
+  const anneeActiveId = annees[0]?.id;
+
+  const { data: affectations = [], isLoading: loadingAffectations } = useQuery({
+    queryKey: ["affectations", "enseignant", enseignant.profil_id, anneeActiveId],
+    queryFn: () => getAffectations({
+      enseignant_id: enseignant.profil_id,
+      annee_id: anneeActiveId,
+    }),
+    enabled: isExpanded && !!anneeActiveId,
   });
 
   // Calculs statistiques
@@ -18,8 +32,10 @@ export default function EnseignantRow({ enseignant }) {
     (acc, curr) => acc + parseFloat(curr.heures_prevues || 0),
     0
   );
-  const totalHeuresConsommees = affectations.reduce(
-    (acc, curr) => acc + parseFloat(curr.heures_consommees || 0),
+  // heures_consommees = volume planifie sur le semestre ;
+  // heures_effectuees = heures reellement dispensees a ce jour.
+  const totalHeuresEffectuees = affectations.reduce(
+    (acc, curr) => acc + parseFloat(curr.heures_effectuees ?? curr.heures_consommees ?? 0),
     0
   );
   const totalCredits = affectations.reduce(
@@ -157,7 +173,7 @@ export default function EnseignantRow({ enseignant }) {
                       {totalHeuresPrevues.toFixed(1)} h
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Consommées : {totalHeuresConsommees.toFixed(1)} h
+                      Réalisées : {totalHeuresEffectuees.toFixed(1)} h
                     </p>
                   </div>
                   <div className="p-4 border border-border rounded-lg bg-background">
@@ -183,7 +199,9 @@ export default function EnseignantRow({ enseignant }) {
                   ) : (
                     affectations.map((aff) => {
                       const prevues = parseFloat(aff.heures_prevues || 0);
-                      const consommees = parseFloat(aff.heures_consommees || 0);
+                      const consommees = parseFloat(
+                        aff.heures_effectuees ?? aff.heures_consommees ?? 0
+                      );
                       const pourcentage = prevues > 0 ? Math.min(100, Math.round((consommees / prevues) * 100)) : 0;
                       
                       return (
@@ -195,6 +213,9 @@ export default function EnseignantRow({ enseignant }) {
                               </h5>
                               <p className="text-xs text-muted-foreground mt-0.5">
                                 {aff.type_seance} • {aff.module?.credits} crédits
+                                {aff.module?.classe?.libelle
+                                  ? ` • ${aff.module.classe.libelle}`
+                                  : ''}
                               </p>
                             </div>
                             <span className="font-medium text-xs px-2 py-0.5 bg-muted rounded-full">
