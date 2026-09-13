@@ -1,64 +1,41 @@
 /**
  * @file useCascadeSelects.js
  * @description Hook de gestion des selects en cascade pour le formulaire séance.
- * Cascade : semestre → filière → classe → module → enseignant
+ * Cascade : classe (déjà fixée par le contexte, ex. l'onglet actif du planning) → module → enseignant.
  * Phase 2+: charge aussi les affectations pour afficher le solde de l'enseignant sélectionné.
+ *
+ * La classe n'est plus choisie ici : elle est reçue toute faite (id) depuis
+ * l'appelant, qui la tire lui-même de la liste des classes déjà autorisées
+ * pour la personne connectée (chef de département, référent, ou les deux
+ * cumulés). Cela évite de repasser par une filière, une notion que les
+ * classes de première année (MIP/BGC/PCG) n'ont pas.
  */
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import apiClient from "@/api/client";
 
 /**
- * @param {{ semestreId: string|number|null }} props
+ * @param {{ classeId: string|number|null }} props
  */
-export const useCascadeSelects = ({ semestreId }) => {
-  const { data: filieres = [], isLoading: isLoadingFilieres } = useQuery({
-    queryKey: ["filieres"],
-    queryFn: async () => {
-      const response = await apiClient.get("/filieres/");
-      return response.data?.results ?? response.data;
-    },
-  });
-
-  const [selectedFiliereId, setSelectedFiliereId] = useState(null);
-  const [selectedClasseId, setSelectedClasseId] = useState(null);
+export const useCascadeSelects = ({ classeId }) => {
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [selectedEnseignantId, setSelectedEnseignantId] = useState(null);
-
-  // CORRECTION : reset de toute la cascade quand le semestre change
-  useEffect(() => {
-    setSelectedFiliereId(null);
-    setSelectedClasseId(null);
-    setSelectedModuleId(null);
-    setSelectedEnseignantId(null);
-  }, [semestreId]);
 
   // Reset module/enseignant quand la classe change
   useEffect(() => {
     setSelectedModuleId(null);
     setSelectedEnseignantId(null);
-  }, [selectedClasseId]);
-
-  const { data: classes = [], isLoading: isLoadingClasses } = useQuery({
-    queryKey: ["classes", semestreId, selectedFiliereId],
-    queryFn: async () => {
-      const response = await apiClient.get("/classes/", {
-        params: { semestre_id: semestreId, filiere_id: selectedFiliereId },
-      });
-      return response.data?.results ?? response.data;
-    },
-    enabled: !!semestreId && !!selectedFiliereId,
-  });
+  }, [classeId]);
 
   const { data: modules = [], isLoading: isLoadingModules } = useQuery({
-    queryKey: ["modules", "classe", selectedClasseId],
+    queryKey: ["modules", "classe", classeId],
     queryFn: async () => {
       const response = await apiClient.get("/modules/", {
-        params: { classe_id: selectedClasseId },
+        params: { classe_id: classeId },
       });
       return response.data?.results ?? response.data;
     },
-    enabled: !!selectedClasseId,
+    enabled: !!classeId,
   });
 
   const moduleSelectionne = useMemo(() => {
@@ -97,14 +74,20 @@ export const useCascadeSelects = ({ semestreId }) => {
   });
 
   // Enseignants filtrés : si le module a des affectations, on ne propose
-  // que ceux qui y sont affectés (dégradation gracieuse : si pas
-  // d'affectations, on affiche tous les enseignants du département).
+  // que ceux qui y sont affectés, construits directement depuis les
+  // affectations (pas depuis `enseignants`, qui est scopé au département de
+  // la matière et exclurait donc un enseignant affecté hors département).
+  // Dégradation gracieuse : si pas d'affectations, on affiche tous les
+  // enseignants du département.
   const enseignantsFiltres = useMemo(() => {
     if (!affectationsModule || affectationsModule.length === 0) return enseignants;
-    const idsAffectes = new Set(
-      affectationsModule.map((a) => a.enseignant?.profil?.user?.id)
-    );
-    return enseignants.filter((e) => idsAffectes.has(e.profil.user.id));
+    const map = new Map();
+    affectationsModule.forEach((a) => {
+      if (a.enseignant?.profil?.user?.id) {
+        map.set(a.enseignant.profil.user.id, a.enseignant);
+      }
+    });
+    return Array.from(map.values());
   }, [enseignants, affectationsModule]);
 
   const { data: affectationsEnseignant = [] } = useQuery({
@@ -122,14 +105,6 @@ export const useCascadeSelects = ({ semestreId }) => {
   });
 
   return {
-    filieres,
-    isLoadingFilieres,
-    selectedFiliereId,
-    setSelectedFiliereId,
-    classes,
-    isLoadingClasses,
-    selectedClasseId,
-    setSelectedClasseId,
     modules,
     isLoadingModules,
     selectedModuleId,
@@ -143,4 +118,3 @@ export const useCascadeSelects = ({ semestreId }) => {
     affectationsModule,
   };
 };
-

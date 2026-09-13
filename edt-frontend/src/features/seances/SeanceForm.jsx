@@ -1,7 +1,9 @@
 /**
  * @file SeanceForm.jsx
- * @description Formulaire création/édition d'une séance — selects en cascade,
- * validation Zod, indicateur heures restantes du module.
+ * @description Formulaire création/édition d'une séance — la classe est déjà
+ * fixée par le contexte (onglet actif du planning, ou séance modifiée) et
+ * s'affiche en lecture seule ; le formulaire enchaîne module → enseignant en
+ * cascade, avec validation Zod et indicateur d'heures restantes du module.
  */
 import { useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
@@ -23,7 +25,6 @@ import { Label } from '@/components/ui/label';
 
 const seanceSchema = z.object({
   semestre_id: z.string().min(1, 'Le semestre est requis'),
-  filiere_id: z.string().min(1, 'La filière est requise'),
   classe_id: z.string().min(1, 'La classe est requise'),
   module_id: z.string().min(1, 'Le module est requis'),
   enseignant_id: z.string().min(1, "L'enseignant est requis"),
@@ -43,8 +44,17 @@ const seanceSchema = z.object({
   path: ['heure_fin'],
 });
 
+/**
+ * @param {object} props
+ * @param {string|number} props.semestreId
+ * @param {{id: string|number, libelle: string, annee_id: string|number}|null} props.classe
+ *   Classe déjà fixée par le contexte (onglet actif du planning en création,
+ *   classe de la séance en édition). Affichée en lecture seule : ce n'est
+ *   plus un champ à choisir dans ce formulaire.
+ */
 export default function SeanceForm({
   semestreId,
+  classe = null,
   defaultValues = null,
   onSubmit,
   isPending,
@@ -54,8 +64,7 @@ export default function SeanceForm({
     resolver: zodResolver(seanceSchema),
     defaultValues: {
       semestre_id: semestreId ? String(semestreId) : '',
-      filiere_id: '',
-      classe_id: '',
+      classe_id: classe?.id ? String(classe.id) : '',
       module_id: '',
       enseignant_id: '',
       date_seance: '',
@@ -67,37 +76,30 @@ export default function SeanceForm({
   });
 
   const {
-    filieres, isLoadingFilieres,
-    selectedFiliereId, setSelectedFiliereId,
-    classes, isLoadingClasses,
-    setSelectedClasseId,
     modules, isLoadingModules,
     setSelectedModuleId,
     enseignants, isLoadingEnseignants,
     moduleSelectionne,
     selectedEnseignantId, setSelectedEnseignantId,
     affectationsEnseignant,
-  } = useCascadeSelects({ semestreId });
+  } = useCascadeSelects({ classeId: classe?.id });
 
   useEffect(() => {
     if (semestreId) setValue('semestre_id', String(semestreId));
   }, [semestreId, setValue]);
 
   useEffect(() => {
-    if (defaultValues) {
-      if (defaultValues.filiere_id) setSelectedFiliereId(defaultValues.filiere_id);
-      if (defaultValues.classe_id) setSelectedClasseId(defaultValues.classe_id);
-      if (defaultValues.module_id) setSelectedModuleId(defaultValues.module_id);
-    }
-  }, [defaultValues, setSelectedFiliereId, setSelectedClasseId, setSelectedModuleId]);
+    if (classe?.id) setValue('classe_id', String(classe.id));
+  }, [classe, setValue]);
+
+  useEffect(() => {
+    if (defaultValues?.module_id) setSelectedModuleId(defaultValues.module_id);
+  }, [defaultValues, setSelectedModuleId]);
 
   const onFormSubmit = (formData) => {
-    const classeSelectionnee = classes.find(
-      (c) => String(c.id) === String(formData.classe_id)
-    );
     onSubmit({
       ...formData,
-      annee_id: classeSelectionnee?.annee?.id,
+      annee_id: classe?.annee_id,
     });
   };
 
@@ -123,51 +125,16 @@ export default function SeanceForm({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
 
-      {/* 1. Filière */}
-      <div className="space-y-2">
-        <Label>Filière</Label>
-        <Controller name="filiere_id" control={control} render={({ field }) => (
-          <Select disabled={isLoadingFilieres} value={field.value}
-            onValueChange={(v) => {
-              field.onChange(v);
-              setSelectedFiliereId(v);
-              setValue('classe_id', '');
-              setValue('module_id', '');
-              setValue('enseignant_id', '');
-              setSelectedClasseId(null);
-              setSelectedModuleId(null);
-            }}>
-            <SelectTrigger><SelectValue placeholder="Sélectionnez une filière" /></SelectTrigger>
-            <SelectContent>
-              {filieres.map((f) => (
-                <SelectItem key={f.id} value={String(f.id)}>{f.libelle}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )} />
-        {errors.filiere_id && <p className="text-xs text-destructive">{errors.filiere_id.message}</p>}
-      </div>
-
-      {/* 2. Classe */}
-      <div className="space-y-2">
+      {/* Classe — déjà fixée par l'onglet actif du planning, ou par la séance modifiée */}
+      <div className="space-y-2 md:col-span-2">
         <Label>Classe</Label>
-        <Controller name="classe_id" control={control} render={({ field }) => (
-          <Select disabled={!selectedFiliereId || isLoadingClasses} value={field.value}
-            onValueChange={(v) => { field.onChange(v); setSelectedClasseId(v); }}>
-            <SelectTrigger>
-              <SelectValue placeholder={selectedFiliereId ? "Sélectionnez une classe" : "Choisissez d'abord une filière"} />
-            </SelectTrigger>
-            <SelectContent>
-              {classes.map((c) => (
-                <SelectItem key={c.id} value={String(c.id)}>{c.libelle}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )} />
+        <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+          {classe?.libelle || '—'}
+        </div>
         {errors.classe_id && <p className="text-xs text-destructive">{errors.classe_id.message}</p>}
       </div>
 
-      {/* 3. Module */}
+      {/* 1. Module */}
       <div className="space-y-2">
         <Label>Module</Label>
         <Controller name="module_id" control={control} render={({ field }) => (
@@ -193,7 +160,7 @@ export default function SeanceForm({
         )}
       </div>
 
-      {/* 4. Enseignant */}
+      {/* 2. Enseignant */}
       <div className="space-y-2">
         <Label>Enseignant</Label>
         <Controller name="enseignant_id" control={control} render={({ field }) => (
@@ -233,7 +200,7 @@ export default function SeanceForm({
         })()}
       </div>
 
-      {/* 5. Date */}
+      {/* 3. Date */}
       <div className="space-y-2">
         <Label>Date de la séance</Label>
         {/* CORRECTION : min utilise la date du jour, pas HEURE_MIN */}
@@ -243,21 +210,21 @@ export default function SeanceForm({
         {errors.date_seance && <p className="text-xs text-destructive">{errors.date_seance.message}</p>}
       </div>
 
-      {/* 6. Heure début */}
+      {/* 4. Heure début */}
       <div className="space-y-2">
         <Label>Heure de début</Label>
         <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_debut')} />
         {errors.heure_debut && <p className="text-xs text-destructive">{errors.heure_debut.message}</p>}
       </div>
 
-      {/* 7. Heure fin */}
+      {/* 5. Heure fin */}
       <div className="space-y-2">
         <Label>Heure de fin</Label>
         <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_fin')} />
         {errors.heure_fin && <p className="text-xs text-destructive">{errors.heure_fin.message}</p>}
       </div>
 
-      {/* 8. Type séance */}
+      {/* 6. Type séance */}
       <div className="space-y-2">
         <Label>Type de séance</Label>
         <Controller name="type_seance" control={control} render={({ field }) => (
@@ -274,7 +241,7 @@ export default function SeanceForm({
         {errors.type_seance && <p className="text-xs text-destructive">{errors.type_seance.message}</p>}
       </div>
 
-      {/* 9. Erreur serveur / Conflit Popover */}
+      {/* 7. Erreur serveur / Conflit Popover */}
       <div className="md:col-span-2 pt-2">
         <Popover open={!!serverError}>
           <PopoverTrigger asChild>

@@ -774,6 +774,15 @@ class AffectationModule(models.Model):
         help_text="Volume horaire affecté à cet enseignant pour ce module (et ce type).",
     )
     created_at  = models.DateTimeField(auto_now_add=True)
+    hors_departement = models.BooleanField(
+        default=False,
+        blank=True,
+        help_text=(
+            "Coché quand ce module est affecté par un chef qui ne dirige pas le "
+            "département propriétaire de la matière (intervention inter-départements, "
+            "ex : un module de Mathématiques enseigné dans une classe d'Informatique)."
+        ),
+    )
 
     # ── Contraintes d'intégrité ──────────────────────────────────────────────
 

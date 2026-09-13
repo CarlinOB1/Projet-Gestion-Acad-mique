@@ -208,9 +208,17 @@ export default function EnseignantRow({ enseignant }) {
                         <div key={aff.id} className="p-4 border border-border rounded-lg bg-background space-y-3">
                           <div className="flex justify-between items-start">
                             <div>
-                              <h5 className="font-semibold text-foreground text-sm">
-                                {aff.module?.libelle}
-                              </h5>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h5 className="font-semibold text-foreground text-sm">
+                                  {aff.module?.libelle}
+                                  {aff.hors_departement && aff.module?.matiere?.departement?.libelle
+                                    ? ` — ${aff.module.matiere.departement.libelle}`
+                                    : ''}
+                                </h5>
+                                {aff.hors_departement && (
+                                  <Badge variant="outline" className="text-xs">Inter-département</Badge>
+                                )}
+                              </div>
                               <p className="text-xs text-muted-foreground mt-0.5">
                                 {aff.type_seance} • {aff.module?.credits} crédits
                                 {aff.module?.classe?.libelle

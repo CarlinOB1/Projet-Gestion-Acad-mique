@@ -32,10 +32,20 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
     if (open) setServerError(null);
   }, [open, seance]);
 
+  // Classe déjà fixée par le contexte : celle de la séance modifiée, ou celle
+  // de l'onglet actif du planning au moment de la création (contextualDefaults.classe).
+  // Ce n'est plus un champ que le formulaire fait choisir.
+  const classeContext = seance
+    ? {
+        id: seance.classe?.id,
+        libelle: seance.classe?.libelle,
+        annee_id: seance.classe?.annee?.id,
+      }
+    : (contextualDefaults?.classe ?? null);
+
   // Normalisation des IDs imbriqués en strings plats pour useForm
   const normalizedDefaults = seance ? {
     semestre_id:   String(seance.classe?.semestre?.id  ?? ''),
-    filiere_id:    String(seance.classe?.filiere?.id   ?? ''),
     classe_id:     String(seance.classe?.id            ?? ''),
     module_id:     String(seance.module?.id            ?? ''),
     enseignant_id: String(seance.enseignant?.profil_id ?? ''),
@@ -45,8 +55,7 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
     type_seance:   seance.type_seance ?? 'CM',
   } : contextualDefaults ? {
     semestre_id:   semestreId ? String(semestreId) : '',
-    filiere_id:    contextualDefaults.filiere_id ? String(contextualDefaults.filiere_id) : '',
-    classe_id:     contextualDefaults.classe_id ? String(contextualDefaults.classe_id) : '',
+    classe_id:     classeContext?.id ? String(classeContext.id) : '',
     module_id:     '',
     enseignant_id: '',
     date_seance:   contextualDefaults.date_seance ?? '',
@@ -80,6 +89,7 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
         <div className="mt-4">
           <SeanceForm
             semestreId={semestreId}
+            classe={classeContext}
             defaultValues={normalizedDefaults}
             onSubmit={handleSubmit}
             isPending={activeMutation.isPending}

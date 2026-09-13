@@ -35,7 +35,7 @@ from django.db.models import Count
 from EDT_app.models import (
     Faculte, Departement, Filiere, Parcours,
     AnneeAcademique, Semestre, Classe,
-    Profil, Enseignant, Etudiant,
+    Profil, Enseignant, Etudiant, ReferentClasse,
     Matiere, Module, Seance, AffectationModule, Inscription,
 )
 from EDT_app.validation_seance import BLOCS_JOURNEE, JOURS_OUVRES
@@ -257,6 +257,7 @@ def flush_data():
     Matiere.objects.all().delete()
     Inscription.objects.all().delete()
     Etudiant.objects.all().delete()
+    ReferentClasse.objects.all().delete()
     Enseignant.objects.all().delete()
     Profil.objects.all().delete()
     User.objects.filter(is_superuser=False).delete()
@@ -909,6 +910,18 @@ with transaction.atomic():
         decalage_semaines=DECALAGE_DEMO_SEMAINES,
     )
 
+# ── Referent L1 : coordinateur des 3 portails (BGC, MIP, PCG) ────────────────
+# Cas d'usage principal de ReferentClasse (cf. modele) : un enseignant qui gere
+# l'emploi du temps des classes L1 sans en diriger le departement.
+print("[*] Referent L1 (coordinateur des 3 portails)...")
+referent_l1 = creer_enseignant('referent.l1', 'Referent', 'CoordinateurL1',
+                               deps['Informatique'], grade='Docteur', contrat='Permanent')
+referent_classe = ReferentClasse.objects.create(enseignant=referent_l1)
+referent_classe.classes.set([
+    annee_n['classes']['L1'][sem][code]
+    for sem in ('S1', 'S2') for code in PORTAILS_L1
+])
+
 # L'annee precedente n'accueille que les niveaux reellement occupes par la
 # cohorte actuelle : les L3 d'alors sont diplomes et absents du fichier, on ne
 # cree donc pas de classes L3 qui resteraient vides.
@@ -1169,7 +1182,8 @@ print("  Etudiants          :", Etudiant.objects.count())
 print("  Inscriptions       :", Inscription.objects.count(),
       "(reinscriptions :",
       Inscription.objects.filter(type_inscription=Inscription.TYPE_REINSCRIPTION).count(), ")")
-print("  Enseignants        :", Enseignant.objects.count())
+print("  Enseignants        :", Enseignant.objects.count(),
+      "— referents classe :", ReferentClasse.objects.count())
 print("  Modules            :", Module.objects.count(),
       "— sans classe :", modules_orphelins)
 print("  Affectations       :", AffectationModule.objects.count(),

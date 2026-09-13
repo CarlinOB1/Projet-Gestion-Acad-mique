@@ -28,6 +28,7 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 
 const TYPE_LABELS = { CM: 'CM', TD: 'TD', TP: 'TP', null: 'Générique' };
 
@@ -71,16 +72,18 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
   const [heuresPrevues, setHeuresPrevues] = useState(
     affectation ? String(affectation.heures_prevues) : ''
   );
+  const [horsDepartement, setHorsDepartement] = useState(affectation?.hors_departement ?? false);
   const [serverError, setServerError] = useState(null);
 
   const { data: enseignants = [], isLoading: loadingEns } = useQuery({
-    queryKey: ['enseignants', departementId],
+    queryKey: ['enseignants', horsDepartement ? 'tous' : departementId],
     queryFn: async () => {
       const response = await import('@/api/client').then(m => m.default);
-      const res = await response.get('/enseignants/', { params: { departement_id: departementId } });
+      const params = horsDepartement ? { tous_departements: 1 } : { departement_id: departementId };
+      const res = await response.get('/enseignants/', { params });
       return res.data?.results ?? res.data;
     },
-    enabled: !!departementId,
+    enabled: horsDepartement || !!departementId,
   });
 
   const mutation = useMutation({
@@ -117,11 +120,26 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
       enseignant_id: Number(enseignantId),
       type_seance: typeSeance === 'GENERIQUE' ? null : typeSeance,
       heures_prevues: Number(heuresPrevues),
+      hors_departement: horsDepartement,
     });
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6 pt-2">
+      {/* Intervention inter-départements */}
+      <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3">
+        <input
+          type="checkbox"
+          id="hors-departement"
+          className="mt-0.5 h-4 w-4 rounded border-border"
+          checked={horsDepartement}
+          onChange={(e) => setHorsDepartement(e.target.checked)}
+        />
+        <Label htmlFor="hors-departement" className="text-sm font-normal leading-snug cursor-pointer">
+          Intervention inter-départements — ce module est enseigné dans cette classe par un enseignant d'un autre département
+        </Label>
+      </div>
+
       {/* Enseignant */}
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Enseignant <span className="text-destructive">*</span></Label>
@@ -138,6 +156,9 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
               <SelectItem key={e.profil.user.id} value={String(e.profil.user.id)}>
                 <span className="font-medium">{e.nom_complet}</span>
                 {e.grade && <span className="ml-2 text-muted-foreground text-xs">[{e.grade}]</span>}
+                {horsDepartement && e.departement?.libelle && (
+                  <span className="ml-2 text-muted-foreground text-xs">— {e.departement.libelle}</span>
+                )}
               </SelectItem>
             ))}
           </SelectContent>
@@ -270,6 +291,9 @@ export default function AffectationsPanel({ module }) {
                   </p>
                   {aff.enseignant?.grade && (
                     <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{aff.enseignant.grade}</span>
+                  )}
+                  {aff.hors_departement && (
+                    <Badge variant="outline" className="text-xs">Inter-département</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 mt-1.5">

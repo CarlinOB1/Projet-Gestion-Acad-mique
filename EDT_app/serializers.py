@@ -556,6 +556,40 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     def get_heures_effectuees(self, obj):
         return round(obj.heures_effectuees(), 2)
 
+    def validate(self, data):
+        """
+        Un chef de département ne peut créer/modifier un module que pour une
+        matière de son propre département — même garde-fou que celui déjà en
+        place sur AffectationModuleSerializer.validate(), qui manquait ici.
+        """
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated or user.is_superuser:
+            return data
+        if user.groups.filter(name='responsable').exists():
+            return data
+
+        profil = getattr(user, 'profil', None)
+        enseignant = getattr(profil, 'enseignant', None) if profil else None
+        if not enseignant:
+            return data
+
+        departements_diriges = list(
+            enseignant.departements_diriges.values_list('pk', flat=True)
+        )
+        if not departements_diriges:
+            return data  # simple enseignant : la permission de vue tranche déjà
+
+        matiere = data.get('matiere') or getattr(self.instance, 'matiere', None)
+        if matiere and matiere.departement_id not in departements_diriges:
+            raise serializers.ValidationError({
+                'matiere_id': (
+                    "Vous ne pouvez créer ou modifier que des modules de matières "
+                    "appartenant à votre propre département."
+                )
+            })
+        return data
+
 
 # ==========================================
 # 4. PLANIFICATION
@@ -578,7 +612,7 @@ class AffectationModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializ
         model = AffectationModule
         fields = [
             'id', 'module', 'module_id', 'enseignant', 'enseignant_id',
-            'type_seance', 'heures_prevues', 'created_at',
+            'type_seance', 'heures_prevues', 'created_at', 'hors_departement',
             'heures_consommees', 'heures_restantes', 'heures_effectuees',
         ]
         read_only_fields = ['created_at']
@@ -619,13 +653,35 @@ class AffectationModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializ
             return data  # simple enseignant : la permission de vue tranche déjà
 
         module = data.get('module') or getattr(self.instance, 'module', None)
-        if module and module.matiere.departement_id not in departements_diriges:
+        if not module:
+            return data
+
+        module_dans_son_departement = module.matiere.departement_id in departements_diriges
+        if module_dans_son_departement:
+            return data  # cas normal, inchangé
+
+        # Le module ne relève pas d'un département que le chef dirige.
+        # Exception explicite : c'est une de ses classes, et il l'assume.
+        hors_departement = data.get(
+            'hors_departement',
+            getattr(self.instance, 'hors_departement', False),
+        )
+        classe = getattr(module, 'classe', None)
+        classe_dans_son_departement = (
+            classe is not None
+            and classe.filiere_id is not None
+            and classe.filiere.departement_id in departements_diriges
+        )
+
+        if not (hors_departement and classe_dans_son_departement):
             raise serializers.ValidationError({
                 'module_id': (
-                    "Vous ne pouvez affecter que des modules de votre "
-                    "département."
+                    "Vous ne pouvez affecter que des modules de votre département. "
+                    "Si ce module est enseigné dans une de vos classes par un autre "
+                    "département, cochez « intervention inter-départements »."
                 )
             })
+
         return data
 
 
@@ -1065,3 +1121,41 @@ class DocumentPedagogiqueSerializer(serializers.ModelSerializer):
                 f"Les fichiers '{ext}' ne sont pas autorisés. Formats acceptés : PDF, DOC, XLS, PPT, TXT."
             )
         return value
+
+    def validate(self, data):
+        """
+        L'enseignant qui dépose un document doit avoir un lien réel avec le
+        module ciblé : y être affecté, y avoir une séance, ou diriger le
+        département de sa matière. Rien ne vérifiait ce lien jusqu'ici — un
+        compte enseignant pouvait attacher un fichier à n'importe quel module.
+        """
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated or user.is_superuser:
+            return data
+        if user.groups.filter(name='responsable').exists():
+            return data
+
+        profil = getattr(user, 'profil', None)
+        enseignant = getattr(profil, 'enseignant', None) if profil else None
+        if not enseignant:
+            return data
+
+        module = data.get('module') or getattr(self.instance, 'module', None)
+        if not module:
+            return data
+
+        a_un_lien = (
+            AffectationModule.objects.filter(module=module, enseignant=enseignant).exists()
+            or Seance.objects.filter(module=module, enseignant=enseignant).exists()
+            or enseignant.departements_diriges.filter(pk=module.matiere.departement_id).exists()
+        )
+        if not a_un_lien:
+            raise serializers.ValidationError({
+                'module_id': (
+                    "Vous ne pouvez déposer un document que sur un module auquel vous "
+                    "êtes affecté, sur lequel vous avez une séance, ou qui appartient "
+                    "à un département que vous dirigez."
+                )
+            })
+        return data

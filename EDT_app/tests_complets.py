@@ -19,6 +19,7 @@ from rest_framework.test import APIClient
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from EDT_app.factories import (
+    AffectationModuleFactory,
     AnneeAcademiqueFactory,
     ClasseFactory,
     DepartementFactory,
@@ -40,7 +41,9 @@ from EDT_app.models import (
     DocumentPedagogique,
     Enseignant,
     Etudiant,
+    Module,
     Profil,
+    ReferentClasse,
     Seance,
     Semestre,
 )
@@ -456,6 +459,398 @@ class TestSeanceCreationConflits(TestCase):
         payload = self._payload(heure_debut="14:15:00", heure_fin="16:15:00")
         resp = self.client.post("/api/seances/", payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+
+class TestSeanceListeChefReferent(TestCase):
+    """
+    GET /api/seances/ pour un chef de département qui est aussi référent d'une
+    classe L1 (sans filière) : il doit voir l'union département + classe(s) en
+    référence, pas seulement son département (régression corrigée dans
+    SeanceViewSet.get_queryset, qui doit rester alignée sur
+    _get_classes_autorisees).
+    """
+
+    def setUp(self):
+        self.annee = AnneeAcademiqueFactory()
+        self.sem = Semestre1Factory(annee=self.annee)
+        parcours = ParcoursFactory()
+
+        # Classe "normale" (L2+, filière renseignée) rattachée au département A
+        self.dept_a = DepartementFactory(libelle="Informatique")
+        filiere_a = FiliereFactory(departement=self.dept_a)
+        self.classe_dept = ClasseFactory(
+            parcours=parcours, filiere=filiere_a, semestre=self.sem, annee=self.annee,
+        )
+        matiere_a = MatiereFactory(departement=self.dept_a)
+        module_a = ModuleFactory(matiere=matiere_a, semestre=self.sem)
+
+        # Classe L1 (sans filière), rattachée à un autre département via son module
+        self.dept_b = DepartementFactory(libelle="Mathématiques")
+        self.classe_l1 = ClasseFactory(
+            parcours=parcours, filiere=None, code="MIP", semestre=self.sem, annee=self.annee,
+        )
+        matiere_b = MatiereFactory(departement=self.dept_b)
+        module_b = ModuleFactory(matiere=matiere_b, semestre=self.sem)
+
+        enseignant_dept = EnseignantFactory(departement=self.dept_a)
+        enseignant_l1 = EnseignantFactory(departement=self.dept_b)
+
+        self.seance_dept = SeanceFactory(
+            module=module_a, enseignant=enseignant_dept, classe=self.classe_dept,
+            annee=self.annee, date_seance=self.sem.date_debut,
+            heure_debut=time(9, 0), heure_fin=time(11, 0), statut="Confirmée",
+        )
+        self.seance_l1 = SeanceFactory(
+            module=module_b, enseignant=enseignant_l1, classe=self.classe_l1,
+            annee=self.annee, date_seance=self.sem.date_debut,
+            heure_debut=time(14, 15), heure_fin=time(16, 15), statut="Confirmée",
+        )
+
+    def _ids_vus(self, client):
+        resp = client.get("/api/seances/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        return {s["id"] for s in resp.data["results"]}
+
+    def test_chef_seul_ne_voit_que_son_departement(self):
+        """Non-régression : sans classe en référence, la portée reste le département."""
+        user, pwd = make_user("chef_seul", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept_a)
+        self.dept_a.chef = enseignant
+        self.dept_a.save()
+
+        ids = self._ids_vus(auth_client("chef_seul", pwd))
+        self.assertIn(self.seance_dept.id, ids)
+        self.assertNotIn(self.seance_l1.id, ids)
+
+    def test_referent_seul_voit_tout_sans_restriction(self):
+        """Non-régression : un référent qui ne dirige aucun département n'est pas filtré."""
+        user, pwd = make_user("referent_seul", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept_b)
+        referent = ReferentClasse.objects.create(enseignant=enseignant)
+        referent.classes.set([self.classe_l1])
+
+        ids = self._ids_vus(auth_client("referent_seul", pwd))
+        self.assertIn(self.seance_dept.id, ids)
+        self.assertIn(self.seance_l1.id, ids)
+
+    def test_chef_et_referent_voit_departement_et_classe_referencee(self):
+        """Le cas corrigé : cumul chef + référent voit l'union des deux périmètres."""
+        user, pwd = make_user("chef_referent", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept_a)
+        self.dept_a.chef = enseignant
+        self.dept_a.save()
+        referent = ReferentClasse.objects.create(enseignant=enseignant)
+        referent.classes.set([self.classe_l1])
+
+        ids = self._ids_vus(auth_client("chef_referent", pwd))
+        self.assertIn(self.seance_dept.id, ids)
+        self.assertIn(self.seance_l1.id, ids)
+
+
+class TestClasseEtudiantListeReferent(TestCase):
+    """
+    Correctif de périmètre : contrairement aux séances (voir
+    TestSeanceListeChefReferent), un référent L1 sans département dirigé ne
+    doit voir sur /api/classes/ et /api/etudiants/ QUE ses classes assignées
+    via ReferentClasse (ex: L1 MIP/BGC/PCG) — pas les classes/étudiants de
+    son propre département d'affectation.
+    """
+
+    def setUp(self):
+        self.annee = AnneeAcademiqueFactory()
+        self.sem = Semestre1Factory(annee=self.annee)
+        parcours = ParcoursFactory()
+
+        # Classe "normale" (L2+, filière renseignée) du département du référent
+        self.dept = DepartementFactory(libelle="Informatique")
+        filiere = FiliereFactory(departement=self.dept)
+        self.classe_dept = ClasseFactory(
+            parcours=parcours, filiere=filiere, semestre=self.sem, annee=self.annee,
+        )
+        self.etudiant_dept = EtudiantFactory(classe=self.classe_dept)
+
+        # Classe L1 (sans filière), assignée en référence au référent
+        self.classe_l1 = ClasseFactory(
+            parcours=parcours, filiere=None, code="MIP", semestre=self.sem, annee=self.annee,
+        )
+        self.etudiant_l1 = EtudiantFactory(classe=self.classe_l1)
+
+        user, pwd = make_user("referent_l1_test", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept)
+        referent = ReferentClasse.objects.create(enseignant=enseignant)
+        referent.classes.set([self.classe_l1])
+        self.client_referent = auth_client("referent_l1_test", pwd)
+
+    def test_classes_visibles_limitees_aux_classes_referencees(self):
+        resp = self.client_referent.get("/api/classes/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        ids = {c["id"] for c in resp.data["results"]}
+        self.assertIn(self.classe_l1.id, ids)
+        self.assertNotIn(self.classe_dept.id, ids)
+
+    def test_etudiants_visibles_limites_aux_classes_referencees(self):
+        resp = self.client_referent.get("/api/etudiants/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        matricules = {e["matricule"] for e in resp.data["results"]}
+        self.assertIn(self.etudiant_l1.matricule, matricules)
+        self.assertNotIn(self.etudiant_dept.matricule, matricules)
+
+    def test_cumul_chef_et_referent_classes_voit_union_des_deux_perimetres(self):
+        """
+        Le cas cumulé (ex: un chef de département qui est aussi référent d'une
+        classe L1) doit voir l'UNION des deux périmètres sur /api/classes/,
+        pas seulement celui du département (régression du correctif référent
+        seul, qui utilisait un if/elif exclusif au lieu d'additionner).
+        """
+        user, pwd = make_user("chef_referent_classes", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept)
+        self.dept.chef = enseignant
+        self.dept.save()
+        referent = ReferentClasse.objects.create(enseignant=enseignant)
+        referent.classes.set([self.classe_l1])
+
+        resp = auth_client("chef_referent_classes", pwd).get("/api/classes/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        ids = {c["id"] for c in resp.data["results"]}
+        self.assertIn(self.classe_dept.id, ids)
+        self.assertIn(self.classe_l1.id, ids)
+
+    def test_cumul_chef_et_referent_etudiants_voit_union_des_deux_perimetres(self):
+        """Même union attendue sur /api/etudiants/."""
+        user, pwd = make_user("chef_referent_etudiants", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept)
+        self.dept.chef = enseignant
+        self.dept.save()
+        referent = ReferentClasse.objects.create(enseignant=enseignant)
+        referent.classes.set([self.classe_l1])
+
+        resp = auth_client("chef_referent_etudiants", pwd).get("/api/etudiants/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        matricules = {e["matricule"] for e in resp.data["results"]}
+        self.assertIn(self.etudiant_dept.matricule, matricules)
+        self.assertIn(self.etudiant_l1.matricule, matricules)
+
+
+class TestDocumentPerimetreChefReferent(TestCase):
+    """
+    Documents pédagogiques : un chef ne doit voir que les documents des
+    modules de son département (au lieu de tous les départements), et un
+    référent doit voir tous les documents de ses propres modules L1, pas
+    seulement ceux qu'il a lui-même déposés.
+    """
+
+    def setUp(self):
+        self.annee = AnneeAcademiqueFactory()
+        self.sem = Semestre1Factory(annee=self.annee)
+        parcours = ParcoursFactory()
+
+        self.dept_a = DepartementFactory(libelle="Informatique")
+        matiere_a = MatiereFactory(departement=self.dept_a, libelle="Algorithmique")
+        self.module_a = ModuleFactory(matiere=matiere_a, semestre=self.sem, libelle="Algo S1")
+
+        self.dept_b = DepartementFactory(libelle="Mathématiques")
+        matiere_b = MatiereFactory(departement=self.dept_b, libelle="Analyse")
+        self.classe_l1 = ClasseFactory(
+            parcours=parcours, filiere=None, code="MIP", semestre=self.sem, annee=self.annee,
+        )
+        self.module_l1 = ModuleFactory(
+            matiere=matiere_b, semestre=self.sem, classe=self.classe_l1, libelle="Analyse MIP",
+        )
+
+        enseignant_a = EnseignantFactory(departement=self.dept_a)
+        enseignant_b = EnseignantFactory(departement=self.dept_b)
+
+        self.doc_a = DocumentPedagogique.objects.create(
+            titre="Poly Algo", fichier=SimpleUploadedFile("algo.pdf", b"x"),
+            module=self.module_a, enseignant=enseignant_a,
+        )
+        self.doc_l1 = DocumentPedagogique.objects.create(
+            titre="Poly Analyse MIP", fichier=SimpleUploadedFile("analyse.pdf", b"x"),
+            module=self.module_l1, enseignant=enseignant_b,
+        )
+
+    def _titres_vus(self, client):
+        resp = client.get("/api/documents/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        return {d["titre"] for d in resp.data["results"]}
+
+    def test_chef_ne_voit_que_les_documents_de_son_departement(self):
+        user, pwd = make_user("chef_docs", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept_a)
+        self.dept_a.chef = enseignant
+        self.dept_a.save()
+
+        titres = self._titres_vus(auth_client("chef_docs", pwd))
+        self.assertIn(self.doc_a.titre, titres)
+        self.assertNotIn(self.doc_l1.titre, titres)
+
+    def test_referent_voit_les_documents_de_ses_modules_pas_seulement_les_siens(self):
+        user, pwd = make_user("referent_docs", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept_a)
+        referent = ReferentClasse.objects.create(enseignant=enseignant)
+        referent.classes.set([self.classe_l1])
+
+        titres = self._titres_vus(auth_client("referent_docs", pwd))
+        # Document déposé par un AUTRE enseignant (dept B) sur son module L1.
+        self.assertIn(self.doc_l1.titre, titres)
+        self.assertNotIn(self.doc_a.titre, titres)
+
+
+class TestDocumentDepotLienModule(TestCase):
+    """Écriture : impossible de déposer un document sur un module étranger."""
+
+    def setUp(self):
+        self.annee = AnneeAcademiqueFactory()
+        self.sem = Semestre1Factory(annee=self.annee)
+        self.dept = DepartementFactory()
+        matiere = MatiereFactory(departement=self.dept)
+        self.module = ModuleFactory(matiere=matiere, semestre=self.sem)
+
+    def _payload(self):
+        return {
+            "titre": "Support",
+            "module_id": self.module.id,
+            "type_doc": "cours",
+            "fichier": SimpleUploadedFile("s.pdf", b"contenu"),
+        }
+
+    def test_enseignant_sans_lien_est_refuse(self):
+        user, pwd = make_user("prof_etranger", "pass1234")
+        profil = ProfilFactory(user=user)
+        EnseignantFactory(profil=profil, departement=DepartementFactory())
+
+        resp = auth_client("prof_etranger", pwd).post(
+            "/api/documents/", self._payload(), format="multipart",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_enseignant_affecte_peut_deposer(self):
+        user, pwd = make_user("prof_affecte", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept)
+        AffectationModuleFactory(module=self.module, enseignant=enseignant)
+
+        resp = auth_client("prof_affecte", pwd).post(
+            "/api/documents/", self._payload(), format="multipart",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+
+class TestModulePerimetreChef(TestCase):
+    """Un chef de département ne voit et ne peut modifier/supprimer que les
+    modules de son propre département."""
+
+    def setUp(self):
+        self.annee = AnneeAcademiqueFactory()
+        self.sem = Semestre1Factory(annee=self.annee)
+
+        self.dept_a = DepartementFactory(libelle="Informatique")
+        matiere_a = MatiereFactory(departement=self.dept_a)
+        self.module_a = ModuleFactory(matiere=matiere_a, semestre=self.sem, libelle="Module A")
+
+        self.dept_b = DepartementFactory(libelle="Mathématiques")
+        matiere_b = MatiereFactory(departement=self.dept_b)
+        self.module_b = ModuleFactory(matiere=matiere_b, semestre=self.sem, libelle="Module B")
+
+        user, pwd = make_user("chef_mod", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept_a)
+        self.dept_a.chef = enseignant
+        self.dept_a.save()
+        self.client_chef = auth_client("chef_mod", pwd)
+
+    def test_liste_cadree_sur_son_departement(self):
+        resp = self.client_chef.get("/api/modules/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        ids = {m["id"] for m in resp.data["results"]}
+        self.assertIn(self.module_a.id, ids)
+        self.assertNotIn(self.module_b.id, ids)
+
+    def test_modification_module_autre_departement_invisible(self):
+        """
+        La liste (get_queryset) cadre déjà l'accès : un module d'un autre
+        département est totalement invisible pour ce chef, la tentative de
+        modification échoue donc au niveau de l'objet lui-même (404), avant
+        même d'atteindre la validation d'écriture.
+        """
+        resp = self.client_chef.patch(
+            f"/api/modules/{self.module_b.id}/",
+            {"libelle": "Piraté"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.module_b.refresh_from_db()
+        self.assertNotEqual(self.module_b.libelle, "Piraté")
+
+    def test_suppression_module_autre_departement_invisible(self):
+        resp = self.client_chef.delete(f"/api/modules/{self.module_b.id}/")
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Module.objects.filter(pk=self.module_b.id).exists())
+
+    def test_reassignation_module_propre_vers_matiere_etrangere_refusee(self):
+        """
+        Le garde-fou d'écriture (ModuleSerializer.validate) sert précisément
+        ici : le chef possède bien module_a, mais ne peut pas le faire basculer
+        sur une matière d'un autre département — un cas que le seul périmètre
+        de get_queryset ne couvre pas, puisque module_a reste dans sa liste.
+        """
+        matiere_b_id = self.module_b.matiere_id
+        resp = self.client_chef.patch(
+            f"/api/modules/{self.module_a.id}/",
+            {"matiere_id": matiere_b_id},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.module_a.refresh_from_db()
+        self.assertNotEqual(self.module_a.matiere_id, matiere_b_id)
+
+    def test_modification_module_propre_departement_autorisee(self):
+        resp = self.client_chef.patch(
+            f"/api/modules/{self.module_a.id}/",
+            {"libelle": "Module A modifié"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+
+class TestAffectationListePerimetreChef(TestCase):
+    """La liste des affectations d'un chef est cadrée sur son département."""
+
+    def setUp(self):
+        self.annee = AnneeAcademiqueFactory()
+        self.sem = Semestre1Factory(annee=self.annee)
+
+        self.dept_a = DepartementFactory(libelle="Informatique")
+        matiere_a = MatiereFactory(departement=self.dept_a)
+        module_a = ModuleFactory(matiere=matiere_a, semestre=self.sem, libelle="Module A2")
+        self.aff_a = AffectationModuleFactory(module=module_a)
+
+        self.dept_b = DepartementFactory(libelle="Mathématiques")
+        matiere_b = MatiereFactory(departement=self.dept_b)
+        module_b = ModuleFactory(matiere=matiere_b, semestre=self.sem, libelle="Module B2")
+        self.aff_b = AffectationModuleFactory(module=module_b)
+
+        user, pwd = make_user("chef_aff", "pass1234")
+        profil = ProfilFactory(user=user)
+        enseignant = EnseignantFactory(profil=profil, departement=self.dept_a)
+        self.dept_a.chef = enseignant
+        self.dept_a.save()
+        self.client_chef = auth_client("chef_aff", pwd)
+
+    def test_liste_cadree_sur_son_departement(self):
+        resp = self.client_chef.get("/api/affectations/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        ids = {a["id"] for a in resp.data["results"]}
+        self.assertIn(self.aff_a.id, ids)
+        self.assertNotIn(self.aff_b.id, ids)
 
 
 class TestSeanceReportDimanche(TestCase):

@@ -222,17 +222,27 @@ export default function PlanningPage() {
 
   const handleEmptyCellClick = ({ date_seance, heure_debut, heure_fin }) => {
     if (!GESTIONNAIRE_ROLES.includes(effectiveRole)) return;
-    const classeSelectionnee = classesDisponibles.find(
+    // La classe est déjà fixée par l'onglet actif ("Classe :" au-dessus du
+    // calendrier) : on la retrouve dans allClasses (qui porte l'année,
+    // nécessaire pour enregistrer la séance) plutôt que de la refaire choisir
+    // dans le formulaire.
+    const classeSelectionnee = allClasses.find(
       (c) => String(c.id) === String(filters.classeId),
     );
     setContextualDefaults({
       date_seance,
       heure_debut,
       heure_fin,
-      classe_id: filters.classeId ? String(filters.classeId) : "",
-      filiere_id: classeSelectionnee?.filiere_id
-        ? String(classeSelectionnee.filiere_id)
-        : "",
+      classe: classeSelectionnee
+        ? {
+            id: classeSelectionnee.id,
+            libelle:
+              classeSelectionnee.libelle ||
+              classeSelectionnee.code ||
+              `Classe ${classeSelectionnee.id}`,
+            annee_id: classeSelectionnee.annee?.id,
+          }
+        : null,
     });
     setSelectedSeance(null);
     setIsSeanceDrawerOpen(true);

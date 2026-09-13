@@ -13,6 +13,7 @@ from .models import (
     Matiere, Module, AffectationModule, Seance, ReferentClasse,
     DocumentPedagogique, Inscription,
 )
+from EDT_app.perimetre import modules_autorises
 from EDT_app.serializers import (
     FaculteSerializer, DepartementSerializer, FiliereSerializer,
     ParcoursSerializer, AnneeAcademiqueSerializer, SemestreSerializer,
@@ -196,9 +197,17 @@ class ClasseViewSet(BaseViewSet):
                 not (user.is_superuser or user.groups.filter(name='responsable').exists()):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
-            if departements_diriges.exists():
-                # Chef de département : classes de ses départements gérés
-                qs = qs.filter(filiere__departement__in=departements_diriges)
+            est_referent = hasattr(enseignant, 'referent_classes')
+            if departements_diriges.exists() or est_referent:
+                # Union des deux périmètres (une personne peut cumuler chef de
+                # département ET référent d'une ou plusieurs classes, ex: L1) :
+                # ne jamais choisir l'un au détriment de l'autre.
+                perimetre = Q()
+                if departements_diriges.exists():
+                    perimetre |= Q(filiere__departement__in=departements_diriges)
+                if est_referent:
+                    perimetre |= Q(id__in=enseignant.referent_classes.classes.values_list('id', flat=True))
+                qs = qs.filter(perimetre)
             else:
                 # Enseignant simple : classes de son propre département uniquement
                 qs = qs.filter(filiere__departement=enseignant.departement)
@@ -366,8 +375,12 @@ class EnseignantViewSet(BaseViewSet):
         qs      = super().get_queryset()
         user    = self.request.user
 
-        # Filtre pour Chef de Département
-        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+        # Filtre pour Chef de Département — sauf demande explicite de la liste
+        # complète (ex: formulaire d'affectation inter-départements, où le
+        # chef doit pouvoir choisir un enseignant en dehors de son propre
+        # département).
+        tous_departements = self.request.query_params.get('tous_departements') in ('1', 'true', 'True')
+        if not tous_departements and hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
             if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
@@ -443,12 +456,22 @@ class EtudiantViewSet(BaseViewSet):
         qs          = super().get_queryset()
         user        = self.request.user
 
-        # Filtre pour Chef de Département
-        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+        # Filtre pour Chef de Département / Référent de classe(s)
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant') and \
+                not (user.is_superuser or user.groups.filter(name='responsable').exists()):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
-            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
-                qs = qs.filter(classe__filiere__departement__in=departements_diriges)
+            est_referent = hasattr(enseignant, 'referent_classes')
+            if departements_diriges.exists() or est_referent:
+                # Union des deux périmètres, pas un choix exclusif : une personne
+                # cumulant chef de département et référent (ex: L1) doit voir les
+                # étudiants des deux périmètres, pas seulement de l'un des deux.
+                perimetre = Q()
+                if departements_diriges.exists():
+                    perimetre |= Q(classe__filiere__departement__in=departements_diriges)
+                if est_referent:
+                    perimetre |= Q(classe__in=enseignant.referent_classes.classes.all())
+                qs = qs.filter(perimetre)
 
         classe_id   = self.request.query_params.get('classe_id')
         filiere_id  = self.request.query_params.get('filiere_id')
@@ -578,10 +601,16 @@ class ModuleViewSet(BaseViewSet):
 
     def get_queryset(self):
         qs          = super().get_queryset()
+        user        = self.request.user
+
+        perimetre = modules_autorises(user)
+        if perimetre is not None:
+            qs = qs.filter(pk__in=perimetre.values_list('pk', flat=True))
+
         semestre_id = self.request.query_params.get('semestre_id')
         matiere_id  = self.request.query_params.get('matiere_id')
         classe_id   = self.request.query_params.get('classe_id')
-        
+
         if classe_id:
             qs = qs.filter(classe_id=classe_id)
         if semestre_id:
@@ -589,6 +618,22 @@ class ModuleViewSet(BaseViewSet):
         if matiere_id:
             qs = qs.filter(matiere_id=matiere_id)
         return qs
+
+    def perform_destroy(self, instance):
+        """
+        validate() du serializer ne s'exécute pas sur DELETE : on applique ici
+        la même règle (un chef ne supprime que les modules de son département)
+        pour ne pas laisser la suppression contourner ce que la création et la
+        modification interdisent déjà.
+        """
+        user = self.request.user
+        perimetre = modules_autorises(user)
+        if perimetre is not None and not perimetre.filter(pk=instance.pk).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                "Vous ne pouvez supprimer que des modules de votre propre département."
+            )
+        instance.delete()
 
     @action(
         detail=False,
@@ -630,9 +675,15 @@ class AffectationModuleViewSet(BaseViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        user = self.request.user
+
+        perimetre = modules_autorises(user)
+        if perimetre is not None:
+            qs = qs.filter(module_id__in=perimetre.values_list('pk', flat=True))
+
         module_id = self.request.query_params.get('module_id')
         enseignant_id = self.request.query_params.get('enseignant_id')
-        
+
         annee_id = self.request.query_params.get('annee_id')
         semestre_id = self.request.query_params.get('semestre_id')
 
@@ -766,12 +817,15 @@ class SeanceViewSet(BaseViewSet):
         if not is_gestionnaire:
             qs = qs.filter(statut__in=['Confirmée', 'Annulée', 'Reportée'])
 
-        # Filtre pour Chef de Département (uniquement les filières de ses départements)
+        # Filtre pour Chef de Département : union département + classes en référence
+        # (mêmes droits que _get_classes_autorisees, pour ne jamais désynchroniser
+        # ce qu'un chef peut lister de ce qu'il a le droit de créer/modifier).
         if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
-            departements_diriges = enseignant.departements_diriges.all()
-            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
-                qs = qs.filter(classe__filiere__departement__in=departements_diriges)
+            if enseignant.departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+                classes_autorisees = self._get_classes_autorisees()
+                if classes_autorisees is not None:
+                    qs = qs.filter(classe_id__in=classes_autorisees)
 
         classe_id     = self.request.query_params.get('classe_id')
         enseignant_id = self.request.query_params.get('enseignant_id')
@@ -1038,11 +1092,13 @@ class DocumentViewSet(BaseViewSet):
             qs = qs.filter(module_id__in=modules_ids)
             
         elif hasattr(user.profil, 'enseignant'):
-            enseignant = user.profil.enseignant
-            if not enseignant.departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
-                # Enseignant simple : on filtre pour ne lui montrer que ses propres documents (ou ceux de ses modules)
-                # Mais il est souvent plus simple qu'il voit ses propres documents
-                qs = qs.filter(enseignant=enseignant)
+            # Chef de département : cadré sur son département (plus ses classes
+            # en référence, union incluse). Référent : les documents de ses
+            # propres modules L1, pas seulement ceux qu'il a lui-même déposés.
+            # Enseignant simple : son propre département.
+            perimetre = modules_autorises(user)
+            if perimetre is not None:
+                qs = qs.filter(module__in=perimetre)
 
         return qs
 
