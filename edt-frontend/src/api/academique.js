@@ -1,4 +1,4 @@
-import apiClient from "@/api/client";
+import apiClient, { fetchAllPages } from "@/api/client";
 
 /**
  * Extrait le tableau de données depuis une réponse DRF,
@@ -193,8 +193,7 @@ export const removeSemestre = async (id) => {
 // =========================================================================
 
 export const getClasses = async (params) => {
-  const response = await apiClient.get("/classes/", { params });
-  return response.data?.results ?? response.data;
+  return fetchAllPages("/classes/", params);
 };
 
 export const getClasseById = async (id) => {
@@ -261,8 +260,7 @@ export const removeMatiere = async (id) => {
 // =========================================================================
 
 export const getModules = async (params) => {
-  const response = await apiClient.get("/modules/", { params });
-  return response.data?.results ?? response.data;
+  return fetchAllPages("/modules/", params);
 };
 
 export const getModuleById = async (id) => {

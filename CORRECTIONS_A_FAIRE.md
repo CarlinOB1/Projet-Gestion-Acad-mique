@@ -298,5 +298,36 @@ l'instant (décision explicite de reporter la mise en œuvre).
 
 ---
 
+## 11. L'exemption de conflit `seance_liee` ne fonctionne que dans un sens
+
+**Découvert le :** 2026-09-15, en vérifiant le contrôle d'intégrité de
+`seed.py` après la refonte de l'année académique (revalidation d'un
+échantillon de séances via `full_clean()`).
+
+**Problème :** pour la séance mutualisée entre deux classes (ex. séminaire
+partagé L3 Informatique / L3 Physique, `seed.py`), `full_clean()` échoue sur
+la séance **pivot** (celle que l'autre référence via `seance_liee`) avec
+« L'enseignant a déjà une séance le `<date>` sur ce créneau », alors que les
+deux séances sont volontairement mutualisées (même enseignant, même
+créneau, exactement le cas que `seance_liee` est censé couvrir).
+
+**Cause :** `valider_conflit_enseignant` (`EDT_app/validation_seance.py`,
+lignes 184-209) reçoit `seance_liee_pk` et exclut cette séance-là de la
+recherche de conflit — mais uniquement du point de vue de la séance qui
+**possède** ce `seance_liee`. La séance pivot, elle, a `seance_liee=None`
+(rien ne pointe "vers l'avant") ; elle ignore qu'une autre séance pointe
+*vers elle* (`related_name='seances_associees'`), donc rien n'exclut cette
+séance associée de sa propre recherche de conflit.
+
+**Piste de correction :** dans `valider_conflit_enseignant`, exclure aussi
+les séances de `seance.seances_associees.all()` (pas seulement
+`seance_liee_pk`), pour que l'exemption s'applique dans les deux sens.
+
+**Statut :** identifié par lecture de code et reproduit via le contrôle
+d'intégrité de `seed.py` (pas de correction appliquée, hors périmètre de la
+refonte du seed en cours).
+
+---
+
 <!-- Ajouter les prochains points ci-dessous, avec le même format
      (titre, date de découverte, problème, cause, piste de correction). -->

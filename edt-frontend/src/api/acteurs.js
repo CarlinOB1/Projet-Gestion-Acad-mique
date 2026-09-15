@@ -1,12 +1,11 @@
-import apiClient, { extractData } from "@/api/client";
+import apiClient, { fetchAllPages } from "@/api/client";
 
 // ==========================================
 // ENSEIGNANTS
 // ==========================================
 
 export const getEnseignants = async (params) => {
-  const response = await apiClient.get('/enseignants/', { params });
-  return response.data?.results ?? response.data;
+  return fetchAllPages('/enseignants/', params);
 };
 
 export const getEnseignantById = async (id) => {
@@ -34,8 +33,7 @@ export const removeEnseignant = async (id) => {
 // ==========================================
 
 export const getEtudiants = async (params) => {
-  const response = await apiClient.get('/etudiants/', { params });
-  return response.data?.results ?? response.data;
+  return fetchAllPages('/etudiants/', params);
 };
 
 export const getEtudiantById = async (id) => {

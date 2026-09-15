@@ -77,12 +77,9 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
 
   const { data: enseignants = [], isLoading: loadingEns } = useQuery({
     queryKey: ['enseignants', horsDepartement ? 'tous' : departementId],
-    queryFn: async () => {
-      const response = await import('@/api/client').then(m => m.default);
-      const params = horsDepartement ? { tous_departements: 1 } : { departement_id: departementId };
-      const res = await response.get('/enseignants/', { params });
-      return res.data?.results ?? res.data;
-    },
+    queryFn: () => getEnseignants(
+      horsDepartement ? { tous_departements: 1 } : { departement_id: departementId }
+    ),
     enabled: horsDepartement || !!departementId,
   });
 

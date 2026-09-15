@@ -74,5 +74,36 @@ export const extractData = (response) => {
   return data;
 };
 
+/**
+ * Récupère TOUTES les pages d'un endpoint DRF paginé et concatène les résultats.
+ * DRF renvoie { count, next, previous, results } quand la pagination est active
+ * (PAGE_SIZE=20 par défaut, cf. Gestion_edt/settings.py) : un simple
+ * `apiClient.get(url)` ne renvoie que la première page et tronque
+ * silencieusement le reste dès que la liste dépasse 20 éléments. Une réponse
+ * non paginée (tableau direct, ou objet sans `results`) est renvoyée telle
+ * quelle, sans requête supplémentaire.
+ *
+ * @param {string} url
+ * @param {object} [params]
+ * @returns {Promise<any>}
+ */
+export const fetchAllPages = async (url, params = {}) => {
+  let response = await apiClient.get(url, { params });
+  const data = response.data;
+
+  if (!data || typeof data !== 'object' || !Array.isArray(data.results)) {
+    return data;
+  }
+
+  let results = data.results;
+  let next = data.next;
+  while (next) {
+    response = await apiClient.get(next);
+    results = results.concat(response.data?.results ?? []);
+    next = response.data?.next;
+  }
+  return results;
+};
+
 export default apiClient;
 

@@ -1,8 +1,7 @@
-import apiClient, { extractData } from '@/api/client';
+import apiClient, { fetchAllPages } from '@/api/client';
 
 export const getSeances = async (params = {}) => {
-  const response = await apiClient.get('/seances/', { params });
-  return response.data?.results ?? response.data;
+  return fetchAllPages('/seances/', params);
 };
 
 export const getMonPlanningEnseignant = async (params = {}) => {

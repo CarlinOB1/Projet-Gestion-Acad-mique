@@ -1,10 +1,10 @@
 """
 seed.py - Genere le jeu de donnees de la FST.
 
-Deux annees academiques (l'annee en cours et la precedente, archivee), des
-semestres de 15 semaines, et pour chaque classe une grille hebdomadaire
-recurrente : chaque couple (module, CM/TD/TP) occupe une case fixe de la
-semaine et s'y repete jusqu'a epuisement de son quota horaire.
+Une seule annee academique (2026-2027, rentree le 16/09/2026), des semestres
+de 15 semaines, et pour chaque classe une grille hebdomadaire recurrente :
+chaque couple (module, CM/TD/TP) occupe une case fixe de la semaine et s'y
+repete jusqu'a epuisement de son quota horaire.
 
 Principes :
   - la grille horaire vient de EDT_app/validation_seance.py (source unique) ;
@@ -14,7 +14,10 @@ Principes :
     d'enseignant ou de classe n'est genere puis rattrape silencieusement ;
   - chaque module est rattache a sa classe (Module.classe), sans quoi il reste
     invisible dans le contenu pedagogique ;
-  - aucune classe n'est creee sans etudiant.
+  - aucune classe n'est creee sans etudiant ;
+  - DATE_RENTREE (16/09/2026) est un mercredi : la grille hebdomadaire de
+    seances s'ancre sur le lundi suivant (21/09/2026), la date de rentree
+    elle-meme reste la date administrative du Semestre 1.
 """
 import sys
 import io
@@ -178,6 +181,16 @@ OPOMBA Annike christelle (F) – 2005-04-05 – Tél : 06-514-7693
 PILLA Luc Juskard (M) – 2004-09-08 – Tél : 06-813-2672
 MAKOSSO-MWESSI Ivie-Claude (F) – 2004-06-15 – Tél : 06-333-4444
 
+Filière : Mathématiques
+BALOU Christian Divin (M) – 2005-02-14 – Tél : 06-234-5678
+EKORO Nathan Precieux (M) – 2004-11-03 – Tél : 06-345-6789
+GAMBOULA Sephora Divine (F) – 2005-06-22 – Tél : 05-456-7890
+ITOUA Merveille Grace (F) – 2004-09-15 – Tél : 06-567-8901
+KOUMBA Rayan Excellence (M) – 2006-01-08 – Tél : 06-678-9012
+MABIALA Christelle Joy (F) – 2005-04-30 – Tél : 06-789-0123
+NGOUALA Divin Freddy (M) – 2004-07-19 – Tél : 05-890-1234
+OYABI Reine Consolatrice (F) – 2005-10-27 – Tél : 06-901-2345
+
 Filière : Physique
 BATOTA Grace De Richy (M) – 2005-05-22 – Tél : 06-591-5650
 KINGA Carla Benicia (F) – 2007-01-16 – Tél : 05-746-1097
@@ -234,6 +247,15 @@ MPANDZOU OTO LENGOUENZE Life Obvious (M) – 2004-07-20 – Tél : 06-685-8845
 OMBANDZA OMBI Carlin Leroi (M) – 2005-06-05 – Tél : 05-619-9317
 POATY TCHICAYA Josue Parfait (M) – 2005-08-05 – Tél : 06-575-8058
 TCHISSAMBOU Nacy Ivann (M) – 2005-05-06 – Tél : 06-500-3330
+
+Filière : Mathématiques
+BAKALA Josue Providence (M) – 2003-05-12 – Tél : 06-112-2334
+DIANZENZA Grace Emmanuella (F) – 2004-08-25 – Tél : 06-223-3445
+KIMBEMBE Yannick Steve (M) – 2003-12-01 – Tél : 05-334-4556
+LOUBASSOU Divine Merveille (F) – 2004-02-17 – Tél : 06-445-5667
+MASSAMBA Prince Ludovic (M) – 2003-09-09 – Tél : 06-556-6778
+NKOUNKOU Bethy Sarah (F) – 2004-03-21 – Tél : 06-667-7889
+TSOUMOU Excellent Divan (M) – 2003-06-06 – Tél : 05-778-8990
 
 Filière : Physique
 BA MISSAMOU Macylan Dieuveille (M) – 2004-06-12 – Tél : 06-444-5555
@@ -324,35 +346,46 @@ CRENEAUX = [(j, b) for j in JOURS for b in range(len(BLOCS))]   # 15 creneaux/se
 # Un semestre universitaire dure ~15 semaines de cours, pas 25 ou 34.
 NB_SEMAINES_SEMESTRE = 15
 
-# Recule le debut du semestre courant pour que la date du jour tombe en milieu
-# de semestre : sans cela, un seed lance en septembre place tout le monde en
-# semaine 1 (aucune seance passee, progression a 0 %, aucun cas d'annulation ni
-# de report a observer). Mettre 0 pour coller au calendrier reel.
-DECALAGE_DEMO_SEMAINES = 5
+# Date de rentree reelle de l'unique annee academique generee par ce seed.
+DATE_RENTREE = date(2026, 9, 16)
 
-# ── Maquette pedagogique d'un semestre ───────────────────────────────────────
-# 5 modules par classe et par semestre. Pour chaque module :
+# ── Roles pedagogiques d'un module ───────────────────────────────────────────
+# Chaque module de chaque classe porte un role explicite (donne dans les
+# curricula : MODULES_L1_PAR_PORTAIL, MODULES_L2_PAR_FILIERE,
+# MODULES_L3_PAR_FILIERE), qui determine sa grille horaire :
 #   (type_seance, nb_blocs_consecutifs, periodicite_semaines, occurrences, offset)
 #
 # `nb_blocs_consecutifs = 2` produit un cours long occupant deux blocs a la
 # suite le meme jour (ex. lundi 9h00 -> 13h15), comme dans un emploi du temps reel.
 # Les `offset` decalent les TD/TP d'un module a l'autre pour que chaque semaine
-# reste dense au lieu d'alterner semaines pleines et semaines vides.
+# reste dense au lieu d'alterner semaines pleines et semaines vides : 'standard_a'
+# et 'standard_b' ne different que par cet offset, a utiliser quand un semestre a
+# 2 modules 'standard' (le premier en 'standard_a', le second en 'standard_b').
 #
-# Les volumes horaires du module sont DEDUITS de cette maquette
+# Un module "natal" (celui de la filiere/du departement porteur naturel) est
+# 'majeur' (2 par semestre) ou 'standard_a'/'standard_b' ; un module "externe"
+# (emprunte a un autre departement, volume reduit) est 'mineur_ext_2cr' ou
+# 'mineur_ext_1cr'. Les volumes horaires sont TOUJOURS DEDUITS de ces roles
 # (heures = blocs x occurrences x 2h), jamais l'inverse : c'est ce qui garantit
 # que valider_volume_module() et valider_affectation() passent toujours.
-MAQUETTE_SEMESTRE = [
-    ('majeur',   [('CM', 2, 1, 12, 0), ('TD', 1, 1, 12, 0)]),                     # 3 creneaux, 72h
-    ('standard', [('CM', 1, 1, 14, 0), ('TD', 1, 2, 7, 0), ('TP', 1, 2, 7, 1)]),  # 3 creneaux, 56h
-    ('standard', [('CM', 1, 1, 14, 0), ('TD', 1, 2, 7, 1), ('TP', 1, 2, 7, 0)]),  # 3 creneaux, 56h
-    ('mineur',   [('CM', 1, 1, 13, 0), ('TD', 1, 2, 6, 1)]),                      # 2 creneaux, 38h
-    ('mineur',   [('CM', 1, 1, 12, 0), ('TD', 1, 3, 5, 0)]),                      # 2 creneaux, 34h
-]                                                                                 # total : 13 / 15
+ROLES = {
+    'majeur':          [('CM', 2, 1, 12, 0), ('TD', 1, 1, 12, 0)],                    # 3 creneaux, 72h, 6cr
+    'standard_a':      [('CM', 1, 1, 14, 0), ('TD', 1, 2, 7, 0), ('TP', 1, 2, 7, 1)], # 3 creneaux, 56h, 5cr
+    'standard_b':      [('CM', 1, 1, 14, 0), ('TD', 1, 2, 7, 1), ('TP', 1, 2, 7, 0)], # 3 creneaux, 56h, 5cr
+    'mineur_ext_2cr':  [('CM', 1, 1, 10, 0)],                                         # 1 creneau, 20h, 2cr
+    'mineur_ext_1cr':  [('CM', 1, 2, 5, 0)],                                          # 1 creneau, 10h, 1cr
+}
 
 
 def premier_lundi(annee, mois):
     d = date(annee, mois, 1)
+    while d.weekday() != 0:
+        d += timedelta(days=1)
+    return d
+
+
+def premier_lundi_a_partir_de(d):
+    """Le premier lundi a partir de la date `d` (elle-meme si deja un lundi)."""
     while d.weekday() != 0:
         d += timedelta(days=1)
     return d
@@ -439,159 +472,218 @@ class Planificateur:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# CURRICULA — 5 modules par filiere, par niveau et par semestre
+# CURRICULA — par filiere/portail, par niveau et par semestre
 # ═════════════════════════════════════════════════════════════════════════════
+#
+# Chaque entree est (libelle, departement_porteur, role, semestre). Un module
+# "natal" (celui de la filiere/du departement porteur naturel) est 'majeur'
+# (exactement 2 par semestre) ou 'standard_a'/'standard_b' (le reste) ; un
+# module "externe" (emprunte a un autre departement, volume reduit) est
+# 'mineur_ext_2cr' ou 'mineur_ext_1cr'. Cf. ROLES pour le detail des volumes.
 
 MODULES_L2_PAR_FILIERE = {
     'Biologie': [
-        ('Biologie Cellulaire et Moléculaire', 'S1'),
-        ('Biochimie Structurale', 'S1'),
-        ('Anatomie Végétale', 'S1'),
-        ('Statistiques Biologiques', 'S1'),
-        ('Zoologie Générale', 'S1'),
-        ('Génétique Classique', 'S2'),
-        ('Physiologie Animale', 'S2'),
-        ('Microbiologie Générale', 'S2'),
-        ('Écologie Fondamentale', 'S2'),
-        ('Botanique Systématique', 'S2'),
+        ('Biologie Cellulaire et Moléculaire', 'Biologie', 'majeur', 'S1'),
+        ('Zoologie Générale', 'Biologie', 'majeur', 'S1'),
+        ('Anatomie Végétale', 'Biologie', 'standard_a', 'S1'),
+        ('Statistiques Biologiques', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Biochimie Structurale', 'Chimie', 'mineur_ext_1cr', 'S1'),
+        ('Génétique Classique', 'Biologie', 'majeur', 'S2'),
+        ('Physiologie Animale', 'Biologie', 'majeur', 'S2'),
+        ('Microbiologie Générale', 'Biologie', 'standard_a', 'S2'),
+        ('Écologie Fondamentale', 'Biologie', 'standard_b', 'S2'),
+        ('Bioinformatique', 'Informatique', 'mineur_ext_2cr', 'S2'),
     ],
     'Chimie': [
-        ('Chimie Organique I', 'S1'),
-        ('Thermodynamique Chimique', 'S1'),
-        ('Chimie Analytique', 'S1'),
-        ('Mathématiques pour Chimistes', 'S1'),
-        ('Chimie du Solide', 'S1'),
-        ('Cinétique Chimique', 'S2'),
-        ('Chimie Minérale', 'S2'),
-        ('Chimie des Solutions', 'S2'),
-        ('Spectroscopie', 'S2'),
-        ('Travaux Pratiques de Synthèse', 'S2'),
+        ('Chimie Organique I', 'Chimie', 'majeur', 'S1'),
+        ('Chimie du Solide', 'Chimie', 'majeur', 'S1'),
+        ('Thermodynamique Chimique', 'Chimie', 'standard_a', 'S1'),
+        ('Chimie Analytique', 'Chimie', 'standard_b', 'S1'),
+        ('Mathématiques pour Chimistes', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Cinétique Chimique', 'Chimie', 'majeur', 'S2'),
+        ('Chimie Minérale', 'Chimie', 'majeur', 'S2'),
+        ('Chimie des Solutions', 'Chimie', 'standard_a', 'S2'),
+        ('Travaux Pratiques de Synthèse', 'Chimie', 'standard_b', 'S2'),
+        ('Spectroscopie', 'Physique', 'mineur_ext_2cr', 'S2'),
     ],
     'Géosciences': [
-        ('Géologie Générale', 'S1'),
-        ('Cartographie et Topographie', 'S1'),
-        ('Sédimentologie', 'S1'),
-        ('Mathématiques Appliquées', 'S1'),
-        ('Cristallographie', 'S1'),
-        ('Minéralogie', 'S2'),
-        ('Pétrographie', 'S2'),
-        ('Géochimie', 'S2'),
-        ('Télédétection', 'S2'),
-        ('Stratigraphie', 'S2'),
+        ('Géologie Générale', 'Géosciences', 'majeur', 'S1'),
+        ('Sédimentologie', 'Géosciences', 'majeur', 'S1'),
+        ('Cartographie et Topographie', 'Géosciences', 'standard_a', 'S1'),
+        ('Mathématiques Appliquées', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Cristallographie', 'Chimie', 'mineur_ext_1cr', 'S1'),
+        ('Minéralogie', 'Géosciences', 'majeur', 'S2'),
+        ('Pétrographie', 'Géosciences', 'majeur', 'S2'),
+        ('Stratigraphie', 'Géosciences', 'standard_a', 'S2'),
+        ('Télédétection', 'Géosciences', 'standard_b', 'S2'),
+        ('Géochimie', 'Chimie', 'mineur_ext_2cr', 'S2'),
     ],
     'Informatique': [
-        ('Algorithmique et Structures de Données', 'S1'),
-        ('Architecture des Ordinateurs', 'S1'),
-        ('Programmation en C', 'S1'),
-        ('Mathématiques Discrètes', 'S1'),
-        ('Théorie des Graphes', 'S1'),
-        ('Programmation Orientée Objet', 'S2'),
-        ('Bases de Données Relationnelles', 'S2'),
-        ('Réseaux Informatiques', 'S2'),
-        ("Systèmes d'Exploitation", 'S2'),
-        ('Probabilités et Statistiques', 'S2'),
+        ('Algorithmique et Structures de Données', 'Informatique', 'majeur', 'S1'),
+        ('Programmation en C', 'Informatique', 'majeur', 'S1'),
+        ('Architecture des Ordinateurs', 'Informatique', 'standard_a', 'S1'),
+        ('Théorie des Graphes', 'Informatique', 'standard_b', 'S1'),
+        ('Mathématiques Discrètes', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Programmation Orientée Objet', 'Informatique', 'majeur', 'S2'),
+        ('Bases de Données Relationnelles', 'Informatique', 'majeur', 'S2'),
+        ('Réseaux Informatiques', 'Informatique', 'standard_a', 'S2'),
+        ("Systèmes d'Exploitation", 'Informatique', 'standard_b', 'S2'),
+        ('Probabilités et Statistiques', 'Mathématiques', 'mineur_ext_2cr', 'S2'),
+    ],
+    'Mathématiques': [
+        ('Algèbre Linéaire et Bilinéaire', 'Mathématiques', 'majeur', 'S1'),
+        ('Analyse Réelle', 'Mathématiques', 'majeur', 'S1'),
+        ('Probabilités', 'Mathématiques', 'standard_a', 'S1'),
+        ('Structures Algébriques', 'Mathématiques', 'standard_b', 'S1'),
+        ("Introduction à l'Algorithmique", 'Informatique', 'mineur_ext_2cr', 'S1'),
+        ('Analyse Complexe', 'Mathématiques', 'majeur', 'S2'),
+        ('Topologie Générale', 'Mathématiques', 'majeur', 'S2'),
+        ('Statistique Inférentielle', 'Mathématiques', 'standard_a', 'S2'),
+        ('Géométrie Différentielle', 'Mathématiques', 'standard_b', 'S2'),
+        ('Programmation Scientifique', 'Informatique', 'mineur_ext_2cr', 'S2'),
     ],
     'Physique': [
-        ('Mécanique du Point et du Solide', 'S1'),
-        ('Optique Géométrique', 'S1'),
-        ('Mathématiques pour Physiciens', 'S1'),
-        ('Informatique Scientifique', 'S1'),
-        ('Électrocinétique', 'S1'),
-        ('Électromagnétisme', 'S2'),
-        ('Thermodynamique Physique', 'S2'),
-        ('Mécanique Quantique I', 'S2'),
-        ('Physique Numérique', 'S2'),
-        ('Ondes et Vibrations', 'S2'),
+        ('Mécanique du Point et du Solide', 'Physique', 'majeur', 'S1'),
+        ('Électrocinétique', 'Physique', 'majeur', 'S1'),
+        ('Optique Géométrique', 'Physique', 'standard_a', 'S1'),
+        ('Mathématiques pour Physiciens', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Informatique Scientifique', 'Informatique', 'mineur_ext_1cr', 'S1'),
+        ('Électromagnétisme', 'Physique', 'majeur', 'S2'),
+        ('Mécanique Quantique I', 'Physique', 'majeur', 'S2'),
+        ('Thermodynamique Physique', 'Physique', 'standard_a', 'S2'),
+        ('Physique Numérique', 'Physique', 'standard_b', 'S2'),
     ],
 }
 
 MODULES_L3_PAR_FILIERE = {
     'Biologie': [
-        ('Biologie Moléculaire Avancée', 'S1'),
-        ('Endocrinologie', 'S1'),
-        ('Immunologie', 'S1'),
-        ('Biostatistiques Appliquées', 'S1'),
-        ('Parasitologie', 'S1'),
-        ('Biotechnologies', 'S2'),
-        ('Physiologie Comparée', 'S2'),
-        ('Écologie des Populations', 'S2'),
-        ('Génie Génétique', 'S2'),
-        ('Méthodologie de la Recherche', 'S2'),
+        ('Biologie Moléculaire Avancée', 'Biologie', 'majeur', 'S1'),
+        ('Immunologie', 'Biologie', 'majeur', 'S1'),
+        ('Endocrinologie', 'Biologie', 'standard_a', 'S1'),
+        ('Parasitologie', 'Biologie', 'standard_b', 'S1'),
+        ('Biostatistiques Appliquées', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Biotechnologies', 'Biologie', 'majeur', 'S2'),
+        ('Génie Génétique', 'Biologie', 'majeur', 'S2'),
+        ('Physiologie Comparée', 'Biologie', 'standard_a', 'S2'),
+        ('Écologie des Populations', 'Biologie', 'standard_b', 'S2'),
+        ('Analyse de Données Biologiques', 'Informatique', 'mineur_ext_1cr', 'S2'),
     ],
     'Chimie': [
-        ('Chimie Organique II', 'S1'),
-        ('Chimie Quantique', 'S1'),
-        ('Génie Chimique', 'S1'),
-        ('Chimie Analytique Avancée', 'S1'),
-        ('Chimie de Coordination', 'S1'),
-        ('Catalyse', 'S2'),
-        ('Chimie des Polymères', 'S2'),
-        ('Électrochimie', 'S2'),
-        ('Chimie Industrielle', 'S2'),
-        ("Chimie de l'Environnement", 'S2'),
+        ('Chimie Organique II', 'Chimie', 'majeur', 'S1'),
+        ('Génie Chimique', 'Chimie', 'majeur', 'S1'),
+        ('Chimie de Coordination', 'Chimie', 'standard_a', 'S1'),
+        ('Chimie Quantique', 'Physique', 'mineur_ext_2cr', 'S1'),
+        ('Outils Informatiques pour la Chimie', 'Informatique', 'mineur_ext_1cr', 'S1'),
+        ('Catalyse', 'Chimie', 'majeur', 'S2'),
+        ('Chimie Industrielle', 'Chimie', 'majeur', 'S2'),
+        ('Chimie des Polymères', 'Chimie', 'standard_a', 'S2'),
+        ("Chimie de l'Environnement", 'Chimie', 'standard_b', 'S2'),
+        ('Électrochimie', 'Physique', 'mineur_ext_2cr', 'S2'),
     ],
     'Géosciences': [
-        ('Géologie Structurale', 'S1'),
-        ('Hydrogéologie', 'S1'),
-        ('Volcanologie', 'S1'),
-        ('Géostatistique', 'S1'),
-        ('Géomorphologie', 'S1'),
-        ('Géophysique', 'S2'),
-        ('Ressources Minières', 'S2'),
-        ('Paléontologie', 'S2'),
-        ('Géologie Appliquée', 'S2'),
-        ("Systèmes d'Information Géographique", 'S2'),
+        ('Géologie Structurale', 'Géosciences', 'majeur', 'S1'),
+        ('Volcanologie', 'Géosciences', 'majeur', 'S1'),
+        ('Hydrogéologie', 'Géosciences', 'standard_a', 'S1'),
+        ('Géomorphologie', 'Géosciences', 'standard_b', 'S1'),
+        ('Géostatistique', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Géophysique', 'Géosciences', 'majeur', 'S2'),
+        ('Ressources Minières', 'Géosciences', 'majeur', 'S2'),
+        ('Paléontologie', 'Géosciences', 'standard_a', 'S2'),
+        ('Géologie Appliquée', 'Géosciences', 'standard_b', 'S2'),
+        ("Systèmes d'Information Géographique", 'Informatique', 'mineur_ext_2cr', 'S2'),
     ],
     'Informatique': [
-        ('Génie Logiciel', 'S1'),
-        ('Intelligence Artificielle', 'S1'),
-        ('Sécurité Informatique', 'S1'),
-        ('Compilation', 'S1'),
-        ('Analyse et Conception Objet', 'S1'),
-        ('Développement Web Avancé', 'S2'),
-        ('Systèmes Distribués', 'S2'),
-        ('Cloud Computing', 'S2'),
-        ('Apprentissage Automatique', 'S2'),
-        ("Projet de Fin d'Études", 'S2'),
+        ('Génie Logiciel', 'Informatique', 'majeur', 'S1'),
+        ('Intelligence Artificielle', 'Informatique', 'majeur', 'S1'),
+        ('Sécurité Informatique', 'Informatique', 'standard_a', 'S1'),
+        ('Compilation', 'Informatique', 'standard_b', 'S1'),
+        ('Développement Web Avancé', 'Informatique', 'majeur', 'S2'),
+        ('Systèmes Distribués', 'Informatique', 'majeur', 'S2'),
+        ('Apprentissage Automatique', 'Informatique', 'standard_a', 'S2'),
+        ("Projet de Fin d'Études", 'Informatique', 'standard_b', 'S2'),
+    ],
+    'Mathématiques': [
+        ('Analyse Fonctionnelle', 'Mathématiques', 'majeur', 'S1'),
+        ('Équations Différentielles', 'Mathématiques', 'majeur', 'S1'),
+        ('Théorie de la Mesure', 'Mathématiques', 'standard_a', 'S1'),
+        ('Optimisation', 'Mathématiques', 'standard_b', 'S1'),
+        ('Calcul Scientifique', 'Informatique', 'mineur_ext_2cr', 'S1'),
+        ('Algèbre Avancée', 'Mathématiques', 'majeur', 'S2'),
+        ('Processus Stochastiques', 'Mathématiques', 'majeur', 'S2'),
+        ('Analyse Numérique', 'Mathématiques', 'standard_a', 'S2'),
+        ('Mémoire de Recherche', 'Mathématiques', 'standard_b', 'S2'),
     ],
     'Physique': [
-        ('Mécanique Quantique II', 'S1'),
-        ('Physique du Solide', 'S1'),
-        ('Astrophysique', 'S1'),
-        ('Méthodes Numériques', 'S1'),
-        ('Physique Statistique', 'S1'),
-        ('Physique Nucléaire', 'S2'),
-        ('Relativité Restreinte', 'S2'),
-        ('Physique des Matériaux', 'S2'),
-        ('Physique Théorique', 'S2'),
-        ('Instrumentation et Mesures', 'S2'),
+        ('Mécanique Quantique II', 'Physique', 'majeur', 'S1'),
+        ('Physique du Solide', 'Physique', 'majeur', 'S1'),
+        ('Astrophysique', 'Physique', 'standard_a', 'S1'),
+        ('Physique Statistique', 'Physique', 'standard_b', 'S1'),
+        ('Méthodes Numériques', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Physique Nucléaire', 'Physique', 'majeur', 'S2'),
+        ('Relativité Restreinte', 'Physique', 'majeur', 'S2'),
+        ('Physique des Matériaux', 'Physique', 'standard_a', 'S2'),
+        ('Physique Théorique', 'Physique', 'standard_b', 'S2'),
+        ('Instrumentation et Mesures', 'Informatique', 'mineur_ext_2cr', 'S2'),
     ],
 }
 
-# Tronc commun L1 : 5 modules par semestre, chacun porte par un departement
-# different. Le portail (BGC / MIP / PCG) suffixe le libelle : les trois portails
-# suivent le meme programme mais dans des classes distinctes, avec leurs propres
-# creneaux, leurs propres enseignants et leur propre progression.
-MODULES_L1_COMMUNS = [
-    ('Mathématiques Générales',   'Informatique', 'S1'),
-    ('Physique Générale',         'Physique',     'S1'),
-    ('Chimie Générale',           'Chimie',       'S1'),
-    ('Biologie Générale',         'Biologie',     'S1'),
-    ('Géosciences Introductives', 'Géosciences',  'S1'),
-    ('Informatique Générale',     'Informatique', 'S2'),
-    ('Physique Appliquée',        'Physique',     'S2'),
-    ('Chimie Appliquée',          'Chimie',       'S2'),
-    ('Biologie Cellulaire Intro', 'Biologie',     'S2'),
-    ('Géologie Introductive',     'Géosciences',  'S2'),
-]
+# L1 : chaque portail (BGC / MIP / PCG) a desormais son propre programme.
+# BGC et PCG partagent Chimie/Geosciences (module natal commun) mais avec un
+# equilibre majeur/standard et un 4e module differents ; MIP est structure
+# autour de Mathematiques/Informatique/Physique, aucun module Biologie ou
+# Geosciences n'y figure en majeur/standard.
+MODULES_L1_PAR_PORTAIL = {
+    'BGC': [
+        ('Biologie Générale', 'Biologie', 'majeur', 'S1'),
+        ('Géosciences Introductives', 'Géosciences', 'majeur', 'S1'),
+        ('Chimie Générale', 'Chimie', 'standard_a', 'S1'),
+        ('Zoologie et Botanique', 'Biologie', 'standard_b', 'S1'),
+        ('Mathématiques Générales', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Biologie Cellulaire Intro', 'Biologie', 'majeur', 'S2'),
+        ('Géologie Introductive', 'Géosciences', 'majeur', 'S2'),
+        ('Chimie Appliquée', 'Chimie', 'standard_a', 'S2'),
+        ('Écologie Générale', 'Biologie', 'standard_b', 'S2'),
+        ('Statistiques Descriptives', 'Mathématiques', 'mineur_ext_2cr', 'S2'),
+    ],
+    'MIP': [
+        ('Mathématiques Générales', 'Mathématiques', 'majeur', 'S1'),
+        ('Physique Générale', 'Physique', 'majeur', 'S1'),
+        ('Algorithmique et Programmation', 'Informatique', 'standard_a', 'S1'),
+        ('Électricité et Électronique', 'Physique', 'standard_b', 'S1'),
+        ('Chimie Générale', 'Chimie', 'mineur_ext_2cr', 'S1'),
+        ('Analyse et Algèbre Linéaire', 'Mathématiques', 'majeur', 'S2'),
+        ('Informatique Générale', 'Informatique', 'majeur', 'S2'),
+        ('Mécanique Générale', 'Physique', 'standard_a', 'S2'),
+        ('Probabilités et Statistiques', 'Mathématiques', 'standard_b', 'S2'),
+        ('Biologie Générale', 'Biologie', 'mineur_ext_2cr', 'S2'),
+    ],
+    'PCG': [
+        ('Chimie Générale', 'Chimie', 'majeur', 'S1'),
+        ('Physique Générale', 'Physique', 'majeur', 'S1'),
+        ('Géosciences Introductives', 'Géosciences', 'standard_a', 'S1'),
+        ('Techniques de Laboratoire', 'Chimie', 'standard_b', 'S1'),
+        ('Mathématiques Générales', 'Mathématiques', 'mineur_ext_2cr', 'S1'),
+        ('Chimie Appliquée', 'Chimie', 'majeur', 'S2'),
+        ('Physique Appliquée', 'Physique', 'majeur', 'S2'),
+        ('Géologie Introductive', 'Géosciences', 'standard_a', 'S2'),
+        ('Thermodynamique Élémentaire', 'Physique', 'standard_b', 'S2'),
+        ('Biologie Générale', 'Biologie', 'mineur_ext_2cr', 'S2'),
+    ],
+}
 
-# Filiere d'origine (L2) -> portail suivi en L1 l'annee precedente.
-FILIERE_VERS_PORTAIL = {
-    'Biologie': 'BGC',
-    'Géosciences': 'BGC',
-    'Chimie': 'PCG',
-    'Physique': 'MIP',
-    'Informatique': 'MIP',
+# ── Departement transversal (langues, methodologie, insertion professionnelle) ──
+# Pas de chef : Departement.chef est facultatif, et un "chef de departement
+# d'anglais" n'aurait pas de sens academique. Un seul module transversal de
+# plus par classe et par semestre, EN PLUS du curriculum disciplinaire
+# ci-dessus (pas de substitution) — cf. construire_semestre().
+DEPT_TRANSVERSAL = 'Transversal'
+MODULE_TRANSVERSAL = {
+    ('L1', 'S1'): ('Méthodologie du Travail Universitaire', 'mineur_ext_1cr'),
+    ('L1', 'S2'): ('Anglais', 'mineur_ext_1cr'),
+    ('L2', 'S1'): ('Anglais', 'mineur_ext_2cr'),
+    ('L2', 'S2'): ('Anglais', 'mineur_ext_2cr'),
+    ('L3', 'S1'): ('Anglais', 'mineur_ext_2cr'),
+    ('L3', 'S2'): ('Entrepreneuriat et Insertion Professionnelle', 'mineur_ext_2cr'),
 }
 
 
@@ -599,103 +691,132 @@ FILIERE_VERS_PORTAIL = {
 # CONSTRUCTION D'UN SEMESTRE
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _creer_module_et_seances(classe, libelle, dept_nom, role, matiere_de, enseignants_de,
+                             planif, lundis, seances_buffer, stats, tag):
+    """
+    Reserve les creneaux du `role` donne (cf. ROLES), cree le Module, ses
+    AffectationModule typees CM/TD/TP et toutes ses Seance de la grille
+    hebdomadaire. Partage par construire_semestre() (modules disciplinaires)
+    et l'ajout systematique du module transversal (Anglais, Methodologie...).
+    Renvoie le Module cree, ou None si aucun creneau n'a pu etre reserve.
+    """
+    semestre = classe.semestre
+    vivier = enseignants_de[dept_nom]
+    matiere = matiere_de[dept_nom]
+    besoins = ROLES[role]
+
+    # 1. Reserver les creneaux et l'enseignant de chaque type de seance.
+    planning = []   # [(type_seance, enseignant, [(jour, bloc), ...], periodicite, occurrences, offset)]
+    heures = {'CM': 0, 'TD': 0, 'TP': 0}
+    for type_seance, nb_blocs, periodicite, occurrences, offset in besoins:
+        ens, suite = planif.reserver(classe, semestre, vivier, nb_blocs)
+        if ens is None:
+            stats['creneaux_introuvables'] += 1
+            continue
+        planning.append((type_seance, ens, suite, periodicite, occurrences, offset))
+        heures[type_seance] += nb_blocs * occurrences * 2
+
+    if not planning:
+        return None
+
+    # 2. Volume et credits DEDUITS du role (1 credit = 12h).
+    total = sum(heures.values())
+    credits = max(1, min(6, -(-total // 12)))
+
+    module = Module.objects.create(
+        libelle=libelle,
+        matiere=matiere,
+        semestre=semestre,
+        classe=classe,
+        credits=credits,
+        description=f"{libelle} — {classe.libelle} ({tag}).",
+        heures_cm=heures['CM'],
+        heures_td=heures['TD'],
+        heures_tp=heures['TP'],
+    )
+    stats['modules'] += 1
+
+    # 3. Une affectation typee par type de seance : CM, TD et TP sont
+    #    portes par des enseignants distincts du meme departement.
+    for type_seance, ens, _suite, _p, _o, _off in planning:
+        AffectationModule.objects.create(
+            module=module,
+            enseignant=ens,
+            type_seance=type_seance,
+            heures_prevues=float(heures[type_seance]),
+        )
+        stats['affectations'] += 1
+
+    # 4. Seances : la meme case chaque semaine, jusqu'a epuisement du quota.
+    for type_seance, ens, suite, periodicite, occurrences, offset in planning:
+        for n in range(occurrences):
+            semaine = offset + n * periodicite
+            if semaine >= len(lundis):
+                break
+            for jour, bloc in suite:
+                heure_debut, heure_fin = BLOCS[bloc]
+                seances_buffer.append(Seance(
+                    libelle=f"{type_seance} — {libelle}",
+                    module=module,
+                    enseignant=ens,
+                    classe=classe,
+                    annee=classe.annee,
+                    date_seance=lundis[semaine] + timedelta(days=jour),
+                    heure_debut=heure_debut,
+                    heure_fin=heure_fin,
+                    type_seance=type_seance,
+                    statut=STATUT_CONFIRME,
+                ))
+                stats['seances'] += 1
+
+    return module
+
+
 def construire_semestre(classe, curriculum, matiere_de, enseignants_de,
                         planif, seances_buffer, stats):
     """
-    Cree les 5 modules d'une classe pour un semestre, leurs affectations
-    typees CM/TD/TP, et toutes leurs seances de la grille hebdomadaire.
+    Cree les modules disciplinaires d'une classe pour un semestre a partir de
+    `curriculum`, plus systematiquement un module transversal (Anglais,
+    Methodologie du Travail Universitaire, Entrepreneuriat...).
 
-    `curriculum` : liste de 5 tuples (libelle, nom_du_departement_porteur).
-    Les modules sont apparies a MAQUETTE_SEMESTRE dans l'ordre : le premier
-    est le module majeur (cours long de 4h), les deux derniers sont mineurs.
+    `curriculum` : liste de tuples (libelle, departement_porteur, role). Le
+    `role` (cf. ROLES) determine le volume horaire et donc les credits du
+    module, independamment du departement qui le porte : un module "natal"
+    est 'majeur'/'standard_a'/'standard_b', un module "externe" (emprunte a
+    un autre departement) est 'mineur_ext_2cr'/'mineur_ext_1cr'.
     """
     semestre = classe.semestre
-    lundis = semaines_du_semestre(semestre.date_debut)
+    lundis = semaines_du_semestre(premier_lundi_a_partir_de(semestre.date_debut))
 
-    for (libelle, dept_nom), (role, besoins) in zip(curriculum, MAQUETTE_SEMESTRE):
-        vivier = enseignants_de[dept_nom]
-        matiere = matiere_de[dept_nom]
+    for libelle, dept_nom, role in curriculum:
+        _creer_module_et_seances(classe, libelle, dept_nom, role, matiere_de,
+                                 enseignants_de, planif, lundis, seances_buffer,
+                                 stats, tag=role)
 
-        # 1. Reserver les creneaux et l'enseignant de chaque type de seance.
-        planning = []   # [(type_seance, enseignant, [(jour, bloc), ...], periodicite, occurrences, offset)]
-        heures = {'CM': 0, 'TD': 0, 'TP': 0}
-        for type_seance, nb_blocs, periodicite, occurrences, offset in besoins:
-            ens, suite = planif.reserver(classe, semestre, vivier, nb_blocs)
-            if ens is None:
-                stats['creneaux_introuvables'] += 1
-                continue
-            planning.append((type_seance, ens, suite, periodicite, occurrences, offset))
-            heures[type_seance] += nb_blocs * occurrences * 2
-
-        if not planning:
-            continue
-
-        # 2. Volume et credits DEDUITS de la grille (1 credit = 12h).
-        total = sum(heures.values())
-        credits = max(1, min(6, -(-total // 12)))
-
-        module = Module.objects.create(
-            libelle=libelle,
-            matiere=matiere,
-            semestre=semestre,
-            classe=classe,
-            credits=credits,
-            description=f"{libelle} — {classe.libelle} ({role}).",
-            heures_cm=heures['CM'],
-            heures_td=heures['TD'],
-            heures_tp=heures['TP'],
-        )
-        stats['modules'] += 1
-
-        # 3. Une affectation typee par type de seance : CM, TD et TP sont
-        #    portes par des enseignants distincts du meme departement.
-        for type_seance, ens, _suite, _p, _o, _off in planning:
-            AffectationModule.objects.create(
-                module=module,
-                enseignant=ens,
-                type_seance=type_seance,
-                heures_prevues=float(heures[type_seance]),
-            )
-            stats['affectations'] += 1
-
-        # 4. Seances : la meme case chaque semaine, jusqu'a epuisement du quota.
-        for type_seance, ens, suite, periodicite, occurrences, offset in planning:
-            for n in range(occurrences):
-                semaine = offset + n * periodicite
-                if semaine >= len(lundis):
-                    break
-                for jour, bloc in suite:
-                    heure_debut, heure_fin = BLOCS[bloc]
-                    seances_buffer.append(Seance(
-                        libelle=f"{type_seance} — {libelle}",
-                        module=module,
-                        enseignant=ens,
-                        classe=classe,
-                        annee=classe.annee,
-                        date_seance=lundis[semaine] + timedelta(days=jour),
-                        heure_debut=heure_debut,
-                        heure_fin=heure_fin,
-                        type_seance=type_seance,
-                        statut=STATUT_CONFIRME,
-                    ))
-                    stats['seances'] += 1
+    # Module transversal : un de plus par classe et par semestre, en plus du
+    # curriculum disciplinaire (pas de substitution), identique pour toutes
+    # les filieres/portails d'un meme niveau.
+    niveau = f'L{classe.parcours.niveau}'
+    sem = 'S1' if semestre.libelle == 'Semestre 1' else 'S2'
+    libelle_t, role_t = MODULE_TRANSVERSAL[(niveau, sem)]
+    _creer_module_et_seances(classe, libelle_t, DEPT_TRANSVERSAL, role_t, matiere_de,
+                             enseignants_de, planif, lundis, seances_buffer,
+                             stats, tag='transversal')
 
 
 def creer_annee_complete(year_start, deps_names, filieres, parcours,
-                         enseignants_de, matiere_de, niveaux, stats,
-                         decalage_semaines=0):
+                         enseignants_de, matiere_de, niveaux, stats):
     """
-    Construit une annee academique : semestres, classes des `niveaux` demandes,
-    modules, affectations et emplois du temps complets.
-
-    `niveaux` permet de ne creer que les niveaux reellement peuples : l'annee
-    precedente n'accueille que les L1 et L2 (la promotion L3 d'alors est sortie
-    et n'existe pas dans le fichier des etudiants). Aucune classe vide n'est
-    donc generee.
+    Construit l'unique annee academique : semestres, classes des `niveaux`
+    demandes, modules, affectations et emplois du temps complets.
     """
-    # 15 semaines de cours par semestre : S1 a la rentree, S2 en fevrier.
-    debut_s1 = premier_lundi(year_start, 9) - timedelta(weeks=decalage_semaines)
+    # 15 semaines de cours par semestre : S1 a la rentree reelle (DATE_RENTREE),
+    # S2 en fevrier. La grille hebdomadaire s'ancre sur le premier lundi a
+    # partir de la date de debut du semestre (construire_semestre) : inutile
+    # de le faire ici aussi, sauf pour calculer la date de fin du semestre 1.
+    debut_s1 = DATE_RENTREE
     debut_s2 = premier_lundi(year_start + 1, 2)
+    ancre_s1 = premier_lundi_a_partir_de(debut_s1)
 
     annee = AnneeAcademique.objects.create(
         libelle=f"{year_start}-{year_start + 1}",
@@ -707,7 +828,7 @@ def creer_annee_complete(year_start, deps_names, filieres, parcours,
     semestre1 = Semestre.objects.create(
         libelle='Semestre 1',
         date_debut=debut_s1,
-        date_fin=debut_s1 + timedelta(weeks=NB_SEMAINES_SEMESTRE) - timedelta(days=3),
+        date_fin=ancre_s1 + timedelta(weeks=NB_SEMAINES_SEMESTRE) - timedelta(days=3),
         annee=annee,
     )
     semestre2 = Semestre.objects.create(
@@ -739,25 +860,28 @@ def creer_annee_complete(year_start, deps_names, filieres, parcours,
     planif = Planificateur()
     seances_buffer = []
 
-    # ── L2 / L3 : curriculum porte par le departement de la filiere ──────────
+    # ── L2 / L3 : curriculum porte par le departement precise pour chaque
+    #    module (le plus souvent celui de la filiere, mais certains modules
+    #    sont empruntes a un autre departement quand c'est pertinent — ex.
+    #    "Statistiques Biologiques" est porte par Mathematiques, pas Biologie).
     for niveau, table in (('L2', MODULES_L2_PAR_FILIERE), ('L3', MODULES_L3_PAR_FILIERE)):
         if niveau not in niveaux:
             continue
         for f_name in deps_names:
             for sem in ('S1', 'S2'):
-                curriculum = [(lib, f_name) for (lib, s) in table[f_name] if s == sem]
+                curriculum = [(lib, dept, role) for (lib, dept, role, s) in table[f_name] if s == sem]
                 construire_semestre(
                     classes[niveau][sem][f_name], curriculum,
                     matiere_de, enseignants_de, planif, seances_buffer, stats,
                 )
 
-    # ── L1 : tronc commun, 5 departements contributeurs par portail ──────────
+    # ── L1 : chaque portail a son propre programme (MODULES_L1_PAR_PORTAIL) ──
     if 'L1' in niveaux:
         for sem in ('S1', 'S2'):
             for code in PORTAILS_L1:
                 curriculum = [
-                    (f"{lib} ({code})", dept)
-                    for (lib, dept, s) in MODULES_L1_COMMUNS if s == sem
+                    (lib, dept, role)
+                    for (lib, dept, role, s) in MODULES_L1_PAR_PORTAIL[code] if s == sem
                 ]
                 construire_semestre(
                     classes['L1'][sem][code], curriculum,
@@ -839,15 +963,6 @@ def classe_pour(donnees_annee, niveau, groupe, sem):
     return table.get(groupe if groupe in table else 'Informatique')
 
 
-def niveau_precedent(niveau, groupe):
-    """Niveau et groupe suivis l'annee precedente. (None, None) pour un entrant L1."""
-    if niveau == 'L3':
-        return 'L2', groupe
-    if niveau == 'L2':
-        return 'L1', FILIERE_VERS_PORTAIL.get(groupe, 'MIP')
-    return None, None
-
-
 # ═════════════════════════════════════════════════════════════════════════════
 # EXECUTION
 # ═════════════════════════════════════════════════════════════════════════════
@@ -858,7 +973,7 @@ flush_data()
 print("[*] Faculte, departements et filieres...")
 faculte = FaculteFactory(libelle='Faculté des Sciences et Technologie')
 
-deps_names = ['Biologie', 'Chimie', 'Géosciences', 'Informatique', 'Physique']
+deps_names = ['Biologie', 'Chimie', 'Géosciences', 'Informatique', 'Mathématiques', 'Physique']
 deps = {n: DepartementFactory(libelle='Département ' + n, faculte=faculte) for n in deps_names}
 filieres = {n: FiliereFactory(libelle=n, departement=deps[n]) for n in deps_names}
 
@@ -893,6 +1008,33 @@ for f_name, dept in deps.items():
     matiere_de[f_name] = MatiereFactory(
         libelle='Matières Fondamentales ' + f_name, departement=dept)
 
+print("[*] Service commun des langues et competences transversales...")
+dept_transversal = DepartementFactory(
+    libelle='Service Commun des Langues et Compétences Transversales', faculte=faculte)
+matiere_de[DEPT_TRANSVERSAL] = MatiereFactory(
+    libelle='Compétences Transversales et Langues', departement=dept_transversal)
+enseignants_de[DEPT_TRANSVERSAL] = [
+    creer_enseignant('langues1', 'Aline', 'ProfLangues', dept_transversal,
+                     grade='Docteur', contrat='Vacataire'),
+    creer_enseignant('langues2', 'Boris', 'ProfLangues', dept_transversal,
+                     grade='Docteur', contrat='Vacataire'),
+    creer_enseignant('langues3', 'Chantal', 'ProfLangues', dept_transversal,
+                     grade='Ingénieur', contrat='Vacataire'),
+    creer_enseignant('langues4', 'Dorian', 'ProfLangues', dept_transversal,
+                     grade='Ingénieur', contrat='Vacataire'),
+    creer_enseignant('langues5', 'Estelle', 'ProfLangues', dept_transversal,
+                     grade='Docteur', contrat='Vacataire'),
+    creer_enseignant('langues6', 'Fabrice', 'ProfLangues', dept_transversal,
+                     grade='Ingénieur', contrat='Vacataire'),
+]
+# Un module transversal (Anglais, Methodologie, Entrepreneuriat) est du a
+# CHAQUE classe du niveau, chaque semestre : ~15 classes/semestre pour un
+# seul creneau chacune, un vivier de 3 enseignants suffirait en theorie
+# (3 x 15 creneaux = 45 disponibilites) mais les classes les plus chargees
+# (L1, certaines L3) n'ont plus qu'1-2 creneaux libres au moment ou leur tour
+# vient — 5 enseignants donnent assez de marge pour qu'un des cinq soit
+# toujours libre sur le peu de creneaux qui restent.
+
 stats = {
     'modules': 0, 'affectations': 0, 'seances': 0,
     'creneaux_introuvables': 0, 'annulees': 0, 'reportees': 0,
@@ -900,14 +1042,13 @@ stats = {
 }
 
 today = date.today()
-year_start = today.year if today.month >= 9 else today.year - 1
+year_start = DATE_RENTREE.year
 
-print(f"[*] Annee en cours {year_start}-{year_start + 1} (L1, L2, L3)...")
+print(f"[*] Annee academique {year_start}-{year_start + 1} (L1, L2, L3)...")
 with transaction.atomic():
     annee_n = creer_annee_complete(
         year_start, deps_names, filieres, parcours, enseignants_de, matiere_de,
         niveaux=('L1', 'L2', 'L3'), stats=stats,
-        decalage_semaines=DECALAGE_DEMO_SEMAINES,
     )
 
 # ── Referent L1 : coordinateur des 3 portails (BGC, MIP, PCG) ────────────────
@@ -921,16 +1062,6 @@ referent_classe.classes.set([
     annee_n['classes']['L1'][sem][code]
     for sem in ('S1', 'S2') for code in PORTAILS_L1
 ])
-
-# L'annee precedente n'accueille que les niveaux reellement occupes par la
-# cohorte actuelle : les L3 d'alors sont diplomes et absents du fichier, on ne
-# cree donc pas de classes L3 qui resteraient vides.
-print(f"[*] Annee precedente {year_start - 1}-{year_start} (L1, L2)...")
-with transaction.atomic():
-    annee_p = creer_annee_complete(
-        year_start - 1, deps_names, filieres, parcours, enseignants_de, matiere_de,
-        niveaux=('L1', 'L2'), stats=stats,
-    )
 
 # ── Seance mutualisee : un seminaire commun a deux classes L3 ────────────────
 print("[*] Seance mutualisee entre L3 Informatique et L3 Physique...")
@@ -958,7 +1089,7 @@ try:
         module=module_seminaire, enseignant=ens_seminaire,
         type_seance='CM', heures_prevues=24.0,
     )
-    lundis = semaines_du_semestre(sem2.date_debut)
+    lundis = semaines_du_semestre(premier_lundi_a_partir_de(sem2.date_debut))
     for n in range(6):   # 6 seances x 2 classes x 2h = 24h, le quota du module
         d = lundis[n] + timedelta(days=jour)
         seance_a = Seance.objects.create(
@@ -980,11 +1111,17 @@ try:
 except Exception as exc:
     print("    [!] Seance mutualisee non creee :", exc)
 
-# ── Cas limites : annulations et reports sur des seances deja passees ────────
+# ── Cas limites : annulations et reports ─────────────────────────────────────
+# Avec une rentree reelle (DATE_RENTREE), l'annee generee est presque toujours
+# entierement a venir par rapport a la date du jour : ne choisir que des
+# seances DEJA PASSEES (comme le faisait l'ancien modele avec son decalage de
+# demo) ne trouverait quasiment jamais rien. Une annulation ou un report est
+# tout aussi realiste sur une seance a venir (un enseignant indisponible la
+# semaine prochaine, une salle a liberer...) : on tire donc parmi toutes les
+# seances confirmees de l'annee, passees ou futures.
 print("[*] Annulations et reports (cas limites du moteur de validation)...")
 passees = list(
-    Seance.objects.filter(annee=annee_n['annee'], statut=STATUT_CONFIRME,
-                          date_seance__lt=today)
+    Seance.objects.filter(annee=annee_n['annee'], statut=STATUT_CONFIRME)
     .order_by('pk')[:400]
 )
 random.shuffle(passees)
@@ -1056,26 +1193,11 @@ for donnees in parser_etudiants():
         classe=classes_n[sem_courant],
     )
 
-    # Annee precedente : la cohorte etait un niveau en dessous (sauf entrants L1).
-    niveau_prec, groupe_prec = niveau_precedent(niveau, groupe)
-    a_un_passe = False
-    if niveau_prec:
-        for sem in ('S1', 'S2'):
-            classe_prec = classe_pour(annee_p, niveau_prec, groupe_prec, sem)
-            if not classe_prec:
-                continue
-            Inscription.objects.create(
-                etudiant=etudiant, classe=classe_prec, annee=annee_p['annee'],
-                type_inscription=Inscription.TYPE_INSCRIPTION,
-                date_inscription=classe_prec.semestre.date_debut,
-                statut='terminée',
-            )
-            stats['inscriptions'] += 1
-            a_un_passe = True
-
-    # Annee en cours : reinscription si l'etudiant a deja un passe academique.
-    type_courant = (Inscription.TYPE_REINSCRIPTION if a_un_passe
-                    else Inscription.TYPE_INSCRIPTION)
+    # Type d'inscription : nouvel entrant en L1, reinscription sinon (etudiant
+    # deja present a l'universite, meme sans ligne d'historique en base : il
+    # n'existe qu'une seule annee academique).
+    type_courant = (Inscription.TYPE_INSCRIPTION if niveau == 'L1'
+                    else Inscription.TYPE_REINSCRIPTION)
     for sem in ('S1', 'S2'):
         classe_courante = classes_n[sem]
         if not classe_courante:
@@ -1087,13 +1209,6 @@ for donnees in parser_etudiants():
             statut='active',
         )
         stats['inscriptions'] += 1
-
-# ── Archivage de l'annee precedente (apres creation de son historique) ───────
-print("[*] Archivage de l'annee precedente...")
-Inscription.objects.filter(annee=annee_p['annee']).update(statut='terminée')
-annee_prec = annee_p['annee']
-annee_prec.statut = 'archivée'
-annee_prec.save()
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CONTROLES D'INTEGRITE
@@ -1174,8 +1289,7 @@ print("")
 print("=" * 64)
 print("  RESUME DU JEU DE DONNEES")
 print("=" * 64)
-print("  Annees academiques :", AnneeAcademique.objects.count(),
-      "(archivees :", AnneeAcademique.objects.filter(statut='archivée').count(), ")")
+print("  Annees academiques :", AnneeAcademique.objects.count())
 print("  Semestre courant   :", annee_n['semestres'][sem_courant])
 print("  Classes            :", nb_classes, "— sans etudiant :", len(classes_vides))
 print("  Etudiants          :", Etudiant.objects.count())
