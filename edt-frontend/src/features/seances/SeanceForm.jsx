@@ -60,7 +60,7 @@ export default function SeanceForm({
   isPending,
   serverError = null,
 }) {
-  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm({
+  const { register, handleSubmit, control, setValue, watch, formState: { errors } } = useForm({
     resolver: zodResolver(seanceSchema),
     defaultValues: {
       semestre_id: semestreId ? String(semestreId) : '',
@@ -95,6 +95,15 @@ export default function SeanceForm({
   useEffect(() => {
     if (defaultValues?.module_id) setSelectedModuleId(defaultValues.module_id);
   }, [defaultValues, setSelectedModuleId]);
+
+  // Symétrique du useEffect ci-dessus, pour l'enseignant : sans lui, l'état
+  // qui pilote le panneau "Solde affectation" (useCascadeSelects) restait
+  // désynchronisé de l'enseignant réellement sélectionné en mode édition,
+  // tant que l'utilisateur n'avait pas re-cliqué manuellement sur le champ
+  // (CORRECTIONS_A_FAIRE.md, point 4).
+  useEffect(() => {
+    if (defaultValues?.enseignant_id) setSelectedEnseignantId(defaultValues.enseignant_id);
+  }, [defaultValues, setSelectedEnseignantId]);
 
   const onFormSubmit = (formData) => {
     onSubmit({
@@ -184,7 +193,12 @@ export default function SeanceForm({
         {errors.enseignant_id && <p className="text-xs text-destructive">{errors.enseignant_id.message}</p>}
         {/* Solde d'affectation de l'enseignant sélectionné */}
         {selectedEnseignantId && (() => {
-          const typeSeance = control._formValues?.type_seance;
+          // watch() (réactif) plutôt que control._formValues (lecture figée
+          // au dernier rendu) : sans ça, ce panneau pouvait continuer
+          // d'afficher le solde de l'ANCIEN type de séance après un
+          // changement de champ, alors que le NOUVEAU type est ce qui part
+          // réellement au serveur (CORRECTIONS_A_FAIRE.md, point 4).
+          const typeSeance = watch('type_seance');
           const solde = getSoldeAffectation(typeSeance);
           if (!solde) return null;
           const cls = solde.restantes > 2 ? 'text-green-600 dark:text-green-400'

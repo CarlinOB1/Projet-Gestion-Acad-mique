@@ -450,7 +450,7 @@ class Etudiant(models.Model):
                 classe=nouvelle_classe
             ).update(statut='terminée')
 
-            inscription, _ = Inscription.objects.get_or_create(
+            inscription, cree = Inscription.objects.get_or_create(
                 etudiant=self,
                 classe=nouvelle_classe,
                 defaults={
@@ -464,6 +464,22 @@ class Etudiant(models.Model):
                     'reference_externe': reference_externe,
                 },
             )
+
+            # get_or_create() n'applique ses `defaults` qu'à la création :
+            # si l'étudiant revient sur une classe déjà quittée, la ligne
+            # historique existe déjà (statut != 'active') et resterait sinon
+            # inchangée — l'étudiant se retrouverait rattaché à une classe
+            # sans aucune inscription active (CORRECTIONS_A_FAIRE.md, point 4).
+            # On la rouvre explicitement dans ce cas, sans toucher à une ligne
+            # déjà active (idempotence : rejouer sur la classe courante ne
+            # doit rien réécrire).
+            if not cree and inscription.statut != 'active':
+                inscription.type_inscription = Inscription.TYPE_REINSCRIPTION
+                inscription.statut = 'active'
+                inscription.date_inscription = date_inscription
+                if reference_externe:
+                    inscription.reference_externe = reference_externe
+                inscription.save()
 
             self.classe = nouvelle_classe
             self.save()
@@ -647,17 +663,30 @@ class Module(models.Model):
     def heures_max(self):
         return self.credits * 12
 
+    def nb_seances_liees(self):
+        return self.seance_set.count()
+
+    def nb_affectations_liees(self):
+        return self.affectations.count()
+
+    def deja_utilise(self):
+        """
+        True si ce module a déjà des séances programmées et/ou des
+        enseignants affectés — sert à avertir avant une modification qui
+        pourrait rendre ces éléments incohérents (aucun contrôle ne les
+        revalide automatiquement après coup).
+        """
+        return self.nb_seances_liees() > 0 or self.nb_affectations_liees() > 0
+
     def heures_consommees(self, exclure_seance_pk=None):
         seances = self.seance_set.filter(statut__in=['Confirmée', 'Reportée'])
         if exclure_seance_pk:
             seances = seances.exclude(pk=exclure_seance_pk)
-            
+
         total = 0
         for s in seances:
-            if s.statut == 'Reportée' and s.heure_debut_report and s.heure_fin_report:
-                total += Seance.calculer_duree_effective(s.heure_debut_report, s.heure_fin_report)
-            else:
-                total += Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
+            _, debut, fin = s.creneau_effectif()
+            total += Seance.calculer_duree_effective(debut, fin)
         return total
 
     def heures_effectuees(self):
@@ -678,10 +707,7 @@ class Module(models.Model):
         aujourdhui = date_type.today()
         total = 0
         for s in seances.filter(statut__in=['Confirmée', 'Reportée']):
-            if s.statut == 'Reportée' and s.heure_debut_report and s.heure_fin_report:
-                jour, debut, fin = s.date_report, s.heure_debut_report, s.heure_fin_report
-            else:
-                jour, debut, fin = s.date_seance, s.heure_debut, s.heure_fin
+            jour, debut, fin = s.creneau_effectif()
             if passees_seulement and jour and jour > aujourdhui:
                 continue
             total += Seance.calculer_duree_effective(debut, fin)
@@ -856,13 +882,11 @@ class AffectationModule(models.Model):
             seances = seances.filter(type_seance=self.type_seance)
         if exclure_seance_pk:
             seances = seances.exclude(pk=exclure_seance_pk)
-            
+
         total = 0
         for s in seances:
-            if s.statut == 'Reportée' and s.heure_debut_report and s.heure_fin_report:
-                total += Seance.calculer_duree_effective(s.heure_debut_report, s.heure_fin_report)
-            else:
-                total += Seance.calculer_duree_effective(s.heure_debut, s.heure_fin)
+            _, debut, fin = s.creneau_effectif()
+            total += Seance.calculer_duree_effective(debut, fin)
         return total
 
     def heures_effectuees(self):
@@ -966,6 +990,23 @@ class Seance(models.Model):
             duree_effective = duree_totale
         return duree_effective.total_seconds() / 3600
 
+    def creneau_effectif(self):
+        """
+        Retourne (jour, heure_debut, heure_fin) réellement occupés par cette
+        séance : le créneau de report si elle est 'Reportée' et que le
+        report est complet, sinon son créneau d'origine.
+
+        Centralise une règle jusqu'ici dupliquée trois fois à l'identique
+        (Module.heures_consommees, Module._heures, AffectationModule.
+        heures_consommees) — et absente de valider_volume_journalier
+        (EDT_app/validation_seance.py), à l'origine de
+        CORRECTIONS_A_FAIRE.md point 5 : une séance reportée continuait d'y
+        peser sur le quota de son ancien jour, jamais sur celui du nouveau.
+        """
+        if self.statut == 'Reportée' and self.heure_debut_report and self.heure_fin_report:
+            return self.date_report, self.heure_debut_report, self.heure_fin_report
+        return self.date_seance, self.heure_debut, self.heure_fin
+
     def _valider_creneau_report(self):
         """Délègue à validation_seance.valider_creneau_report()."""
         from EDT_app.validation_seance import valider_creneau_report
@@ -998,6 +1039,7 @@ class Seance(models.Model):
             valider_volume_module,
             valider_affectation,
             valider_volume_journalier,
+            valider_module_seance_liee,
         )
 
         valider_horaires(self.heure_debut, self.heure_fin)
@@ -1020,26 +1062,49 @@ class Seance(models.Model):
         if self.date_seance and self.classe_id:
             valider_bornes_semestre(self.date_seance, self.classe)
 
-        # Conflit enseignant : levé si la séance conflictuelle est la séance liée (mutualisée)
+        if self.module_id:
+            valider_module_seance_liee(
+                self.module_id,
+                self.seance_liee if self.seance_liee_id else None,
+                self.seances_associees.all() if self.pk else Seance.objects.none(),
+            )
+
+        # Créneau réellement occupé par la séance : celui du report si elle
+        # est 'Reportée' et que le report est complet, sinon l'original.
+        # Les contrôles de conflit et de volume ci-dessous portent tous sur
+        # ce créneau effectif (CORRECTIONS_A_FAIRE.md, point 5) — avant ce
+        # correctif, remplacer le module ou l'enseignant d'une séance déjà
+        # reportée revalidait le créneau d'origine, plus occupé, au lieu du
+        # créneau de report réellement utilisé.
+        jour_effectif, debut_effectif, fin_effectif = self.creneau_effectif()
+
+        # Séances exemptées du conflit enseignant car mutualisées avec
+        # celle-ci — dans les deux sens (CORRECTIONS_A_FAIRE.md, point 11).
+        pks_exemptes = list(
+            self.seances_associees.values_list('pk', flat=True)
+        ) if self.pk else []
+        if self.seance_liee_id:
+            pks_exemptes.append(self.seance_liee_id)
+
         valider_conflit_enseignant(
             self.enseignant,
-            self.date_seance,
-            self.heure_debut,
-            self.heure_fin,
+            jour_effectif,
+            debut_effectif,
+            fin_effectif,
             self.pk,
-            seance_liee_pk=self.seance_liee_id,
+            pks_exemptes=pks_exemptes,
         )
 
         valider_conflit_classe(
             self.classe if self.classe_id else None,
-            self.date_seance,
-            self.heure_debut,
-            self.heure_fin,
+            jour_effectif,
+            debut_effectif,
+            fin_effectif,
             self.pk,
         )
 
-        if self.heure_debut and self.heure_fin:
-            duree = self.calculer_duree_effective(self.heure_debut, self.heure_fin)
+        if debut_effectif and fin_effectif:
+            duree = self.calculer_duree_effective(debut_effectif, fin_effectif)
 
             if self.module_id:
                 valider_volume_module(self.module, duree, self.pk)
@@ -1051,9 +1116,9 @@ class Seance(models.Model):
 
             valider_volume_journalier(
                 self.classe if self.classe_id else None,
-                self.date_seance,
-                self.heure_debut,
-                self.heure_fin,
+                jour_effectif,
+                debut_effectif,
+                fin_effectif,
                 self.pk,
             )
 
@@ -1061,8 +1126,37 @@ class Seance(models.Model):
             self._valider_creneau_report()
 
     def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
+        """
+        Valide et enregistre dans une transaction qui verrouille d'abord les
+        séances existantes concernées par les contrôles de conflit/volume
+        (même enseignant, même classe, même module). Sans ce verrou, deux
+        requêtes concurrentes pouvaient chacune lire un état encore valide
+        avant l'écriture de l'autre, passer leurs contrôles indépendamment,
+        puis s'enregistrer toutes les deux — double-réservation ou
+        dépassement de volume que ces contrôles sont censés interdire
+        (CORRECTIONS_A_FAIRE.md, point 9). `select_for_update()` sérialise
+        ces deux requêtes : la seconde attend que la première ait validé,
+        écrit et libéré la transaction avant de relire un état à jour.
+        """
+        from django.db import transaction
+
+        with transaction.atomic():
+            filtres = models.Q()
+            if self.enseignant_id:
+                filtres |= models.Q(enseignant_id=self.enseignant_id)
+            if self.classe_id:
+                filtres |= models.Q(classe_id=self.classe_id)
+            if self.module_id:
+                filtres |= models.Q(module_id=self.module_id)
+            if filtres:
+                list(
+                    Seance.objects.select_for_update()
+                    .filter(filtres)
+                    .exclude(pk=self.pk)
+                    .values_list('pk', flat=True)
+                )
+            self.full_clean()
+            super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.module.libelle} - {self.date_seance}"

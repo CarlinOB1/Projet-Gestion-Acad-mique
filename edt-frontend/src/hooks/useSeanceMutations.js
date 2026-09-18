@@ -6,12 +6,28 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createSeance, updateSeance, deleteSeance, reporterSeance, publierSeance, depublierSeance, publierMasseSeances } from '@/api/seances';
 
+/**
+ * Invalide, en plus de ['seances'], les caches qui alimentent l'indicateur
+ * "Heures restantes" du module et le panneau "Solde affectation" de
+ * l'enseignant (SeanceForm.jsx) : sans ça, une séance qui consomme des
+ * heures ne rafraîchissait jamais ces indicateurs, qui restaient à leurs
+ * anciennes valeurs pour toute séance ouverte ensuite dans la session
+ * (CORRECTIONS_A_FAIRE.md, point 7). invalidateQueries filtre par préfixe
+ * de clé par défaut : ['modules'] invalide donc aussi ['modules', 'classe', id].
+ */
+const invaliderCachesSeance = (queryClient) => {
+  queryClient.invalidateQueries({ queryKey: ['seances'] });
+  queryClient.invalidateQueries({ queryKey: ['modules'] });
+  queryClient.invalidateQueries({ queryKey: ['affectations'] });
+  queryClient.invalidateQueries({ queryKey: ['affectations-module'] });
+};
+
 /** Crée une nouvelle séance. */
 export const useCreateSeance = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data) => createSeance(data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+    onSuccess: () => invaliderCachesSeance(queryClient),
   });
 };
 
@@ -20,7 +36,7 @@ export const useUpdateSeance = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }) => updateSeance(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+    onSuccess: () => invaliderCachesSeance(queryClient),
   });
 };
 
@@ -29,7 +45,7 @@ export const useDeleteSeance = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id) => deleteSeance(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+    onSuccess: () => invaliderCachesSeance(queryClient),
   });
 };
 
@@ -38,7 +54,7 @@ export const useReporterSeance = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }) => reporterSeance(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+    onSuccess: () => invaliderCachesSeance(queryClient),
   });
 };
 

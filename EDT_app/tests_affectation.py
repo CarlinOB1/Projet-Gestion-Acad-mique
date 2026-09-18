@@ -719,23 +719,30 @@ class AffectationInterDepartementModificationAPITest(TestCase):
         assert creation.status_code == 201, creation.data
         self.affectation_id = creation.data['id']
 
-    def test_impossible_de_reacceder_a_laffectation_hors_departement_creee(self):
+    def test_affectation_hors_departement_creee_reste_accessible(self):
         """
-        Découverte en écrivant ce test : perimetre.modules_autorises() ne
-        prolonge PAS, pour un chef, la même règle que pour un référent
-        (inclure les modules des classes qu'il gère même hors de son
-        département) — seule la branche `matiere__departement__in` s'applique
-        aux chefs. Résultat : le chef peut CRÉER une affectation
-        hors_departement (autorisé par le serializer), mais ne peut plus la
-        retrouver ensuite via l'API standard (GET/PATCH/DELETE) puisque
-        get_queryset() la filtre hors de son périmètre -> 404, alors même
-        qu'il vient de la créer avec succès.
+        CORRECTIONS_A_FAIRE.md, point 2, corrigé : perimetre.modules_autorises()
+        prolonge désormais aux chefs la même règle qu'aux référents (inclure
+        les modules des classes qu'ils dirigent, même hors de leur propre
+        département). Le chef peut donc relire ET modifier l'affectation
+        hors_departement qu'il vient de créer, plutôt que de la voir
+        disparaître (404) juste après sa création.
+
+        Le PATCH porte sur `heures_prevues`, pas sur `hors_departement` :
+        remettre `hors_departement` à False resterait refusé par
+        AffectationModuleSerializer.validate() (le module reste d'un autre
+        département) — une règle distincte, toujours en vigueur, qu'on ne
+        veut pas mélanger avec le périmètre testé ici.
         """
-        resp = self.client.patch(
+        resp_get = self.client.get(f'/api/affectations/{self.affectation_id}/')
+        self.assertEqual(resp_get.status_code, 200)
+
+        resp_patch = self.client.patch(
             f'/api/affectations/{self.affectation_id}/',
-            {'hors_departement': False}, format='json',
+            {'heures_prevues': 15}, format='json',
         )
-        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp_patch.status_code, 200, resp_patch.data)
+        self.assertEqual(resp_patch.data['heures_prevues'], 15)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -773,20 +780,19 @@ class AffectationModuleSuppressionTest(TestCase):
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(AffectationModule.objects.filter(pk=affectation.pk).exists())
 
-    def test_chef_dun_autre_departement_recoit_404(self):
+    def test_chef_dun_autre_departement_recoit_403(self):
         """
-        Contrairement à ModuleViewSet.perform_destroy (garde explicite sur la
-        suppression), AffectationModuleViewSet n'a pas de contrôle dédié :
-        seul le filtrage de get_queryset() via modules_autorises() s'applique.
-        Un objet hors périmètre est donc simplement absent du queryset -> 404,
-        pas un 403 explicite. Comportement à figer par un test, pas à supposer.
+        CORRECTIONS_A_FAIRE.md, point 3, corrigé : AffectationModuleViewSet a
+        désormais son propre contrôle dédié (perform_destroy), symétrique de
+        celui de ModuleViewSet, qui s'exécute maintenant que get_queryset()
+        ne filtre plus les routes de détail par périmètre.
         """
         affectation = AffectationModuleFactory(
             module=self.module_a, enseignant=self.enseignant_a,
             type_seance='CM', heures_prevues=10,
         )
         resp = _client_pour(self.chef_b).delete(f"/api/affectations/{affectation.pk}/")
-        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.status_code, 403)
         self.assertTrue(AffectationModule.objects.filter(pk=affectation.pk).exists())
 
     def test_referent_seul_refuse(self):

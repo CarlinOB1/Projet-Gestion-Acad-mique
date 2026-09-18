@@ -182,10 +182,17 @@ def valider_coherence_module_semestre(module, classe):
 
 
 def valider_conflit_enseignant(enseignant, date_seance, heure_debut, heure_fin,
-                                pk, seance_liee_pk=None):
+                                pk, pks_exemptes=None):
     """
     Détecte un conflit horaire pour l'enseignant sur le créneau demandé.
-    La séance liée (cours mutualisé, seance_liee_pk) est exclue du conflit.
+
+    Les séances mutualisées avec la séance en cours sont exemptées du
+    conflit via `pks_exemptes` — qui doit inclure la séance pointée par
+    `seance_liee` ET les séances qui pointent vers la séance en cours
+    (`seances_associees`), dans les deux sens (CORRECTIONS_A_FAIRE.md,
+    point 11 : sans le second sens, la séance "pivot" d'une paire
+    mutualisée se voyait refuser à tort comme en conflit avec sa propre
+    jumelle, qui ne pointe jamais "vers l'avant").
     """
     from EDT_app.models import Seance  # import local pour éviter la circularité
 
@@ -200,13 +207,35 @@ def valider_conflit_enseignant(enseignant, date_seance, heure_debut, heure_fin,
         statut__in=['Confirmée', 'Reportée'],
     ).exclude(pk=pk)
 
-    if seance_liee_pk:
-        qs = qs.exclude(pk=seance_liee_pk)
+    if pks_exemptes:
+        qs = qs.exclude(pk__in=pks_exemptes)
 
     if qs.exists():
         raise ValidationError(
             f"L'enseignant a déjà une séance le {date_seance} sur ce créneau."
         )
+
+
+def valider_module_seance_liee(module_id, seance_liee, seances_associees):
+    """
+    Une séance mutualisée doit porter le même module que sa jumelle, dans
+    les deux sens (`seance_liee` et `seances_associees`) : l'exemption de
+    conflit horaire n'a de justification métier que si les deux séances
+    enseignent la même matière au même enseignant sur le même créneau
+    (CORRECTIONS_A_FAIRE.md, point 6).
+    """
+    if seance_liee is not None and seance_liee.module_id != module_id:
+        raise ValidationError(
+            "Une séance mutualisée doit porter le même module que sa "
+            "séance liée."
+        )
+
+    for associee in seances_associees:
+        if associee.module_id != module_id:
+            raise ValidationError(
+                "Une séance mutualisée doit porter le même module que sa "
+                "séance liée."
+            )
 
 
 def valider_conflit_classe(classe, date_seance, heure_debut, heure_fin, pk):
@@ -294,24 +323,31 @@ def valider_affectation(module, enseignant, type_seance, duree, pk):
 def valider_volume_journalier(classe, date_seance, heure_debut, heure_fin, pk):
     """
     La somme des durées effectives des séances de la classe dans la journée
-    (séances 'Confirmée', hors la séance en cours) ne doit pas dépasser
-    MAX_HEURES_JOUR.
+    (séances 'Confirmée'/'Reportée', hors la séance en cours) ne doit pas
+    dépasser MAX_HEURES_JOUR.
+
+    Le jour et le créneau réellement occupés par chaque séance existante
+    sont déterminés via Seance.creneau_effectif() : une séance 'Reportée'
+    compte sur son jour de report, avec son créneau de report — jamais sur
+    son jour d'origine. Avant ce correctif (CORRECTIONS_A_FAIRE.md, point 5),
+    une séance reportée continuait de peser sur le quota de son ancien jour
+    (qu'elle n'occupait plus) et jamais sur celui de son nouveau jour.
     """
     from EDT_app.models import Seance
 
     if not (classe and date_seance and heure_debut and heure_fin):
         return
 
-    seances_jour = Seance.objects.filter(
+    seances_classe = Seance.objects.filter(
         classe=classe,
-        date_seance=date_seance,
         statut__in=['Confirmée', 'Reportée'],
     ).exclude(pk=pk)
 
-    total_jour = sum(
-        _calculer_duree_effective(s.heure_debut, s.heure_fin)
-        for s in seances_jour
-    ) + _calculer_duree_effective(heure_debut, heure_fin)
+    total_jour = _calculer_duree_effective(heure_debut, heure_fin)
+    for s in seances_classe:
+        jour, debut, fin = s.creneau_effectif()
+        if jour == date_seance:
+            total_jour += _calculer_duree_effective(debut, fin)
 
     if total_jour > MAX_HEURES_JOUR:
         raise ValidationError(

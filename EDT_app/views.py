@@ -603,9 +603,14 @@ class ModuleViewSet(BaseViewSet):
         qs          = super().get_queryset()
         user        = self.request.user
 
-        perimetre = modules_autorises(user)
-        if perimetre is not None:
-            qs = qs.filter(pk__in=perimetre.values_list('pk', flat=True))
+        # Restreint à `list` : sur les routes de détail, filtrer ici masquerait
+        # l'objet AVANT que perform_destroy() n'ait la main, produisant un 404
+        # au lieu du 403 explicite que cette même méthode lève déjà pour le
+        # même cas — incohérence corrigée (CORRECTIONS_A_FAIRE.md, point 3).
+        if self.action == 'list':
+            perimetre = modules_autorises(user)
+            if perimetre is not None:
+                qs = qs.filter(pk__in=perimetre.values_list('pk', flat=True))
 
         semestre_id = self.request.query_params.get('semestre_id')
         matiere_id  = self.request.query_params.get('matiere_id')
@@ -677,9 +682,15 @@ class AffectationModuleViewSet(BaseViewSet):
         qs = super().get_queryset()
         user = self.request.user
 
-        perimetre = modules_autorises(user)
-        if perimetre is not None:
-            qs = qs.filter(module_id__in=perimetre.values_list('pk', flat=True))
+        # Restreint à `list` : cf. ModuleViewSet.get_queryset / SeanceViewSet.
+        # get_queryset — filtrer aussi les routes de détail masquerait l'objet
+        # AVANT perform_update()/perform_destroy(), produisant un 404 au lieu
+        # du 403 explicite que ces méthodes lèvent désormais
+        # (CORRECTIONS_A_FAIRE.md, point 3).
+        if self.action == 'list':
+            perimetre = modules_autorises(user)
+            if perimetre is not None:
+                qs = qs.filter(module_id__in=perimetre.values_list('pk', flat=True))
 
         module_id = self.request.query_params.get('module_id')
         enseignant_id = self.request.query_params.get('enseignant_id')
@@ -698,6 +709,28 @@ class AffectationModuleViewSet(BaseViewSet):
         if semestre_id:
             qs = qs.filter(module__semestre_id=semestre_id)
         return qs
+
+    def _verifier_perimetre(self, instance):
+        """
+        validate() du serializer couvre déjà la création/modification via les
+        champs postés, mais ne s'exécute pas sur DELETE, et ne protège pas
+        contre un objet retrouvé par pk hors du périmètre courant maintenant
+        que get_queryset() ne filtre plus les routes de détail.
+        """
+        perimetre = modules_autorises(self.request.user)
+        if perimetre is not None and not perimetre.filter(pk=instance.module_id).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                "Vous ne pouvez gérer que les affectations de modules de votre périmètre."
+            )
+
+    def perform_update(self, serializer):
+        self._verifier_perimetre(serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._verifier_perimetre(instance)
+        instance.delete()
 
 
 class SeanceViewSet(BaseViewSet):
@@ -766,6 +799,49 @@ class SeanceViewSet(BaseViewSet):
             )
         return classes_ids
 
+    def _verifier_departement_module(self, module, enseignant):
+        """
+        Symétrique du garde-fou `hors_departement` d'AffectationModuleSerializer.
+        validate() : celui-ci exige explicitement ce flag avant qu'un chef
+        puisse affecter un enseignant à un module d'un autre département via
+        une AffectationModule, mais rien n'empêchait jusqu'ici de contourner
+        cette règle en assignant directement le même module et le même
+        enseignant à une séance (CORRECTIONS_A_FAIRE.md, point 8). On
+        n'autorise donc plus ce cas, sauf si une AffectationModule
+        `hors_departement=True` couvre déjà ce couple (module, enseignant) —
+        preuve que l'intervention inter-départements a bien été déclarée.
+        """
+        user = self.request.user
+        if user.is_superuser or user.groups.filter(name='responsable').exists():
+            return
+        if not (module and enseignant):
+            return
+        if not hasattr(user, 'profil') or not hasattr(user.profil, 'enseignant'):
+            return
+
+        chef = user.profil.enseignant
+        departements_diriges = list(
+            chef.departements_diriges.values_list('pk', flat=True)
+        )
+        if not departements_diriges:
+            return  # pas chef de département : rien à ajouter ici
+
+        if module.matiere.departement_id in departements_diriges:
+            return  # cas normal, module de son propre département
+
+        from EDT_app.models import AffectationModule
+        couverte = AffectationModule.objects.filter(
+            module=module, enseignant=enseignant, hors_departement=True,
+        ).exists()
+        if not couverte:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                "Ce module relève d'un autre département. Affectez d'abord "
+                "l'enseignant à ce module via une affectation avec "
+                "« intervention inter-départements » avant de planifier "
+                "une séance."
+            )
+
     def perform_create(self, serializer):
         """Vérifie que la classe cible est dans le périmètre autorisé."""
         classes_autorisees = self._get_classes_autorisees()
@@ -776,6 +852,10 @@ class SeanceViewSet(BaseViewSet):
                 raise PermissionDenied(
                     "Vous n'avez pas les droits pour planifier des séances dans cette classe."
                 )
+        self._verifier_departement_module(
+            serializer.validated_data.get('module'),
+            serializer.validated_data.get('enseignant'),
+        )
         serializer.save()
 
     def perform_update(self, serializer):
@@ -788,6 +868,11 @@ class SeanceViewSet(BaseViewSet):
                 raise PermissionDenied(
                     "Vous n'avez pas les droits pour modifier des séances dans cette classe."
                 )
+        instance = self.get_object()
+        self._verifier_departement_module(
+            serializer.validated_data.get('module', instance.module),
+            serializer.validated_data.get('enseignant', instance.enseignant),
+        )
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -820,7 +905,17 @@ class SeanceViewSet(BaseViewSet):
         # Filtre pour Chef de Département : union département + classes en référence
         # (mêmes droits que _get_classes_autorisees, pour ne jamais désynchroniser
         # ce qu'un chef peut lister de ce qu'il a le droit de créer/modifier).
-        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+        #
+        # Restreint à `list` : sur les routes de détail (retrieve/update/
+        # partial_update/destroy), filtrer ici masquerait l'objet AVANT que
+        # perform_update()/perform_destroy() n'aient la main, produisant un
+        # 404 au lieu du 403 explicite qu'un référent hors périmètre reçoit
+        # déjà pour le même cas — incohérence corrigée
+        # (CORRECTIONS_A_FAIRE.md, point 3). La lecture d'une séance hors
+        # département reste ainsi possible pour un chef (comme pour tout
+        # utilisateur actif, cf. get_permissions), seule l'écriture reste
+        # bloquée par perform_update/perform_destroy.
+        if self.action == 'list' and hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
             if enseignant.departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
                 classes_autorisees = self._get_classes_autorisees()

@@ -329,5 +329,125 @@ refonte du seed en cours).
 
 ---
 
+## 12. Ramener un étudiant sur une classe qu'il a quittée le laisse sans inscription active
+
+**Découvert le :** 2026-09-15, en écrivant les tests unitaires de
+`Etudiant.reinscrire()` (`EDT_app/tests_inscription.py`,
+`EtudiantReinscriptionTest`).
+
+**Problème :** si la scolarité corrige une erreur de saisie en ramenant un
+étudiant sur une classe qu'il a déjà quittée (L1 → L2 → retour L1),
+`reinscrire()` repointe bien `Etudiant.classe` sur L1, mais l'inscription L1
+reste au statut `terminée`. L'étudiant se retrouve rattaché à une classe pour
+laquelle il n'a **aucune inscription active** — état incohérent qu'aucun
+message ne signale.
+
+**Cause :** `Etudiant.reinscrire()` (`EDT_app/models.py`) clôture d'abord les
+inscriptions actives, puis appelle
+`Inscription.objects.get_or_create(etudiant=self, classe=nouvelle_classe, defaults={...})`.
+La contrainte d'unicité `('etudiant', 'classe')` fait que `get_or_create`
+**retrouve la ligne historique** au lieu d'en créer une : les `defaults`
+(dont `statut='active'`) ne sont alors pas appliqués, et la ligne est renvoyée
+telle quelle, toujours `terminée`. Le même mécanisme rend d'ailleurs un second
+appel sur la classe courante totalement sans effet (ni date, ni référence
+externe, ni type ne sont réécrits) — comportement voulu dans ce cas-là, mais
+c'est le même angle mort.
+
+**Piste de correction :** après le `get_or_create`, si la ligne existait déjà
+et que son statut n'est pas `active`, la rouvrir explicitement (repasser
+`statut='active'`, rafraîchir `date_inscription`) plutôt que de la renvoyer en
+l'état ; ou refuser explicitement la réinscription sur une classe déjà
+historisée, si la règle métier est qu'on ne revient jamais en arrière.
+
+**Statut :** reproduit et figé par
+`test_retour_sur_une_classe_deja_quittee_ne_reactive_pas_linscription`, qui
+documente le comportement actuel — ce test sera à mettre à jour le jour où la
+correction sera appliquée. Code applicatif inchangé.
+
+---
+
+## 13. Le plafond journalier d'une classe ignore le créneau de report d'une séance
+
+**Découvert le :** 2026-09-15, en écrivant les tests unitaires de
+`valider_volume_journalier` (`EDT_app/tests_volume_journalier.py`,
+`VolumeJournalierTest`).
+
+**Problème :** `valider_volume_journalier`
+(`EDT_app/validation_seance.py`) interroge les séances d'une classe pour un
+jour donné (`Seance.objects.filter(classe=..., date_seance=...)`), puis
+somme `s.heure_debut`/`s.heure_fin` — le créneau **d'origine**, jamais
+`s.heure_debut_report`/`s.heure_fin_report`. Une séance reportée continue
+donc de peser sur le quota de 6h/jour de son **ancien** jour, qu'elle
+n'occupe plus, et ne pèse jamais sur celui de son **nouveau** jour (celui de
+`date_report`), qu'elle occupe réellement — puisque la requête filtre sur
+`date_seance`, qui ne change jamais lors d'un report.
+
+**Cause :** contrairement à `Module.heures_consommees()`
+(`EDT_app/models.py:650-661`), qui bascule bien sur le créneau de report pour
+une séance `Reportée`, `valider_volume_journalier` ne lit jamais les trois
+champs de report. C'est un point de divergence de plus dans la même veine
+que les points 5 et 11 (traitement incohérent du report entre plusieurs
+fonctions de validation censées appliquer la même règle).
+
+**Conséquence concrète :** une classe peut se voir planifier plus de 6h
+réelles un jour donné (le jour de report d'une séance déjà comptée ailleurs
+n'a aucune limite effective ce jour-là), tandis que son ancien jour reste
+artificiellement bridé par des heures qui ne s'y déroulent plus.
+
+**Piste de correction :** dans `valider_volume_journalier`, appliquer la même
+bascule que `Module._heures`/`Module.heures_consommees()` — utiliser
+`date_report`/`heure_debut_report`/`heure_fin_report` pour toute séance
+`Reportée`, à la fois pour décider quel jour elle occupe (filtrer sur
+`date_report` plutôt que `date_seance` quand le statut est `Reportée`) et
+pour la durée sommée.
+
+**Statut :** reproduit et figé par
+`test_seance_reportee_reste_comptee_sur_son_ancien_jour_jamais_sur_le_nouveau`,
+qui documente le comportement actuel dans les deux sens (ancien jour /
+nouveau jour) — ce test sera à inverser le jour où la correction sera
+appliquée. Code applicatif inchangé.
+
+---
+
+## 14. Publier une séance en conflit plante au lieu de refuser proprement
+
+**Découvert le :** 2026-09-15, en écrivant les tests de
+`SeanceViewSet.publier` (`EDT_app/tests_seance_publication.py`,
+`SeancePublicationTest.test_publier_revalide_les_conflits`).
+
+**Problème :** `POST /api/seances/{id}/publier/` (passage `brouillon` →
+`Confirmée`) rejoue bien toutes les validations métier via
+`seance.full_clean()` (`EDT_app/views.py:921`) — la revalidation elle-même
+fonctionne (un conflit d'horaire créé après coup est bien détecté). Mais
+quand `full_clean()` échoue, l'erreur remonte comme une
+`django.core.exceptions.ValidationError` **brute**, non interceptée : une
+erreur serveur (500) au lieu d'une réponse 400 lisible.
+
+**Cause :** `publier()` appelle `seance.full_clean()` puis
+`seance.save(update_fields=['statut'])` sans aucun `try/except`. C'est la
+même catégorie de bug que le point 1 (`SeanceReportSerializer.save()`),
+mais sur un point d'entrée entièrement différent — et jusqu'ici non
+répertorié. Notamment, l'action jumelle `publier_masse()`
+(`EDT_app/views.py:942-980`) fait, elle, bien le travail : chaque
+`seance.full_clean()` y est protégé par un `try/except ValidationError`
+individuel à l'intérieur de la boucle, avec conversion en réponse 400
+(`erreurs`). Seule l'action `publier()` unitaire (et sa jumelle
+`depublier()`, qui n'appelle `full_clean()` sur aucun changement de statut
+sortant de brouillon donc moins exposée) n'a pas cette protection.
+
+**Piste de correction :** envelopper `seance.full_clean()` dans `publier()`
+avec le même patron try/except → `DRFValidationError` que `publier_masse()`
+utilise déjà pour une seule séance, ou centraliser cette conversion dans un
+helper partagé entre les trois actions (`publier`, `depublier`,
+`publier_masse`) pour éviter que ce genre d'écart ne se reproduise à la
+prochaine action ajoutée.
+
+**Statut :** reproduit et figé par `test_publier_revalide_les_conflits`, qui
+documente le comportement actuel (`assertRaises(ValidationError)` plutôt
+qu'un `resp.status_code == 400`) — ce test sera à corriger le jour où la
+protection sera ajoutée. Code applicatif inchangé.
+
+---
+
 <!-- Ajouter les prochains points ci-dessous, avec le même format
      (titre, date de découverte, problème, cause, piste de correction). -->

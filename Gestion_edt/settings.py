@@ -54,6 +54,9 @@ REST_FRAMEWORK = {
     # Pagination par défaut sur toutes les listes
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # Convertit toute django.core.exceptions.ValidationError non interceptée
+    # en réponse 400 DRF au lieu d'un 500 (cf. EDT_app/exception_handlers.py).
+    'EXCEPTION_HANDLER': 'EDT_app.exception_handlers.exception_handler',
     # Format de date cohérent avec les modèles Django
     'DATE_FORMAT'     : '%Y-%m-%d',
     'DATETIME_FORMAT' : '%Y-%m-%dT%H:%M:%S',
