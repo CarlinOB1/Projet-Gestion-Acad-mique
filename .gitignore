@@ -2,3 +2,24 @@
 /node_modules/
 .env
 composer.lock
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Secrets et configuration locale
+.env
+.env.*
+!.env.example
+
+# Fichiers téléversés (documents pédagogiques, photos de profil) : données
+# réelles, jamais versionnées
+/media/
+
+# Journaux applicatifs
+/logs/
+
+# Frontend
+/edt-frontend/node_modules/
+/edt-frontend/dist/
