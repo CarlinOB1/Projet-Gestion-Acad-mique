@@ -1,0 +1,5 @@
+# Outils de développement et de test
+-r requirements.txt
+factory_boy==3.3.3
+Faker==40.11.0
+pip-audit

@@ -23,3 +23,6 @@ __pycache__/
 # Frontend
 /edt-frontend/node_modules/
 /edt-frontend/dist/
+
+# Fichiers collectés par collectstatic
+/staticfiles/
