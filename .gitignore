@@ -26,3 +26,6 @@ __pycache__/
 
 # Fichiers collectés par collectstatic
 /staticfiles/
+
+# Cache fichier (compteurs de limitation de debit en production)
+/cache/

@@ -9,6 +9,10 @@ import { login } from '@/api/auth';
  * @returns {string}
  */
 export function parseLoginError(error) {
+  if (error?.response?.status === 429) {
+    return "Trop de tentatives de connexion. Patientez une minute avant de réessayer.";
+  }
+
   if (error?.response?.data) {
     const { non_field_errors, detail } = error.response.data;
 

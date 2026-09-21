@@ -86,7 +86,39 @@ REST_FRAMEWORK = {
     'DATE_FORMAT'     : '%Y-%m-%d',
     'DATETIME_FORMAT' : '%Y-%m-%dT%H:%M:%S',
     'TIME_FORMAT'     : '%H:%M',
+    # Limitation de débit. Les scopes 'login' et 'login_ip' sont utilisés par
+    # EDT_app/throttles.py (POST /api/token/) ; 'anon' et 'user' s'appliquent
+    # à toutes les autres vues. 'user' est généreux : une page du frontend
+    # enchaîne facilement 10 à 20 requêtes (listes paginées, listes en cascade).
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/min',
+        'user': '600/min',
+        'login': '5/min',
+        'login_ip': '120/min',
+    },
+    # Nombre de reverse proxies devant Django (Nginx = 1) : DRF lit alors la
+    # vraie adresse du client dans X-Forwarded-For au lieu de voir 127.0.0.1
+    # pour tout le monde. Nginx doit ÉCRASER cet en-tête (voir DEPLOIEMENT.md).
+    'NUM_PROXIES': env.int('DJANGO_NUM_PROXIES', default=1 if HTTPS_ENABLED else 0),
 }
+
+# Les compteurs de limitation de débit vivent dans le cache. Le cache mémoire
+# par défaut est propre à chaque processus : avec plusieurs workers Gunicorn,
+# chacun aurait son propre compteur et la limite réelle serait multipliée.
+# En production on utilise donc un cache fichier partagé par tous les workers.
+if DEBUG:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+            'LOCATION': env.str('DJANGO_CACHE_DIR', default=str(BASE_DIR / 'cache')),
+        }
+    }
 
 # L'API navigable (formulaires HTML auto-générés) n'a sa place qu'en développement.
 if not DEBUG:
@@ -95,10 +127,13 @@ if not DEBUG:
     ]
 
 SIMPLE_JWT = {
-    # Durée de vie du token d'accès : 8h (une journée de travail)
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
-    # Durée de vie du token de rafraîchissement : 7 jours
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    # Durée de vie du token d'accès : courte, car un jeton volé reste utilisable
+    # jusqu'à son expiration. Le frontend le renouvelle tout seul (client.js).
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
+    # Durée de vie du token de rafraîchissement : 1 jour, renouvelée à chaque
+    # rafraîchissement (rotation) : une session active reste ouverte, une
+    # session abandonnée expire.
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
     # Génère un nouveau refresh token à chaque refresh (rotation)
     'ROTATE_REFRESH_TOKENS': True,
     # Ajoute l'ancien refresh token à la blacklist après rotation
@@ -175,6 +210,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {'min_length': 10},
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',

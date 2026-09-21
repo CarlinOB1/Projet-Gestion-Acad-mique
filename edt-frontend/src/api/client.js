@@ -10,12 +10,45 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     const token = useAuthStore.getState().accessToken;
-    console.log('[API] token:', token ? token.slice(0, 20) + '...' : 'NULL');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
     },);
+
+// Un seul rafraîchissement à la fois. Quand le jeton d'accès expire, une page
+// lance plusieurs requêtes en parallèle : toutes reçoivent 401 en même temps.
+// Le serveur blackliste l'ancien refresh token dès le premier rafraîchissement
+// réussi ; sans ce partage, les appels suivants échoueraient et déconnecteraient
+// l'utilisateur alors que sa session est valide.
+let rafraichissementEnCours = null;
+
+function rafraichirLesJetons() {
+  if (!rafraichissementEnCours) {
+    rafraichissementEnCours = (async () => {
+      const refreshToken = useAuthStore.getState().refreshToken;
+
+      if (!refreshToken) {
+        throw new Error('Aucun refresh token disponible dans le store.');
+      }
+
+      const baseURL = import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
+      const response = await axios.post(
+        `${baseURL}/token/refresh/`,
+        { refresh: refreshToken }
+      );
+
+      useAuthStore.getState().setTokens({
+        accessToken: response.data.access,
+        refreshToken: response.data.refresh,
+      });
+      return response.data.access;
+    })().finally(() => {
+      rafraichissementEnCours = null;
+    });
+  }
+  return rafraichissementEnCours;
+}
 
 apiClient.interceptors.response.use(
   (response) => response,
@@ -26,20 +59,7 @@ apiClient.interceptors.response.use(
       originalRequest._isRetry = true;
 
       try {
-        const refreshToken = useAuthStore.getState().refreshToken;
-
-        if (!refreshToken) {
-          throw new Error('Aucun refresh token disponible dans le store.');
-        }
-
-        const baseURL = import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
-        const response = await axios.post(
-          `${baseURL}/token/refresh/`,
-          { refresh: refreshToken }
-        );
-
-        const newAccessToken = response.data.access;
-        useAuthStore.getState().setAccessToken(newAccessToken);
+        const newAccessToken = await rafraichirLesJetons();
 
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return apiClient(originalRequest);
