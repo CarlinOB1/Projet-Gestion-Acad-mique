@@ -60,6 +60,41 @@ def classes_autorisees(user):
     return Classe.objects.filter(perimetre)
 
 
+def _acces_illimite(user):
+    return user.is_superuser or user.groups.filter(name='responsable').exists()
+
+
+def restreindre_etudiants(user, qs):
+    """
+    Restreint un queryset d'Etudiant à ce que l'utilisateur a le droit de voir :
+    tout pour un responsable/admin, sa propre fiche pour un étudiant, sinon les
+    étudiants des classes de son périmètre (voir classes_autorisees).
+    """
+    if _acces_illimite(user):
+        return qs
+    profil = getattr(user, 'profil', None)
+    if profil is not None and hasattr(profil, 'etudiant'):
+        return qs.filter(pk=profil.etudiant.pk)
+    return qs.filter(classe__in=classes_autorisees(user))
+
+
+def restreindre_enseignants(user, qs):
+    """
+    Restreint un queryset d'Enseignant : rien pour un étudiant, le département
+    pour un enseignant simple. Chefs de département et référents gardent la
+    liste complète (les formulaires d'affectation et de séance en ont besoin) :
+    l'éventuel cadrage supplémentaire des chefs reste à la charge de la vue.
+    """
+    if _acces_illimite(user):
+        return qs
+    enseignant = _enseignant_courant(user)
+    if enseignant is None:
+        return qs.none()
+    if enseignant.departements_diriges.exists() or hasattr(enseignant, 'referent_classes'):
+        return qs
+    return qs.filter(departement=enseignant.departement)
+
+
 def modules_autorises(user):
     """
     Retourne le queryset des Module sur lesquels l'utilisateur a autorité,

@@ -13,7 +13,10 @@ from .models import (
     Matiere, Module, AffectationModule, Seance, ReferentClasse,
     DocumentPedagogique, Inscription,
 )
-from EDT_app.perimetre import modules_autorises
+from EDT_app.perimetre import (
+    classes_autorisees, modules_autorises,
+    restreindre_enseignants, restreindre_etudiants,
+)
 from EDT_app.serializers import (
     FaculteSerializer, DepartementSerializer, FiliereSerializer,
     ParcoursSerializer, AnneeAcademiqueSerializer, SemestreSerializer,
@@ -375,6 +378,10 @@ class EnseignantViewSet(BaseViewSet):
         qs      = super().get_queryset()
         user    = self.request.user
 
+        # Étudiant : aucun enseignant ; enseignant simple : son département.
+        # (Ce cadrage vaut aussi pour retrieve : fiche hors périmètre = 404.)
+        qs = restreindre_enseignants(user, qs)
+
         # Filtre pour Chef de Département — sauf demande explicite de la liste
         # complète (ex: formulaire d'affectation inter-départements, où le
         # chef doit pouvoir choisir un enseignant en dehors de son propre
@@ -456,22 +463,10 @@ class EtudiantViewSet(BaseViewSet):
         qs          = super().get_queryset()
         user        = self.request.user
 
-        # Filtre pour Chef de Département / Référent de classe(s)
-        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant') and \
-                not (user.is_superuser or user.groups.filter(name='responsable').exists()):
-            enseignant = user.profil.enseignant
-            departements_diriges = enseignant.departements_diriges.all()
-            est_referent = hasattr(enseignant, 'referent_classes')
-            if departements_diriges.exists() or est_referent:
-                # Union des deux périmètres, pas un choix exclusif : une personne
-                # cumulant chef de département et référent (ex: L1) doit voir les
-                # étudiants des deux périmètres, pas seulement de l'un des deux.
-                perimetre = Q()
-                if departements_diriges.exists():
-                    perimetre |= Q(classe__filiere__departement__in=departements_diriges)
-                if est_referent:
-                    perimetre |= Q(classe__in=enseignant.referent_classes.classes.all())
-                qs = qs.filter(perimetre)
+        # Étudiant : sa propre fiche ; enseignant simple : son département ;
+        # chef / référent : union de leurs périmètres ; responsable : tout.
+        # Vaut aussi pour retrieve : fiche hors périmètre = 404.
+        qs = restreindre_etudiants(user, qs)
 
         classe_id   = self.request.query_params.get('classe_id')
         filiere_id  = self.request.query_params.get('filiere_id')
@@ -558,6 +553,12 @@ class InscriptionViewSet(viewsets.ReadOnlyModelViewSet):
         profil = getattr(user, 'profil', None)
         if profil and hasattr(profil, 'etudiant') and not user.is_superuser:
             return qs.filter(etudiant=profil.etudiant)
+
+        # Les autres ne voient que les inscriptions des classes de leur périmètre
+        # (None = accès illimité : responsable / admin).
+        perimetre = classes_autorisees(user)
+        if perimetre is not None:
+            qs = qs.filter(classe__in=perimetre)
 
         etudiant_id = self.request.query_params.get('etudiant_id')
         annee_id    = self.request.query_params.get('annee_id')
