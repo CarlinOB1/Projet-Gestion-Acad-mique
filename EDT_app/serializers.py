@@ -1159,10 +1159,19 @@ class DocumentPedagogiqueSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         """
-        L'enseignant qui dépose un document doit avoir un lien réel avec le
-        module ciblé : y être affecté, y avoir une séance, ou diriger le
-        département de sa matière. Rien ne vérifiait ce lien jusqu'ici — un
-        compte enseignant pouvait attacher un fichier à n'importe quel module.
+        L'enseignant qui dépose (ou modifie) un document doit avoir un lien
+        réel avec le module ciblé — même périmètre que celui utilisé en
+        lecture par DocumentViewSet.get_queryset()/ModuleViewSet
+        (perimetre.modules_autorises()), pour que POST/PATCH n'ouvrent pas
+        plus large que ce que GET laisse déjà voir :
+          - chef de département : tout module de son département ;
+          - référent de classe(s) : les modules utilisés dans ses classes ;
+          - enseignant simple : uniquement les modules qu'il dispense
+            réellement (affectation ou séance) — pas tout le département,
+            modules_autorises() est ici trop large pour une écriture.
+        S'applique aussi bien à la création (module_id choisi) qu'à la
+        modification (module_id changé après coup) : les deux passent par
+        cette même validate().
         """
         request = self.context.get('request')
         user = getattr(request, 'user', None)
@@ -1180,17 +1189,29 @@ class DocumentPedagogiqueSerializer(serializers.ModelSerializer):
         if not module:
             return data
 
-        a_un_lien = (
-            AffectationModule.objects.filter(module=module, enseignant=enseignant).exists()
-            or Seance.objects.filter(module=module, enseignant=enseignant).exists()
-            or enseignant.departements_diriges.filter(pk=module.matiere.departement_id).exists()
+        from EDT_app.perimetre import modules_autorises
+        perimetre = modules_autorises(user)
+        dans_le_perimetre = perimetre is None or perimetre.filter(pk=module.pk).exists()
+
+        est_chef_ou_referent = (
+            enseignant.departements_diriges.exists()
+            or hasattr(enseignant, 'referent_classes')
         )
+        if est_chef_ou_referent:
+            a_un_lien = dans_le_perimetre
+        else:
+            a_un_lien = dans_le_perimetre and (
+                AffectationModule.objects.filter(module=module, enseignant=enseignant).exists()
+                or Seance.objects.filter(module=module, enseignant=enseignant).exists()
+            )
+
         if not a_un_lien:
             raise serializers.ValidationError({
                 'module_id': (
                     "Vous ne pouvez déposer un document que sur un module auquel vous "
-                    "êtes affecté, sur lequel vous avez une séance, ou qui appartient "
-                    "à un département que vous dirigez."
+                    "êtes affecté, sur lequel vous avez une séance, qui appartient à un "
+                    "département que vous dirigez, ou qui est utilisé dans une de vos "
+                    "classes en référence."
                 )
             })
         return data

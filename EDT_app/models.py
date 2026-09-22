@@ -7,6 +7,19 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 
+from EDT_app.fichiers import chemin_televerse, valider_fichier_televerse
+
+
+# Fonctions `upload_to` : au niveau du module, car les migrations les
+# référencent par leur nom.
+def chemin_photo(instance, filename):
+    return chemin_televerse('profils', filename)
+
+
+def chemin_document(instance, filename):
+    return chemin_televerse('documents/%Y/%m', filename)
+
+
 # ==========================================
 # 1. ORGANISATION ACADÉMIQUE
 # ==========================================
@@ -306,7 +319,7 @@ class Profil(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     genre = models.CharField(max_length=1, choices=GENRE_CHOICES, blank=False)
     telephone = models.CharField(max_length=20, blank=True)
-    photo = models.ImageField(upload_to='profils/', blank=True, null=True)
+    photo = models.ImageField(upload_to=chemin_photo, max_length=255, blank=True, null=True)
     statut = models.CharField(max_length=10, choices=STATUT_CHOICES, default='actif')
     motif_suspension = models.TextField(
         blank=True,
@@ -1195,17 +1208,8 @@ class ReferentClasse(models.Model):
 # ==========================================
 
 def validate_extension_fichier(value):
-    """Autorise uniquement certaines extensions."""
-    import os
-    from django.core.exceptions import ValidationError
-    EXTENSIONS_AUTORISEES = {
-        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'
-    }
-    ext = os.path.splitext(value.name)[1].lower()
-    if ext not in EXTENSIONS_AUTORISEES:
-        raise ValidationError(
-            f"Les fichiers de type '{ext}' ne sont pas autorisés. Formats acceptés : PDF, DOC, XLS, PPT, TXT."
-        )
+    """Extension, taille et contenu réel : voir EDT_app/fichiers.py."""
+    valider_fichier_televerse(value)
 
 
 class DocumentPedagogique(models.Model):
@@ -1223,7 +1227,8 @@ class DocumentPedagogique(models.Model):
 
     titre      = models.CharField(max_length=200, blank=False)
     fichier    = models.FileField(
-        upload_to='documents/%Y/%m/',
+        upload_to=chemin_document,
+        max_length=255,
         validators=[validate_extension_fichier],
     )
     type_doc   = models.CharField(max_length=20, choices=TYPE_CHOICES, default='cours')

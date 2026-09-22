@@ -263,6 +263,13 @@ export const getModules = async (params) => {
   return fetchAllPages("/modules/", params);
 };
 
+// Modules que l'enseignant connecté dispense réellement (affectations et/ou
+// séances) — non paginé côté serveur, contrairement à /modules/.
+export const getMesModules = async (params) => {
+  const response = await apiClient.get("/modules/mes_modules/", { params });
+  return extractList(response);
+};
+
 export const getModuleById = async (id) => {
   const response = await apiClient.get(`/modules/${id}/`);
   return response.data;

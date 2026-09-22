@@ -257,6 +257,17 @@ CORS_ALLOW_CREDENTIALS = True
 MEDIA_URL = '/media/'
 MEDIA_ROOT = env.str('DJANGO_MEDIA_ROOT', default=os.path.join(BASE_DIR, 'media'))
 
+# Documents pédagogiques : taille maximale d'un fichier (à garder alignée sur
+# `client_max_body_size` de Nginx et sur TAILLE_MAX_MO dans DocumentsPage.jsx).
+DOCUMENT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+# Les documents ne sont jamais servis par une URL /media/ publique : ils
+# passent par GET /api/documents/<id>/telecharger/, qui vérifie les droits.
+# En production, Django répond alors avec X-Accel-Redirect vers cet emplacement
+# Nginx `internal` (voir DEPLOIEMENT.md) ; vide (développement), Django envoie
+# lui-même le fichier.
+PROTECTED_MEDIA_INTERNAL_PREFIX = env.str('DJANGO_PROTECTED_MEDIA_PREFIX', default='')
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Durcissement HTTPS (actif dès que HTTPS_ENABLED)
 # ──────────────────────────────────────────────────────────────────────────────

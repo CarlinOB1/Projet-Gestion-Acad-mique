@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import FormModal from '@/components/shared/FormModal';
-import { getDocuments, createDocument, deleteDocument } from '@/api/documents';
-import { getModules } from '@/api/academique';
+import { getDocuments, createDocument, deleteDocument, downloadDocument } from '@/api/documents';
+import { getModules, getMesModules } from '@/api/academique';
 
 const getFileIcon = (filename) => {
   if (!filename) return <FileText className="h-5 w-5" />;
@@ -33,6 +33,10 @@ const TYPE_LABELS = {
   autre: 'Autre',
 };
 
+// Doit rester aligné sur DOCUMENT_MAX_UPLOAD_BYTES (Gestion_edt/settings.py) :
+// ici c'est un confort (refus immédiat), le serveur reste seul juge.
+const TAILLE_MAX_MO = 20;
+
 export default function DocumentsPage({ readOnly = false }) {
   const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
@@ -47,9 +51,23 @@ export default function DocumentsPage({ readOnly = false }) {
   const [moduleId, setModuleId] = useState('');
   const [file, setFile] = useState(null);
 
+  // Clé distincte de ['mes-modules'] (MesModulesPage.jsx) : ce hook charge
+  // TOUS les modules pour peupler le filtre de la liste des documents (on
+  // peut vouloir parcourir les documents d'un module qu'on ne dispense pas
+  // soi-même, tant que get_queryset() de DocumentViewSet les laisse voir).
   const { data: modules = [] } = useQuery({
-    queryKey: ['mes-modules'],
+    queryKey: ['modules', 'all'],
     queryFn: () => getModules(),
+  });
+
+  // Le sélecteur d'upload, lui, ne doit proposer que les modules que le
+  // serveur acceptera réellement (DocumentPedagogiqueSerializer.validate()) :
+  // pour un enseignant simple, uniquement ceux qu'il dispense. Sans ce
+  // filtre, `modules` (department entier) laissait choisir le module d'un
+  // collègue et l'upload échouait après coup avec un 400.
+  const { data: mesModules = [] } = useQuery({
+    queryKey: ['mes-modules', 'documents-upload'],
+    queryFn: () => getMesModules(),
   });
 
   const { data: documents = [], isLoading, isError } = useQuery({
@@ -77,6 +95,13 @@ export default function DocumentsPage({ readOnly = false }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['documents'] }),
   });
 
+  const [downloadError, setDownloadError] = useState(null);
+  const downloadMutation = useMutation({
+    mutationFn: downloadDocument,
+    onMutate: () => setDownloadError(null),
+    onError: () => setDownloadError("Le téléchargement a échoué. Réessayez, ou contactez l'administrateur si le problème persiste."),
+  });
+
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setTitre('');
@@ -90,6 +115,10 @@ export default function DocumentsPage({ readOnly = false }) {
   const handleFormSubmit = () => {
     if (!titre || !moduleId || !file) {
       setServerError('Veuillez remplir tous les champs obligatoires.');
+      return;
+    }
+    if (file.size > TAILLE_MAX_MO * 1024 * 1024) {
+      setServerError(`Le fichier dépasse la taille maximale de ${TAILLE_MAX_MO} Mo.`);
       return;
     }
 
@@ -155,6 +184,12 @@ export default function DocumentsPage({ readOnly = false }) {
         </div>
       </div>
 
+      {downloadError && (
+        <div role="alert" className="p-3 bg-destructive/10 text-destructive text-sm font-medium rounded-md border border-destructive/20">
+          {downloadError}
+        </div>
+      )}
+
       {/* Liste des documents */}
       {isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -200,10 +235,16 @@ export default function DocumentsPage({ readOnly = false }) {
                   {doc.taille && ` · ${(doc.taille / 1024 / 1024).toFixed(2)} MB`}
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" asChild>
-                    <a href={doc.fichier_url} target="_blank" rel="noopener noreferrer" download>
-                      <Download className="h-4 w-4" />
-                    </a>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                    title="Télécharger"
+                    aria-label={`Télécharger ${doc.titre}`}
+                    disabled={downloadMutation.isPending}
+                    onClick={() => downloadMutation.mutate(doc)}
+                  >
+                    <Download className="h-4 w-4" />
                   </Button>
                   {!readOnly && (
                     <Button 
@@ -259,8 +300,13 @@ export default function DocumentsPage({ readOnly = false }) {
                 <SelectValue placeholder="Sélectionner un module" />
               </SelectTrigger>
               <SelectContent>
+                {mesModules.length === 0 && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    Aucun module ne vous est actuellement affecté.
+                  </div>
+                )}
                 {Object.entries(
-                  modules.reduce((acc, mod) => {
+                  mesModules.reduce((acc, mod) => {
                     const classLabel = mod.classe?.libelle || 'Modules transverses / Sans classe';
                     if (!acc[classLabel]) acc[classLabel] = [];
                     acc[classLabel].push(mod);
@@ -314,7 +360,7 @@ export default function DocumentsPage({ readOnly = false }) {
                     <FileText className="h-5 w-5" />
                   </div>
                   <p className="text-sm font-medium mb-1">Cliquez pour sélectionner un fichier</p>
-                  <p className="text-xs text-muted-foreground">PDF, Word, Excel, PowerPoint, TXT (Max 50MB)</p>
+                  <p className="text-xs text-muted-foreground">PDF, Word, Excel, PowerPoint, TXT (Max 20 Mo)</p>
                   <Button variant="outline" size="sm" className="mt-4" onClick={() => fileInputRef.current?.click()}>
                     Parcourir les fichiers
                   </Button>

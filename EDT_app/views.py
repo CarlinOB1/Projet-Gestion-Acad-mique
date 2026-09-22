@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -387,11 +387,30 @@ class EnseignantViewSet(BaseViewSet):
         # chef doit pouvoir choisir un enseignant en dehors de son propre
         # département).
         tous_departements = self.request.query_params.get('tous_departements') in ('1', 'true', 'True')
-        if not tous_departements and hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
-            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+            est_chef_simple = (
+                departements_diriges.exists()
+                and not (user.is_superuser or user.groups.filter(name='responsable').exists())
+            )
+            if est_chef_simple and not tous_departements:
                 qs = qs.filter(departement__in=departements_diriges)
+            elif est_chef_simple:
+                # Consultation de tous les départements : celui du chef d'abord,
+                # puis les autres par ordre alphabétique, enseignants triés par nom.
+                qs = qs.annotate(
+                    hors_mon_departement=Case(
+                        When(departement__in=departements_diriges, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
+                    )
+                ).order_by(
+                    'hors_mon_departement',
+                    'departement__libelle',
+                    'profil__user__last_name',
+                    'profil__user__first_name',
+                )
 
         dept_id = self.request.query_params.get('departement_id')
         if dept_id:
@@ -654,14 +673,22 @@ class ModuleViewSet(BaseViewSet):
         from rest_framework.exceptions import PermissionDenied
         if not hasattr(request.user.profil, 'enseignant'):
             raise PermissionDenied("Seuls les enseignants peuvent voir leurs modules.")
-            
+
         enseignant = request.user.profil.enseignant
         # Un module affecte mais pas encore planifie doit apparaitre : on part
         # des affectations, completees par les seances effectivement assurees.
         modules = Module.objects.filter(
             Q(affectations__enseignant=enseignant) | Q(seance__enseignant=enseignant)
         ).distinct()
-        
+
+        # Sans ce filtre, un enseignant qui a dispensé plusieurs années
+        # cumule les modules de toutes ces années dans la même liste (cf.
+        # EnseignantRow.jsx / affectations, même correctif côté fiche
+        # enseignant). Le frontend passe l'année active par défaut.
+        annee_id = request.query_params.get('annee_id')
+        if annee_id:
+            modules = modules.filter(semestre__annee_id=annee_id)
+
         # On utilise le serializer de module
         serializer = self.get_serializer(modules, many=True)
         return Response(serializer.data)

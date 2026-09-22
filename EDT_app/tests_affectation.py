@@ -416,6 +416,35 @@ class AffectationInterDepartementAPITest(TestCase):
         profils_vus = {r['profil_id'] for r in resultats}
         self.assertIn(self.enseignant_math.profil_id, profils_vus)
 
+    def test_liste_tous_departements_met_le_departement_du_chef_en_premier(self):
+        """
+        Le chef consulte tous les enseignants, mais ceux de son departement
+        doivent apparaitre avant les autres. Un departement 'Chimie' passe
+        avant 'Informatique' par ordre alphabetique : sans tri dedie, ses
+        enseignants viendraient en tete.
+        """
+        from EDT_app.factories import DepartementFactory
+        dept_chimie = DepartementFactory(libelle='Département Chimie')
+        EnseignantFactory(departement=dept_chimie)
+        EnseignantFactory(departement=self.dept_info)
+
+        reponse = self.client.get('/api/enseignants/', {'tous_departements': 1})
+        self.assertEqual(reponse.status_code, 200)
+        resultats = reponse.data.get('results', reponse.data)
+        libelles = [r['departement']['libelle'] for r in resultats]
+
+        # Tous les departements sont presents...
+        self.assertEqual(
+            set(libelles),
+            {'Département Informatique', 'Département Chimie', 'Département Mathématiques'},
+        )
+        # ...le departement du chef est en tete, sans intercalation...
+        nb_info = libelles.count('Département Informatique')
+        self.assertEqual(libelles[:nb_info], ['Département Informatique'] * nb_info)
+        # ...puis les autres departements, regroupes par ordre alphabetique.
+        reste = libelles[nb_info:]
+        self.assertEqual(reste, sorted(reste))
+
 
 class PauseMeridienneTest(TestCase):
     """
