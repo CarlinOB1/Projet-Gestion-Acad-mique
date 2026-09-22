@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -593,8 +593,19 @@ class MatiereViewSet(BaseViewSet):
 
 
 class ModuleViewSet(BaseViewSet):
+    # `_seances_volume` précharge en une seule requête (par page, pas par
+    # module) les séances utilisées par Module.heures_consommees() /
+    # heures_effectuees() — sans ce Prefetch, ModuleSerializer déclenchait
+    # une requête par module et par champ heures_* (jusqu'à ~100 requêtes
+    # pour une page de 20 modules).
     queryset = Module.objects.select_related(
         'matiere__departement', 'semestre__annee'
+    ).prefetch_related(
+        Prefetch(
+            'seance_set',
+            queryset=Seance.objects.filter(statut__in=['Confirmée', 'Reportée']),
+            to_attr='_seances_volume',
+        ),
     ).all()
     serializer_class   = ModuleSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
@@ -670,6 +681,35 @@ class ModuleViewSet(BaseViewSet):
 # 4. PLANIFICATION
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _precharger_seances_volume(affectations):
+    """
+    Attache `_seances_volume` (liste de Seance Confirmée/Reportée) à chaque
+    AffectationModule de `affectations`, en une seule requête groupée sur
+    tous les couples (module_id, enseignant_id) de la page. Voir
+    AffectationModule._seances_pour_volume() (EDT_app/models.py), qui lit
+    cet attribut s'il est présent.
+    """
+    if not affectations:
+        return
+
+    filtres = Q()
+    for affectation in affectations:
+        filtres |= Q(module_id=affectation.module_id, enseignant_id=affectation.enseignant_id)
+
+    toutes_seances = list(
+        Seance.objects.filter(filtres, statut__in=['Confirmée', 'Reportée'])
+    )
+
+    for affectation in affectations:
+        seances = [
+            s for s in toutes_seances
+            if s.module_id == affectation.module_id and s.enseignant_id == affectation.enseignant_id
+        ]
+        if affectation.type_seance:
+            seances = [s for s in seances if s.type_seance == affectation.type_seance]
+        affectation._seances_volume = seances
+
+
 class AffectationModuleViewSet(BaseViewSet):
     queryset = AffectationModule.objects.select_related(
         'module__matiere__departement',
@@ -709,6 +749,25 @@ class AffectationModuleViewSet(BaseViewSet):
         if semestre_id:
             qs = qs.filter(module__semestre_id=semestre_id)
         return qs
+
+    def list(self, request, *args, **kwargs):
+        """
+        Précharge en une seule requête les séances utilisées par
+        AffectationModule.heures_consommees()/heures_effectuees() pour toute
+        la page — sans FK direct Seance -> AffectationModule, un Prefetch
+        standard (comme sur ModuleViewSet) n'est pas possible ; on fait donc
+        le regroupement manuellement ici, avant sérialisation. Sans ça,
+        AffectationModuleSerializer déclenchait plusieurs requêtes par ligne
+        (une par champ heures_*).
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        objets = page if page is not None else list(queryset)
+        _precharger_seances_volume(objets)
+        serializer = self.get_serializer(objets, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
     def _verifier_perimetre(self, instance):
         """
@@ -1109,38 +1168,35 @@ class SeanceViewSet(BaseViewSet):
                     from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("Ce semestre n'appartient pas à votre département.")
 
-        seances = Seance.objects.filter(
+        # Chargée une seule fois, comparée en Python (O(n²) borné par le
+        # nombre de séances confirmées du semestre — quelques centaines au
+        # plus) au lieu de relancer deux requêtes filter().exists() par
+        # séance : avant ce correctif, un semestre de N séances déclenchait
+        # jusqu'à 2N+1 requêtes SQL pour cette seule action.
+        seances = list(Seance.objects.filter(
             classe__semestre_id=semestre_id,
             statut='Confirmée',
         ).select_related(
             'enseignant__profil__user',
             'classe__filiere',
             'module__matiere',
-        ).order_by('date_seance', 'heure_debut')
+        ).order_by('date_seance', 'heure_debut'))
 
         conflits_ids = set()
 
-        for seance in seances:
-            # Conflit enseignant
-            conflit_ens = seances.filter(
-                enseignant=seance.enseignant,
-                date_seance=seance.date_seance,
-                heure_debut__lt=seance.heure_fin,
-                heure_fin__gt=seance.heure_debut,
-            ).exclude(pk=seance.pk)
+        for i, seance in enumerate(seances):
+            for autre in seances[i + 1:]:
+                if autre.date_seance != seance.date_seance:
+                    # Trié par date croissante : au-delà, plus aucune séance
+                    # ne peut partager cette date.
+                    break
+                if not (autre.heure_debut < seance.heure_fin and autre.heure_fin > seance.heure_debut):
+                    continue
+                if autre.enseignant_id == seance.enseignant_id or autre.classe_id == seance.classe_id:
+                    conflits_ids.add(seance.pk)
+                    conflits_ids.add(autre.pk)
 
-            # Conflit classe
-            conflit_cls = seances.filter(
-                classe=seance.classe,
-                date_seance=seance.date_seance,
-                heure_debut__lt=seance.heure_fin,
-                heure_fin__gt=seance.heure_debut,
-            ).exclude(pk=seance.pk)
-
-            if conflit_ens.exists() or conflit_cls.exists():
-                conflits_ids.add(seance.pk)
-
-        seances_en_conflit = seances.filter(pk__in=conflits_ids)
+        seances_en_conflit = [s for s in seances if s.pk in conflits_ids]
         serializer = SeanceSerializer(seances_en_conflit, many=True)
         return Response(
             {

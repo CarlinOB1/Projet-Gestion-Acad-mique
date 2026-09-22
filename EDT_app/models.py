@@ -678,13 +678,31 @@ class Module(models.Model):
         """
         return self.nb_seances_liees() > 0 or self.nb_affectations_liees() > 0
 
-    def heures_consommees(self, exclure_seance_pk=None):
-        seances = self.seance_set.filter(statut__in=['Confirmée', 'Reportée'])
-        if exclure_seance_pk:
-            seances = seances.exclude(pk=exclure_seance_pk)
+    def _seances_pour_volume(self):
+        """
+        Séances Confirmée/Reportée de ce module, pour heures_consommees()/
+        heures_effectuees(). Utilise la liste préchargée `_seances_volume`
+        (Prefetch de ModuleViewSet.queryset, EDT_app/views.py) si elle
+        existe — sans ce préchargement, chaque champ heures_* de
+        ModuleSerializer coûtait une requête par module sérialisé.
 
+        Pas de cache de repli sur l'instance ici (sciemment) : ce module est
+        mutable en dehors de la requête HTTP qui le sérialise — notamment
+        Seance.save() appelle module.heures_restantes() à chaque nouvelle
+        séance créée sur ce module (valider_volume_module). Mettre en cache
+        le premier résultat figerait un total obsolète pour tous les appels
+        suivants sur la même instance Python, y compris après l'ajout d'une
+        séance.
+        """
+        if hasattr(self, '_seances_volume'):
+            return self._seances_volume
+        return self.seance_set.filter(statut__in=['Confirmée', 'Reportée'])
+
+    def heures_consommees(self, exclure_seance_pk=None):
         total = 0
-        for s in seances:
+        for s in self._seances_pour_volume():
+            if exclure_seance_pk and s.pk == exclure_seance_pk:
+                continue
             _, debut, fin = s.creneau_effectif()
             total += Seance.calculer_duree_effective(debut, fin)
         return total
@@ -700,13 +718,14 @@ class Module(models.Model):
         qui a effectivement eu lieu : sinon un module planifié sur tout le
         semestre affiche 100 % dès la première semaine.
         """
-        return self._heures(self.seance_set.all(), passees_seulement=True)
+        return self._heures(self._seances_pour_volume(), passees_seulement=True)
 
     @staticmethod
     def _heures(seances, passees_seulement=False):
+        """`seances` doit déjà être filtré sur statut Confirmée/Reportée."""
         aujourdhui = date_type.today()
         total = 0
-        for s in seances.filter(statut__in=['Confirmée', 'Reportée']):
+        for s in seances:
             jour, debut, fin = s.creneau_effectif()
             if passees_seulement and jour and jour > aujourdhui:
                 continue
@@ -868,11 +887,22 @@ class AffectationModule(models.Model):
 
     # ── Méthodes utilitaires ─────────────────────────────────────────────────
 
-    def heures_consommees(self, exclure_seance_pk=None):
+    def _seances_pour_volume(self):
         """
-        Heures effectives des séances confirmées ou reportées rattachées à cette affectation.
-        Si l'affectation est typée, seules les séances du même type sont comptées.
+        Séances Confirmée/Reportée (du bon type si l'affectation est typée)
+        rattachées à cette affectation. Utilise la liste préchargée
+        `_seances_volume` (voir _precharger_seances_volume(), appelée par
+        AffectationModuleViewSet.list(), EDT_app/views.py) si elle existe.
+        Sans FK direct de Seance vers AffectationModule, un Prefetch Django
+        standard n'est pas possible ici — d'où le regroupement manuel côté
+        vue plutôt qu'un Prefetch sur le queryset.
+
+        Pas de cache de repli sur l'instance (voir Module._seances_pour_volume,
+        même raison : Seance.save() peut invalider ce total entre deux appels
+        sur la même instance Python via valider_affectation).
         """
+        if hasattr(self, '_seances_volume'):
+            return self._seances_volume
         seances = Seance.objects.filter(
             module=self.module_id,
             enseignant=self.enseignant_id,
@@ -880,24 +910,24 @@ class AffectationModule(models.Model):
         )
         if self.type_seance:
             seances = seances.filter(type_seance=self.type_seance)
-        if exclure_seance_pk:
-            seances = seances.exclude(pk=exclure_seance_pk)
+        return seances
 
+    def heures_consommees(self, exclure_seance_pk=None):
+        """
+        Heures effectives des séances confirmées ou reportées rattachées à cette affectation.
+        Si l'affectation est typée, seules les séances du même type sont comptées.
+        """
         total = 0
-        for s in seances:
+        for s in self._seances_pour_volume():
+            if exclure_seance_pk and s.pk == exclure_seance_pk:
+                continue
             _, debut, fin = s.creneau_effectif()
             total += Seance.calculer_duree_effective(debut, fin)
         return total
 
     def heures_effectuees(self):
         """Heures deja dispensees par cet enseignant sur cette affectation."""
-        seances = Seance.objects.filter(
-            module=self.module_id,
-            enseignant=self.enseignant_id,
-        )
-        if self.type_seance:
-            seances = seances.filter(type_seance=self.type_seance)
-        return Module._heures(seances, passees_seulement=True)
+        return Module._heures(self._seances_pour_volume(), passees_seulement=True)
 
     def heures_restantes(self, exclure_seance_pk=None):
         """Volume horaire encore disponible sur cette affectation."""
@@ -1160,6 +1190,17 @@ class Seance(models.Model):
 
     def __str__(self):
         return f"{self.module.libelle} - {self.date_seance}"
+
+    class Meta:
+        # Colonnes systematiquement filtrees par valider_conflit_enseignant/
+        # valider_conflit_classe (EDT_app/validation_seance.py) : sans ces
+        # index composites, MySQL ne peut s'appuyer que sur l'index de FK
+        # seul et doit rescanner toutes les seances de l'enseignant/la classe
+        # a chaque verification de conflit.
+        indexes = [
+            models.Index(fields=['enseignant', 'date_seance', 'statut']),
+            models.Index(fields=['classe', 'date_seance', 'statut']),
+        ]
 
 
 # ==========================================

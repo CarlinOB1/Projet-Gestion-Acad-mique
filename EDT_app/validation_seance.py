@@ -333,21 +333,28 @@ def valider_volume_journalier(classe, date_seance, heure_debut, heure_fin, pk):
     une séance reportée continuait de peser sur le quota de son ancien jour
     (qu'elle n'occupait plus) et jamais sur celui de son nouveau jour.
     """
+    from django.db.models import Q
     from EDT_app.models import Seance
 
     if not (classe and date_seance and heure_debut and heure_fin):
         return
 
-    seances_classe = Seance.objects.filter(
+    # Filtre en base sur le jour effectif (date_seance pour une séance
+    # 'Confirmée', date_report pour une séance 'Reportée') au lieu de charger
+    # tout l'historique de la classe et de filtrer en Python : le résultat de
+    # creneau_effectif() est identique, mais le nombre de lignes remontées
+    # passe de "toutes les séances de la classe" à "celles de ce jour-là".
+    seances_du_jour = Seance.objects.filter(
         classe=classe,
-        statut__in=['Confirmée', 'Reportée'],
+    ).filter(
+        Q(statut='Confirmée', date_seance=date_seance) |
+        Q(statut='Reportée', date_report=date_seance)
     ).exclude(pk=pk)
 
     total_jour = _calculer_duree_effective(heure_debut, heure_fin)
-    for s in seances_classe:
-        jour, debut, fin = s.creneau_effectif()
-        if jour == date_seance:
-            total_jour += _calculer_duree_effective(debut, fin)
+    for s in seances_du_jour:
+        _, debut, fin = s.creneau_effectif()
+        total_jour += _calculer_duree_effective(debut, fin)
 
     if total_jour > MAX_HEURES_JOUR:
         raise ValidationError(
