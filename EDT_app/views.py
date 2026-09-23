@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -901,38 +902,80 @@ class SeanceViewSet(BaseViewSet):
                 "une séance."
             )
 
+    def _locker_pour_validation(self, enseignants=(), classes=()):
+        """
+        Verrouille (SELECT ... FOR UPDATE) les lignes Enseignant/Classe
+        concernées avant de lancer les validations de conflit/volume
+        (valider_conflit_enseignant, valider_conflit_classe,
+        valider_volume_module, valider_affectation, valider_volume_journalier).
+
+        Sans ce verrou, deux requêtes concurrentes portant sur le même
+        enseignant ou la même classe peuvent chacune lire un état encore
+        valide avant l'écriture de l'autre, passer leurs contrôles
+        indépendamment, puis s'enregistrer toutes les deux — double
+        réservation ou dépassement de volume que l'application est censée
+        interdire (CORRECTIONS_A_FAIRE.md, point 9). À appeler uniquement à
+        l'intérieur d'une transaction.atomic().
+
+        Ordre de verrouillage toujours identique (Enseignant puis Classe,
+        chacun trié par pk) pour éviter les deadlocks entre deux appels
+        concurrents portant sur des ensembles qui se recoupent partiellement.
+        """
+        from EDT_app.models import Enseignant, Classe
+
+        ens_ids = {e.pk for e in enseignants if e}
+        if ens_ids:
+            list(Enseignant.objects.select_for_update().filter(pk__in=ens_ids).order_by('pk'))
+
+        classe_ids = {c.pk for c in classes if c}
+        if classe_ids:
+            list(Classe.objects.select_for_update().filter(pk__in=classe_ids).order_by('pk'))
+
     def perform_create(self, serializer):
         """Vérifie que la classe cible est dans le périmètre autorisé."""
-        classes_autorisees = self._get_classes_autorisees()
-        if classes_autorisees is not None:  # None = accès total
+        with transaction.atomic():
+            classes_autorisees = self._get_classes_autorisees()
             classe = serializer.validated_data.get('classe')
-            if classe and classe.id not in classes_autorisees:
-                from rest_framework.exceptions import PermissionDenied
-                raise PermissionDenied(
-                    "Vous n'avez pas les droits pour planifier des séances dans cette classe."
-                )
-        self._verifier_departement_module(
-            serializer.validated_data.get('module'),
-            serializer.validated_data.get('enseignant'),
-        )
-        serializer.save()
+            if classes_autorisees is not None:  # None = accès total
+                if classe and classe.id not in classes_autorisees:
+                    from rest_framework.exceptions import PermissionDenied
+                    raise PermissionDenied(
+                        "Vous n'avez pas les droits pour planifier des séances dans cette classe."
+                    )
+            enseignant = serializer.validated_data.get('enseignant')
+            self._locker_pour_validation(enseignants=[enseignant], classes=[classe])
+            self._verifier_departement_module(
+                serializer.validated_data.get('module'),
+                enseignant,
+            )
+            serializer.save()
 
     def perform_update(self, serializer):
         """Même vérification à la mise à jour."""
-        classes_autorisees = self._get_classes_autorisees()
-        if classes_autorisees is not None:
-            classe = serializer.validated_data.get('classe', self.get_object().classe)
-            if classe and classe.id not in classes_autorisees:
-                from rest_framework.exceptions import PermissionDenied
-                raise PermissionDenied(
-                    "Vous n'avez pas les droits pour modifier des séances dans cette classe."
-                )
-        instance = self.get_object()
-        self._verifier_departement_module(
-            serializer.validated_data.get('module', instance.module),
-            serializer.validated_data.get('enseignant', instance.enseignant),
-        )
-        serializer.save()
+        with transaction.atomic():
+            instance = self.get_object()
+            classes_autorisees = self._get_classes_autorisees()
+            classe = serializer.validated_data.get('classe', instance.classe)
+            if classes_autorisees is not None:
+                if classe and classe.id not in classes_autorisees:
+                    from rest_framework.exceptions import PermissionDenied
+                    raise PermissionDenied(
+                        "Vous n'avez pas les droits pour modifier des séances dans cette classe."
+                    )
+            enseignant = serializer.validated_data.get('enseignant', instance.enseignant)
+            # Verrouille l'ancien ET le nouvel enseignant/classe si l'un ou
+            # l'autre change : un remplacement d'enseignant/module doit aussi
+            # se sérialiser avec toute autre opération concurrente touchant
+            # l'ancien couple, pas seulement le nouveau.
+            self._locker_pour_validation(
+                enseignants=[enseignant, instance.enseignant],
+                classes=[classe, instance.classe],
+            )
+            self._verifier_departement_module(
+                serializer.validated_data.get('module', instance.module),
+                enseignant,
+            )
+            serializer.save()
 
     def perform_destroy(self, instance):
         """Vérifie que la classe cible de la séance est dans le périmètre autorisé avant suppression."""
@@ -1044,13 +1087,17 @@ class SeanceViewSet(BaseViewSet):
         Le statut passe automatiquement à 'Reportée'.
         Toutes les validations du modèle sont réappliquées sur le nouveau créneau.
         """
-        seance     = self.get_object()
-        serializer = SeanceReportSerializer(
-            data=request.data,
-            context={'seance': seance},
-        )
-        serializer.is_valid(raise_exception=True)
-        seance_maj = serializer.save()
+        seance = self.get_object()
+        with transaction.atomic():
+            self._locker_pour_validation(
+                enseignants=[seance.enseignant], classes=[seance.classe],
+            )
+            serializer = SeanceReportSerializer(
+                data=request.data,
+                context={'seance': seance},
+            )
+            serializer.is_valid(raise_exception=True)
+            seance_maj = serializer.save()
         return Response(
             SeanceSerializer(seance_maj).data,
             status=status.HTTP_200_OK,
@@ -1070,10 +1117,14 @@ class SeanceViewSet(BaseViewSet):
         if seance.statut != 'brouillon':
             from rest_framework.exceptions import ValidationError
             raise ValidationError("Seules les séances en brouillon peuvent être publiées.")
-        
-        seance.statut = 'Confirmée'
-        seance.full_clean()  # Rejoue toutes les validations (dont les conflits)
-        seance.save(update_fields=['statut'])
+
+        with transaction.atomic():
+            self._locker_pour_validation(
+                enseignants=[seance.enseignant], classes=[seance.classe],
+            )
+            seance.statut = 'Confirmée'
+            seance.full_clean()  # Rejoue toutes les validations (dont les conflits)
+            seance.save(update_fields=['statut'])
         return Response(SeanceSerializer(seance).data, status=status.HTTP_200_OK)
 
     @action(
@@ -1109,12 +1160,15 @@ class SeanceViewSet(BaseViewSet):
         if len(seances) != len(seance_ids):
             return Response({'detail': 'Certaines séances sont introuvables ou ne sont pas en brouillon.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from django.db import transaction
         from django.core.exceptions import ValidationError
-        
+
         erreurs = []
         try:
             with transaction.atomic():
+                self._locker_pour_validation(
+                    enseignants=[s.enseignant for s in seances],
+                    classes=[s.classe for s in seances],
+                )
                 for seance in seances:
                     seance.statut = 'Confirmée'
                     try:

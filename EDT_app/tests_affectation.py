@@ -470,11 +470,23 @@ class InscriptionTest(TestCase):
 
     def setUp(self):
         from EDT_app.factories import ClasseFactory, EtudiantFactory, ParcoursFactory
+        # classe_l2 est sur l'année académique qui suit directement celle de
+        # classe_l1 : Etudiant.reinscrire() n'accepte plus, pour un passage
+        # de niveau au sein d'un même cycle, qu'une progression normale
+        # (année suivante, niveau immédiatement supérieur) —
+        # CORRECTIONS_A_FAIRE.md, point 15.
         self.classe_l1 = ClasseFactory(parcours=ParcoursFactory(
             type_parcours='Licence', niveau=1))
+        annee_suivante = AnneeAcademiqueFactory(
+            libelle='2026-2027',
+            date_debut=date(2026, 9, 1), date_fin=date(2027, 6, 30),
+        )
         self.classe_l2 = ClasseFactory(
             parcours=ParcoursFactory(type_parcours='Licence', niveau=2),
-            semestre=self.classe_l1.semestre,
+            semestre=Semestre1Factory(
+                annee=annee_suivante,
+                date_debut=date(2026, 9, 1), date_fin=date(2027, 1, 31),
+            ),
         )
         self.etudiant = EtudiantFactory(classe=self.classe_l1)
 
@@ -922,6 +934,30 @@ class AffectationModuleQuotaMethodesTest(TestCase):
         self._creer_seance(-10, time(9, 0), time(11, 0))               # 2h comptées
         annulee = self._creer_seance(-5, time(14, 15), time(16, 15))   # 2h, puis annulée
         Seance.objects.filter(pk=annulee.pk).update(statut='Annulée')
+
+        self.assertEqual(affectation.heures_consommees(), 2)
+        self.assertEqual(affectation.heures_restantes(), 8)
+
+    def test_cours_mutualise_ne_compte_quune_fois(self):
+        """
+        Symétrique du test module : un cours mutualisé entre deux classes ne
+        doit consommer qu'une fois le quota de l'affectation, pas deux
+        (CORRECTIONS_A_FAIRE.md, point 16).
+        """
+        from EDT_app.factories import SeanceFactory
+        affectation = AffectationModuleFactory(
+            module=self.module, enseignant=self.enseignant,
+            type_seance='CM', heures_prevues=10,
+        )
+        autre_classe = ClasseFactory(semestre=self.sem, annee=self.annee)
+
+        pivot = self._creer_seance(-10, time(9, 0), time(11, 0))  # 2h, classe 1
+        SeanceFactory(
+            module=self.module, classe=autre_classe, annee=self.annee,
+            enseignant=self.enseignant, date_seance=pivot.date_seance,
+            heure_debut=pivot.heure_debut, heure_fin=pivot.heure_fin,
+            type_seance='CM', statut='Confirmée', seance_liee=pivot,
+        )  # même créneau, classe 2 — jumelle mutualisée
 
         self.assertEqual(affectation.heures_consommees(), 2)
         self.assertEqual(affectation.heures_restantes(), 8)

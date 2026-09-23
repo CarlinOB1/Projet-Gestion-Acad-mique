@@ -158,6 +158,27 @@ class ModuleQuotaMethodesTest(TestCase):
         self.assertEqual(self.module.heures_consommees(), 4)
         self.assertEqual(affectation.heures_consommees(), 2)
 
+    def test_cours_mutualise_ne_compte_quune_fois(self):
+        """
+        Un cours mutualisé entre deux classes (deux Seance liées par
+        seance_liee, même module/enseignant/créneau) ne doit être compté
+        qu'une fois — pas deux — sur le volume du module.
+        CORRECTIONS_A_FAIRE.md, point 16 : avant dédoublonnage, un cours de
+        2h mutualisé entre deux classes comptait pour 4h.
+        """
+        autre_classe = ClasseFactory(semestre=self.sem, annee=self.annee)
+
+        pivot = self._creer_seance(-10, time(9, 0), time(11, 0))  # 2h, classe 1
+        SeanceFactory(
+            module=self.module, classe=autre_classe, annee=self.annee,
+            enseignant=self.enseignant, date_seance=pivot.date_seance,
+            heure_debut=pivot.heure_debut, heure_fin=pivot.heure_fin,
+            type_seance="CM", statut="Confirmée", seance_liee=pivot,
+        )  # même créneau, classe 2 — jumelle mutualisée
+
+        self.assertEqual(self.module.heures_consommees(), 2)
+        self.assertEqual(self.module.heures_restantes(), 34)
+
     def test_pause_courte_deduite_puis_creneau_de_report_prioritaire(self):
         """
         Deux propriétés en une, sur la même séance :

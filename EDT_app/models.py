@@ -430,6 +430,43 @@ class Etudiant(models.Model):
                 "appartenant à une année académique archivée."
             )
 
+    def _valider_progression(self, nouvelle_classe):
+        """
+        N'encadre que le passage vers un niveau strictement supérieur du même
+        cycle (Licence, Master ou Doctorat) : dans ce seul cas, seule l'année
+        académique qui suit directement et le niveau immédiatement supérieur
+        sont acceptés (pas de saut d'année, pas de saut de niveau).
+
+        Hors de ce cas précis — retour en arrière (correction manuelle d'une
+        erreur de saisie, toujours permise) ou changement de cycle (ex. L3 ->
+        M1, qui relève d'une nouvelle admission, pas d'une progression
+        automatique) — cette méthode ne s'applique pas
+        (CORRECTIONS_A_FAIRE.md, point 15).
+        """
+        ancien_parcours = self.classe.parcours
+        nouveau_parcours = nouvelle_classe.parcours
+
+        if nouveau_parcours.type_parcours != ancien_parcours.type_parcours:
+            return
+        if nouveau_parcours.niveau <= ancien_parcours.niveau:
+            return
+
+        if nouveau_parcours.niveau != ancien_parcours.niveau + 1:
+            raise ValidationError(
+                f"Passage refusé : {nouvelle_classe} saute un niveau. "
+                f"Depuis {self.classe}, seul le niveau "
+                f"{ancien_parcours.niveau + 1} est accessible."
+            )
+
+        ancienne_annee_debut = int(self.classe.annee.libelle.split('-')[0])
+        nouvelle_annee_debut = int(nouvelle_classe.annee.libelle.split('-')[0])
+        if nouvelle_annee_debut != ancienne_annee_debut + 1:
+            raise ValidationError(
+                f"Passage refusé : {nouvelle_classe} ne correspond pas à "
+                f"l'année académique qui suit directement "
+                f"{self.classe.annee.libelle}."
+            )
+
     def reinscrire(self, nouvelle_classe, date_inscription=None,
                    reference_externe=''):
         """
@@ -446,6 +483,10 @@ class Etudiant(models.Model):
 
         with transaction.atomic():
             deja_inscrit = self.inscriptions.exists()
+
+            if deja_inscrit and nouvelle_classe.pk != self.classe_id:
+                self._valider_progression(nouvelle_classe)
+
             self.inscriptions.filter(statut='active').exclude(
                 classe=nouvelle_classe
             ).update(statut='terminée')
@@ -695,8 +736,10 @@ class Module(models.Model):
         séance.
         """
         if hasattr(self, '_seances_volume'):
-            return self._seances_volume
-        return self.seance_set.filter(statut__in=['Confirmée', 'Reportée'])
+            seances = self._seances_volume
+        else:
+            seances = self.seance_set.filter(statut__in=['Confirmée', 'Reportée'])
+        return Seance.dedupliquer_mutualisees(seances)
 
     def heures_consommees(self, exclure_seance_pk=None):
         total = 0
@@ -902,15 +945,16 @@ class AffectationModule(models.Model):
         sur la même instance Python via valider_affectation).
         """
         if hasattr(self, '_seances_volume'):
-            return self._seances_volume
-        seances = Seance.objects.filter(
-            module=self.module_id,
-            enseignant=self.enseignant_id,
-            statut__in=['Confirmée', 'Reportée'],
-        )
-        if self.type_seance:
-            seances = seances.filter(type_seance=self.type_seance)
-        return seances
+            seances = self._seances_volume
+        else:
+            seances = Seance.objects.filter(
+                module=self.module_id,
+                enseignant=self.enseignant_id,
+                statut__in=['Confirmée', 'Reportée'],
+            )
+            if self.type_seance:
+                seances = seances.filter(type_seance=self.type_seance)
+        return Seance.dedupliquer_mutualisees(seances)
 
     def heures_consommees(self, exclure_seance_pk=None):
         """
@@ -1036,6 +1080,35 @@ class Seance(models.Model):
         if self.statut == 'Reportée' and self.heure_debut_report and self.heure_fin_report:
             return self.date_report, self.heure_debut_report, self.heure_fin_report
         return self.date_seance, self.heure_debut, self.heure_fin
+
+    @staticmethod
+    def dedupliquer_mutualisees(seances):
+        """
+        Un cours mutualisé se modélise par deux Seance distinctes (une par
+        classe), reliées par seance_liee, portant le même module/enseignant/
+        créneau. Sans cette déduplication, un cours donné une seule fois
+        mais mutualisé entre deux classes comptait pour le double d'heures
+        sur le volume du module et le quota de l'enseignant
+        (CORRECTIONS_A_FAIRE.md, point 16).
+
+        Ne garde qu'une séance par paire liée — celle du plus petit pk — et
+        seulement si les deux partagent bien le même créneau effectif
+        (sinon ce n'est pas un doublon à dédupliquer mais une vraie
+        divergence, cf. point 6/`valider_module_seance_liee`).
+        """
+        seances = list(seances)
+        par_pk = {s.pk: s for s in seances}
+        dedupliquees = []
+        for s in seances:
+            partenaire = par_pk.get(s.seance_liee_id) if s.seance_liee_id else None
+            if (
+                partenaire is not None
+                and s.pk > partenaire.pk
+                and s.creneau_effectif() == partenaire.creneau_effectif()
+            ):
+                continue  # l'autre moitié de la paire est déjà comptée
+            dedupliquees.append(s)
+        return dedupliquees
 
     def _valider_creneau_report(self):
         """Délègue à validation_seance.valider_creneau_report()."""

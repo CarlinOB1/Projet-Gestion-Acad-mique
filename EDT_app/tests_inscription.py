@@ -31,7 +31,7 @@ from EDT_app.factories import (
     ParcoursFactory,
     Semestre1Factory,
 )
-from EDT_app.models import Inscription
+from EDT_app.models import AnneeAcademique, Inscription
 
 
 class EtudiantReinscriptionTest(TestCase):
@@ -43,12 +43,26 @@ class EtudiantReinscriptionTest(TestCase):
         # ParcoursFactory plafonne `niveau` selon `type_parcours`
         # (Licence -> 3) : on reste dans L1/L2 pour obtenir deux classes
         # distinctes, sans chercher à forcer un niveau arbitraire.
+        # classe_l2 est sur l'année académique qui suit directement celle de
+        # classe_l1 : depuis CORRECTIONS_A_FAIRE.md point 15, un passage vers
+        # un niveau supérieur du même cycle n'est accepté par
+        # Etudiant.reinscrire() que si l'année suit directement la
+        # précédente (pas de saut d'année).
         self.classe_l1 = ClasseFactory(
             parcours=ParcoursFactory(type_parcours="Licence", niveau=1)
         )
+        annee_suivante = AnneeAcademiqueFactory(
+            libelle="2026-2027",
+            date_debut=date(2026, 9, 1),
+            date_fin=date(2027, 6, 30),
+        )
         self.classe_l2 = ClasseFactory(
             parcours=ParcoursFactory(type_parcours="Licence", niveau=2),
-            semestre=self.classe_l1.semestre,
+            semestre=Semestre1Factory(
+                annee=annee_suivante,
+                date_debut=date(2026, 9, 1),
+                date_fin=date(2027, 1, 31),
+            ),
         )
         self.etudiant = EtudiantFactory(classe=self.classe_l1)
 
@@ -143,19 +157,28 @@ class EtudiantReinscriptionTest(TestCase):
         ramener l'étudiant à son état d'origine, sinon il se retrouverait sans
         aucune inscription active et sans nouvelle classe.
         """
-        annee_archivee = AnneeAcademiqueFactory(
-            libelle="2020-2021",
-            date_debut=date(2020, 9, 1),
-            date_fin=date(2021, 6, 30),
+        # Niveau et année choisis pour que seul le statut « archivée » fasse
+        # échouer l'appel : niveau immédiatement supérieur à classe_l1 (1 -> 2)
+        # et année qui la suit directement (2025-2026 -> 2026-2027), sinon
+        # c'est _valider_progression() qui refuserait en premier, pour une
+        # tout autre raison que celle visée par ce test. Création directe
+        # (pas via AnneeAcademiqueFactory) : le libellé "2026-2027" existe
+        # déjà, actif, pour classe_l2 (créé dans setUp) — la fabrique, qui
+        # fait un get_or_create sur le libellé, renverrait cette même ligne
+        # active au lieu d'une ligne archivée distincte.
+        annee_archivee = AnneeAcademique.objects.create(
+            libelle="2026-2027",
+            date_debut=date(2026, 9, 1),
+            date_fin=date(2027, 6, 30),
             statut="archivée",
         )
         classe_archivee = ClasseFactory(
-            parcours=ParcoursFactory(type_parcours="Licence", niveau=3),
+            parcours=ParcoursFactory(type_parcours="Licence", niveau=2),
             filiere=FiliereFactory(libelle="Filiere Archivee"),
             semestre=Semestre1Factory(
                 annee=annee_archivee,
-                date_debut=date(2020, 9, 1),
-                date_fin=date(2021, 1, 31),
+                date_debut=date(2026, 9, 1),
+                date_fin=date(2027, 1, 31),
             ),
             annee=annee_archivee,
         )
@@ -187,6 +210,10 @@ class EtudiantReinscriptionTest(TestCase):
         inscription_l1 = self.etudiant.reinscrire(self.classe_l1)
         self.etudiant.reinscrire(self.classe_l2)
 
+        # Un retour en arrière n'est pas une « progression » au sens de
+        # _valider_progression() : il reste volontairement hors de son
+        # périmètre (niveau <= niveau actuel), pour ne pas bloquer ce
+        # scénario de correction manuelle — CORRECTIONS_A_FAIRE.md, point 15.
         retour = self.etudiant.reinscrire(self.classe_l1)
 
         self.assertEqual(retour.pk, inscription_l1.pk)  # même ligne, pas un doublon
@@ -195,3 +222,95 @@ class EtudiantReinscriptionTest(TestCase):
         self.etudiant.refresh_from_db()
         self.assertEqual(self.etudiant.classe_id, self.classe_l1.pk)
         self.assertEqual(self.etudiant.inscriptions.filter(statut="active").count(), 1)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # PROGRESSION DE NIVEAU (CORRECTIONS_A_FAIRE.md, point 15)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def test_premiere_inscription_libre_de_toute_contrainte_de_progression(self):
+        """
+        Un étudiant sans historique (première inscription) peut arriver sur
+        n'importe quelle classe : la règle de continuité ne s'applique
+        qu'aux réinscriptions (un étudiant qui a déjà un historique).
+        """
+        nouvel_etudiant = EtudiantFactory(classe=self.classe_l1)
+
+        inscription = nouvel_etudiant.reinscrire(self.classe_l2)
+
+        self.assertEqual(inscription.classe_id, self.classe_l2.pk)
+
+    def test_passage_de_niveau_normal_accepte(self):
+        """
+        Cas nominal : année qui suit directement, niveau immédiatement
+        supérieur, même cycle. Doit toujours passer.
+        """
+        self.etudiant.reinscrire(self.classe_l1)
+
+        inscription = self.etudiant.reinscrire(self.classe_l2)
+
+        self.assertEqual(inscription.classe_id, self.classe_l2.pk)
+
+    def test_saut_de_niveau_refuse(self):
+        """
+        Depuis L1, sauter directement en L3 (même cycle) est refusé : seul
+        le niveau immédiatement supérieur est accessible.
+        """
+        classe_l3 = ClasseFactory(
+            parcours=ParcoursFactory(type_parcours="Licence", niveau=3),
+            semestre=Semestre1Factory(
+                annee=AnneeAcademiqueFactory(
+                    libelle="2026-2027",
+                    date_debut=date(2026, 9, 1), date_fin=date(2027, 6, 30),
+                ),
+                date_debut=date(2026, 9, 1), date_fin=date(2027, 1, 31),
+            ),
+        )
+        self.etudiant.reinscrire(self.classe_l1)
+
+        with self.assertRaises(ValidationError):
+            self.etudiant.reinscrire(classe_l3)
+
+    def test_saut_d_annee_refuse(self):
+        """
+        Depuis L1 (2025-2026), passer en L2 mais sur une année qui n'est pas
+        directement la suivante est refusé, même si le niveau, lui, est
+        correct.
+        """
+        classe_l2_annee_lointaine = ClasseFactory(
+            parcours=ParcoursFactory(type_parcours="Licence", niveau=2),
+            semestre=Semestre1Factory(
+                annee=AnneeAcademiqueFactory(
+                    libelle="2028-2029",
+                    date_debut=date(2028, 9, 1), date_fin=date(2029, 6, 30),
+                ),
+                date_debut=date(2028, 9, 1), date_fin=date(2029, 1, 31),
+            ),
+        )
+        self.etudiant.reinscrire(self.classe_l1)
+
+        with self.assertRaises(ValidationError):
+            self.etudiant.reinscrire(classe_l2_annee_lointaine)
+
+    def test_changement_de_cycle_non_couvert_par_la_regle(self):
+        """
+        Le passage d'un cycle à l'autre (ex. Licence -> Master) n'est pas une
+        « progression de niveau » au sens de cette règle : _valider_progression()
+        ne s'en mêle pas (ni validation, ni refus) — traité comme hors
+        périmètre, à couvrir plus tard par un autre mécanisme (nouvelle
+        admission) si besoin.
+        """
+        classe_m1 = ClasseFactory(
+            parcours=ParcoursFactory(type_parcours="Master", niveau=1),
+            semestre=Semestre1Factory(
+                annee=AnneeAcademiqueFactory(
+                    libelle="2030-2031",
+                    date_debut=date(2030, 9, 1), date_fin=date(2031, 6, 30),
+                ),
+                date_debut=date(2030, 9, 1), date_fin=date(2031, 1, 31),
+            ),
+        )
+        self.etudiant.reinscrire(self.classe_l1)
+
+        inscription = self.etudiant.reinscrire(classe_m1)
+
+        self.assertEqual(inscription.classe_id, classe_m1.pk)
