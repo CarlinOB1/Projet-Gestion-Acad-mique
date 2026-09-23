@@ -1,3 +1,7 @@
+import os
+
+from django.conf import settings
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import render
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
@@ -1228,6 +1232,38 @@ class DocumentViewSet(BaseViewSet):
     def perform_create(self, serializer):
         enseignant = self.request.user.profil.enseignant
         serializer.save(enseignant=enseignant)
+
+    @action(detail=True, methods=['get'], url_path='telecharger')
+    def telecharger(self, request, pk=None):
+        """
+        Téléchargement authentifié et périmétré du fichier.
+
+        `self.get_object()` applique le même filtrage que toute autre
+        lecture (get_queryset() ci-dessus) : un utilisateur hors périmètre
+        du module reçoit un 404, pas le fichier. C'est le seul point d'entrée
+        qui expose le contenu — DocumentPedagogiqueSerializer.get_fichier_url()
+        renvoie désormais cette URL plutôt que l'adresse /media/ directe, qui
+        ne demandait aucune authentification.
+
+        En production, PROTECTED_MEDIA_INTERNAL_PREFIX est renseigné : nginx
+        sert alors lui-même le fichier via X-Accel-Redirect, Django ne lit
+        jamais son contenu. En développement (valeur vide par défaut),
+        Django le diffuse directement.
+        """
+        doc = self.get_object()
+        nom_affiche = os.path.basename(doc.fichier.name)
+
+        if settings.PROTECTED_MEDIA_INTERNAL_PREFIX:
+            response = HttpResponse()
+            response['X-Accel-Redirect'] = (
+                settings.PROTECTED_MEDIA_INTERNAL_PREFIX + doc.fichier.name
+            )
+            response['Content-Disposition'] = f'attachment; filename="{nom_affiche}"'
+            return response
+
+        return FileResponse(
+            doc.fichier.open('rb'), as_attachment=True, filename=nom_affiche,
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

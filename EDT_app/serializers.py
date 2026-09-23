@@ -3,6 +3,7 @@ import re
 from datetime import time
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -1121,13 +1122,21 @@ class DocumentPedagogiqueSerializer(serializers.ModelSerializer):
             'type_doc', 'module', 'module_id', 'enseignant', 'created_at',
         ]
         read_only_fields = ['enseignant', 'created_at', 'fichier_url', 'nom_fichier', 'taille']
+        extra_kwargs = {
+            # En écriture seulement : en lecture, `fichier.url` pointerait
+            # directement vers /media/, accessible sans authentification ni
+            # contrôle de périmètre. `fichier_url` (ci-dessous) est la seule
+            # adresse exposée, et passe par DocumentViewSet.telecharger().
+            'fichier': {'write_only': True},
+        }
 
     def get_fichier_url(self, obj):
         if obj.fichier:
             request = self.context.get('request')
+            url = reverse('document-telecharger', kwargs={'pk': obj.pk})
             if request:
-                return request.build_absolute_uri(obj.fichier.url)
-            return obj.fichier.url
+                return request.build_absolute_uri(url)
+            return url
         return None
 
     def get_nom_fichier(self, obj):
