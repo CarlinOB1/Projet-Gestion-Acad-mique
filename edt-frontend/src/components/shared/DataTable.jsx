@@ -9,6 +9,7 @@
 import React from 'react';
 import { Pencil, Trash2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { confirmer } from '@/lib/confirmer';
 import {
   Table,
   TableBody,
@@ -34,10 +35,14 @@ export default function DataTable({
   /**
    * Gère la confirmation de suppression avant d'exécuter le callback
    */
-  const handleDeleteClick = (row) => {
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer cet élément ?")) {
-      onDelete?.(row);
-    }
+  const handleDeleteClick = async (row) => {
+    const ok = await confirmer({
+      titre: 'Supprimer cet élément ?',
+      description: 'Cette action est définitive.',
+      libelleConfirmer: 'Supprimer',
+      destructif: true,
+    });
+    if (ok) onDelete?.(row);
   };
 
   return (
@@ -112,9 +117,10 @@ export default function DataTable({
                 ))}
                 
                 
-                {/* Cellule d'actions */}
+                {/* Cellule d'actions — toujours visibles : masqués jusqu'au
+                    survol, ils n'apparaissaient jamais sur écran tactile. */}
                 {hasRowActions && (
-                  <TableCell className="py-2 text-right whitespace-nowrap space-x-1 opacity-0 group-hover:opacity-100 transition-opacity focus-within:opacity-100">
+                  <TableCell className="py-2 text-right whitespace-nowrap space-x-1">
                     {onEdit && (
                       <Button
                         variant="ghost"

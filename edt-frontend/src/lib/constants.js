@@ -6,6 +6,15 @@ export const ROLES = Object.freeze({
    ADMIN: 'admin',
 });
 
+/** Libellé affiché de chaque rôle (barre du haut, page profil). */
+export const ROLE_LABELS = Object.freeze({
+  [ROLES.ADMIN]: 'Administrateur',
+  [ROLES.CHEF_DEPARTEMENT]: 'Chef de Département',
+  [ROLES.REFERENT_L1]: 'Référent L1',
+  [ROLES.ENSEIGNANT]: 'Enseignant',
+  [ROLES.ETUDIANT]: 'Étudiant',
+});
+
 export const TYPE_SEANCE = Object.freeze({
   CM: 'CM',
   TD: 'TD',

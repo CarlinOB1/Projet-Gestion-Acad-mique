@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { User, Phone, Mail, GraduationCap, Briefcase, Hash } from 'lucide-react';
 import useAuthStore from '@/store/authStore';
+import { ROLE_LABELS } from '@/lib/constants';
 
 export default function ProfilPage() {
   const userStore = useAuthStore((state) => state.user);
@@ -41,7 +42,10 @@ export default function ProfilPage() {
           <p className="text-sm text-muted-foreground">{user?.email}</p>
           
           <div className="mt-4 inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
-             {enseignant ? 'Enseignant' : etudiant ? 'Étudiant' : userStore?.role || 'Utilisateur'}
+             {/* Le rôle de connexion, pas la présence d'une fiche enseignant :
+                 un chef ou un référent a aussi une fiche enseignant, et
+                 s'affichait donc « Enseignant ». */}
+             {ROLE_LABELS[userStore?.role] ?? (enseignant ? 'Enseignant' : etudiant ? 'Étudiant' : 'Utilisateur')}
           </div>
         </Card>
 

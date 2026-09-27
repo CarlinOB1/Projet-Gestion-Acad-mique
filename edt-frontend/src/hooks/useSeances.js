@@ -28,10 +28,12 @@ export const transformSeanceToEvent = (seance) => {
 
 /**
  * Hook de récupération des séances selon le rôle connecté.
- * @param {{ role: string, filters: Object }} options
+ * @param {{ role: string, filters: Object, enabled?: boolean }} options
+ *   `enabled` permet à l'appelant de retenir la requête tant qu'un filtre
+ *   indispensable (ex. le semestre) n'est pas encore connu.
  * @returns {{ events, isLoading, isError, error, refetch }}
  */
-export const useSeances = ({ role, filters = {} }) => {
+export const useSeances = ({ role, filters = {}, enabled = true }) => {
   const getQueryFn = () => {
     switch (role) {
       case 'admin':
@@ -46,7 +48,7 @@ export const useSeances = ({ role, filters = {} }) => {
   const { data: events = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['seances', role, filters],
     queryFn:  getQueryFn(),
-    enabled:  !!role,
+    enabled:  !!role && enabled,
     staleTime: 1000 * 60 * 2,
     select: (data) => {
       if (!Array.isArray(data)) return [];

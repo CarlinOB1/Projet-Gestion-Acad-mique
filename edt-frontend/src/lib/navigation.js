@@ -1,7 +1,7 @@
 import {
-  CalendarDays, Clock,
-  Users, BookOpen, Building2, BookMarked,
-  GraduationCap, UserCheck, BarChart3, UserCircle, FileText
+  CalendarDays,
+  Users, BookOpen, BookMarked,
+  GraduationCap, BarChart3, UserCircle, FileText
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
@@ -10,6 +10,9 @@ export const NAV_ITEMS = [
   { key: 'chef-classes', label: 'Classes & Étudiants', path: '/chef/classes', icon: Users, roles: ['admin', 'chef_departement', 'referent_l1'], section: 'GESTION DU DÉPARTEMENT' },
   { key: 'chef-enseignants', label: 'Enseignants', path: '/chef/enseignants', icon: GraduationCap, roles: ['admin', 'chef_departement', 'referent_l1'], section: 'GESTION DU DÉPARTEMENT' },
   { key: 'chef-contenu', label: 'Contenu Pédagogique', path: '/chef/contenu', icon: BookMarked, roles: ['admin', 'chef_departement'], section: 'GESTION DU DÉPARTEMENT' },
+  // Pas d'entrée pour /chef/etudiants, /chef/modules, /chef/organisation :
+  // retirées volontairement du menu (commits 0591205 et 7e25b8e), remplacées
+  // par « Classes & Étudiants » et « Contenu Pédagogique ». Ne pas les rajouter.
 
   // Enseignant & Chef / Référent (Double casquette) - MON COMPTE
   { key: 'enseignant-planning', label: 'Mon planning', path: '/enseignant/planning', icon: CalendarDays, roles: ['enseignant', 'chef_departement', 'referent_l1'], section: 'MON COMPTE' },

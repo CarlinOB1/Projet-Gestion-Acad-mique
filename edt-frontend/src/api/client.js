@@ -10,12 +10,45 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     const token = useAuthStore.getState().accessToken;
-    console.log('[API] token:', token ? token.slice(0, 20) + '...' : 'NULL');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
     },);
+
+// Un seul rafraîchissement à la fois. Quand le jeton d'accès expire, une page
+// lance plusieurs requêtes en parallèle : toutes reçoivent 401 en même temps.
+// Le serveur blackliste l'ancien refresh token dès le premier rafraîchissement
+// réussi ; sans ce partage, les appels suivants échoueraient et déconnecteraient
+// l'utilisateur alors que sa session est valide.
+let rafraichissementEnCours = null;
+
+function rafraichirLesJetons() {
+  if (!rafraichissementEnCours) {
+    rafraichissementEnCours = (async () => {
+      const refreshToken = useAuthStore.getState().refreshToken;
+
+      if (!refreshToken) {
+        throw new Error('Aucun refresh token disponible dans le store.');
+      }
+
+      const baseURL = import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
+      const response = await axios.post(
+        `${baseURL}/token/refresh/`,
+        { refresh: refreshToken }
+      );
+
+      useAuthStore.getState().setTokens({
+        accessToken: response.data.access,
+        refreshToken: response.data.refresh,
+      });
+      return response.data.access;
+    })().finally(() => {
+      rafraichissementEnCours = null;
+    });
+  }
+  return rafraichissementEnCours;
+}
 
 apiClient.interceptors.response.use(
   (response) => response,
@@ -26,20 +59,7 @@ apiClient.interceptors.response.use(
       originalRequest._isRetry = true;
 
       try {
-        const refreshToken = useAuthStore.getState().refreshToken;
-
-        if (!refreshToken) {
-          throw new Error('Aucun refresh token disponible dans le store.');
-        }
-
-        const baseURL = import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
-        const response = await axios.post(
-          `${baseURL}/token/refresh/`,
-          { refresh: refreshToken }
-        );
-
-        const newAccessToken = response.data.access;
-        useAuthStore.getState().setAccessToken(newAccessToken);
+        const newAccessToken = await rafraichirLesJetons();
 
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return apiClient(originalRequest);
@@ -83,24 +103,43 @@ export const extractData = (response) => {
  * non paginée (tableau direct, ou objet sans `results`) est renvoyée telle
  * quelle, sans requête supplémentaire.
  *
+ * Les pages suivantes sont demandées en parallèle (par lots de
+ * PAGES_EN_PARALLELE) : `count` et la taille de la 1re page suffisent à
+ * connaître leur nombre. Les suivre une à une via `next` faisait attendre
+ * chaque réponse avant la suivante — ~21 s pour les 14 pages du planning
+ * d'un chef de département.
+ *
  * @param {string} url
  * @param {object} [params]
  * @returns {Promise<any>}
  */
+const PAGES_EN_PARALLELE = 6;
+
 export const fetchAllPages = async (url, params = {}) => {
-  let response = await apiClient.get(url, { params });
+  const response = await apiClient.get(url, { params });
   const data = response.data;
 
   if (!data || typeof data !== 'object' || !Array.isArray(data.results)) {
     return data;
   }
 
+  const taillePage = data.results.length;
+  if (!data.next || taillePage === 0) {
+    return data.results;
+  }
+  const nbPages = Math.ceil(data.count / taillePage);
+
+  const pagesRestantes = [];
+  for (let page = 2; page <= nbPages; page += 1) pagesRestantes.push(page);
+
   let results = data.results;
-  let next = data.next;
-  while (next) {
-    response = await apiClient.get(next);
-    results = results.concat(response.data?.results ?? []);
-    next = response.data?.next;
+  for (let i = 0; i < pagesRestantes.length; i += PAGES_EN_PARALLELE) {
+    const lot = pagesRestantes.slice(i, i + PAGES_EN_PARALLELE);
+    const reponses = await Promise.all(
+      lot.map((page) => apiClient.get(url, { params: { ...params, page } }))
+    );
+    // Promise.all conserve l'ordre du lot : les résultats restent triés.
+    for (const r of reponses) results = results.concat(r.data?.results ?? []);
   }
   return results;
 };

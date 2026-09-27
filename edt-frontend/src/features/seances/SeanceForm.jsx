@@ -6,7 +6,7 @@
  * cascade, avec validation Zod et indicateur d'heures restantes du module.
  */
 import { useEffect } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm, useWatch, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useCascadeSelects } from '@/hooks/useCascadeSelects';
@@ -84,6 +84,13 @@ export default function SeanceForm({
     affectationsEnseignant,
   } = useCascadeSelects({ classeId: classe?.id });
 
+  // Type de séance lu de façon réactive (useWatch) plutôt que via
+  // control._formValues (lecture figée au dernier rendu) : sans ça, le
+  // panneau « Solde affectation » pouvait continuer d'afficher le solde de
+  // l'ANCIEN type après un changement de champ, alors que le NOUVEAU type est
+  // ce qui part réellement au serveur (CORRECTIONS_A_FAIRE.md, point 4).
+  const typeSeance = useWatch({ control, name: 'type_seance' });
+
   useEffect(() => {
     if (semestreId) setValue('semestre_id', String(semestreId));
   }, [semestreId, setValue]);
@@ -95,6 +102,15 @@ export default function SeanceForm({
   useEffect(() => {
     if (defaultValues?.module_id) setSelectedModuleId(defaultValues.module_id);
   }, [defaultValues, setSelectedModuleId]);
+
+  // Symétrique du useEffect ci-dessus, pour l'enseignant : sans lui, l'état
+  // qui pilote le panneau "Solde affectation" (useCascadeSelects) restait
+  // désynchronisé de l'enseignant réellement sélectionné en mode édition,
+  // tant que l'utilisateur n'avait pas re-cliqué manuellement sur le champ
+  // (CORRECTIONS_A_FAIRE.md, point 4).
+  useEffect(() => {
+    if (defaultValues?.enseignant_id) setSelectedEnseignantId(defaultValues.enseignant_id);
+  }, [defaultValues, setSelectedEnseignantId]);
 
   const onFormSubmit = (formData) => {
     onSubmit({
@@ -184,7 +200,6 @@ export default function SeanceForm({
         {errors.enseignant_id && <p className="text-xs text-destructive">{errors.enseignant_id.message}</p>}
         {/* Solde d'affectation de l'enseignant sélectionné */}
         {selectedEnseignantId && (() => {
-          const typeSeance = control._formValues?.type_seance;
           const solde = getSoldeAffectation(typeSeance);
           if (!solde) return null;
           const cls = solde.restantes > 2 ? 'text-green-600 dark:text-green-400'

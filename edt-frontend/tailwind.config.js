@@ -12,6 +12,13 @@ export default {
           primary: '#2563EB',
           secondary: '#7C3AED',
         },
+        uccb: {
+          green: '#0B7A3E',
+          yellow: '#F7C600',
+          red: '#C8102E',
+          ink: '#141414',
+          paper: '#F5F3EE',
+        },
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         primary: {
@@ -50,7 +57,36 @@ export default {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      // Les composants de src/components/ui ont été générés par shadcn pour
+      // Tailwind v4, qui comprend nativement des variantes comme
+      // `data-open:` ou `data-horizontal:`. Le projet tourne sous Tailwind
+      // v3, qui les ignorait silencieusement (onglets posés à côté de leur
+      // contenu au lieu d'au-dessus, onglet actif non surligné, séparateurs
+      // sans taille...). Ces alias les font correspondre aux attributs que
+      // Radix pose réellement ; ils valent aussi pour `group-data-*`.
+      data: {
+        open: 'state="open"',
+        closed: 'state="closed"',
+        active: 'state="active"',
+        disabled: 'disabled',
+        horizontal: 'orientation="horizontal"',
+        vertical: 'orientation="vertical"',
+        inset: 'inset',
+        placeholder: 'placeholder',
+      },
+      // Noms d'ombres propres à Tailwind v4, utilisés par les mêmes composants.
+      boxShadow: {
+        '2xs': '0 1px rgb(0 0 0 / 0.05)',
+        xs: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+      },
     },
   },
-  plugins: [],
+  plugins: [
+    // `outline-hidden` (Tailwind v4) = l'ancien `outline-none` de v3.
+    ({ addUtilities }) => {
+      addUtilities({
+        '.outline-hidden': { outline: '2px solid transparent', 'outline-offset': '2px' },
+      });
+    },
+  ],
 };

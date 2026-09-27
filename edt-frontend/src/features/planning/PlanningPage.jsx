@@ -4,7 +4,6 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   Plus,
   Printer,
-  Calendar,
   Pencil,
   CalendarClock,
   Trash2,
@@ -30,6 +29,8 @@ import SeanceDrawer from "@/features/seances/SeanceDrawer";
 import ReportDrawer from "@/features/seances/ReportDrawer";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { confirmer } from "@/lib/confirmer";
+import { toast } from "@/hooks/use-toast";
 import {
   Select,
   SelectContent,
@@ -127,7 +128,6 @@ export default function PlanningPage() {
     if (!semestre) return;
 
     lastJumpedSemestreId.current = selectedSemestreId;
-    const debut = semestre.date_debut ? new Date(semestre.date_debut) : null;
 
     const getMondayOf = (d) => {
       const date = new Date(d);
@@ -137,8 +137,26 @@ export default function PlanningPage() {
       date.setHours(0, 0, 0, 0);
       return date;
     };
+    // "AAAA-MM-JJ" lu en date locale : new Date("AAAA-MM-JJ") le lirait en
+    // UTC et pourrait décaler d'un jour selon le fuseau.
+    const parseDateLocale = (s) => {
+      if (!s) return null;
+      const [y, m, d] = s.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    };
 
-    if (debut) {
+    const debut = parseDateLocale(semestre.date_debut);
+    const fin = parseDateLocale(semestre.date_fin);
+    const aujourdhui = new Date();
+    aujourdhui.setHours(0, 0, 0, 0);
+
+    // Semestre en cours : on reste sur la semaine d'aujourd'hui. Sauter à la
+    // semaine 1 ouvrait le planning sur une semaine vide ("0 h") en plein
+    // semestre. Autre semestre (passé ou à venir) : on va à son début.
+    const semestreEnCours = debut && fin && debut <= aujourdhui && aujourdhui <= fin;
+    if (semestreEnCours) {
+      setWeekStart(getMondayOf(aujourdhui));
+    } else if (debut) {
       setWeekStart(getMondayOf(debut));
     }
   }, [selectedSemestreId, semestres]);
@@ -150,6 +168,10 @@ export default function PlanningPage() {
   } = useSeances({
     role: effectiveRole,
     filters: { semestre_id: selectedSemestreId },
+    // Sans semestre, la requête partait sans filtre et téléchargeait toutes
+    // les séances du département (29 pages), en concurrence avec la vraie
+    // requête lancée un instant plus tard avec le semestre.
+    enabled: !!selectedSemestreId,
   });
 
   // Récupère toutes les classes du semestre pour les gestionnaires (pour afficher même celles sans séances)
@@ -195,7 +217,13 @@ export default function PlanningPage() {
     [events, filters],
   );
 
-  const isLoading = isLoadingSemestres || isLoadingSeances || isLoadingClasses;
+  // Le semestre se sélectionne un rendu après l'arrivée de la liste : sans le
+  // dernier terme, l'état « aucun cours » clignotait pendant cet intervalle.
+  const isLoading =
+    isLoadingSemestres ||
+    isLoadingSeances ||
+    isLoadingClasses ||
+    (!selectedSemestreId && semestres.length > 0);
   const isError = isErrorSemestres || isErrorSeances;
 
   const semestersByYear = useMemo(() => {
@@ -353,22 +381,14 @@ export default function PlanningPage() {
               variant="outline"
               className="flex-1 sm:flex-none gap-2 bg-background"
               onClick={handleGeneratePDF}
+              aria-label="Générer le PDF du planning"
             >
               <Printer className="h-4 w-4 text-muted-foreground" />
               <span className="hidden sm:inline">Générer PDF</span>
             </Button>
-            <Button
-              variant="outline"
-              className="flex-1 sm:flex-none gap-2 bg-background"
-              onClick={() =>
-                alert(
-                  "Le lien d'abonnement iCal a été copié dans le presse-papier !",
-                )
-              }
-            >
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <span className="hidden sm:inline">Lier au calendrier</span>
-            </Button>
+            {/* Bouton « Lier au calendrier » retiré : il annonçait un lien iCal
+                copié alors que rien n'était copié (aucun point d'accès iCal
+                côté serveur). À remettre quand ce flux existera. */}
           </div>
         </div>
       </header>
@@ -482,15 +502,32 @@ export default function PlanningPage() {
               <Button
                 variant="ghost"
                 className="justify-start gap-3 h-10 px-3 text-sm text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "Voulez-vous vraiment supprimer cette séance ?",
-                    )
-                  ) {
-                    deleteSeanceMutation.mutate(gestionnaireTarget.id);
-                  }
+                onClick={async () => {
+                  const seance = gestionnaireTarget;
+                  // Ferme le menu d'actions avant d'ouvrir la confirmation.
                   setGestionnaireTarget(null);
+                  const ok = await confirmer({
+                    titre: "Supprimer cette séance ?",
+                    description: [
+                      seance?.module?.libelle,
+                      seance?.date_seance &&
+                        `${seance.date_seance} · ${seance.heure_debut} – ${seance.heure_fin}`,
+                    ].filter(Boolean).join("\n"),
+                    libelleConfirmer: "Supprimer",
+                    destructif: true,
+                  });
+                  if (!ok) return;
+                  deleteSeanceMutation.mutate(seance.id, {
+                    onSuccess: () => toast({ title: "Séance supprimée" }),
+                    onError: (err) =>
+                      toast({
+                        variant: "destructive",
+                        title: "La séance n'a pas pu être supprimée",
+                        description:
+                          err?.response?.data?.detail ??
+                          "Réessayez ; si le problème persiste, rechargez la page.",
+                      }),
+                  });
                 }}
               >
                 <Trash2 className="h-4 w-4" />

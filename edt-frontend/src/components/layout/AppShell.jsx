@@ -6,6 +6,7 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import { Toaster } from '@/components/ui/toaster';
+import { ConfirmDialogHost } from '@/components/shared/ConfirmDialog';
 
 export default function AppShell() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -45,6 +46,7 @@ export default function AppShell() {
       </div>
 
       <Toaster />
+      <ConfirmDialogHost />
     </div>
   );
 }

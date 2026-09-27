@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import FormModal from '@/components/shared/FormModal';
+import { confirmer } from '@/lib/confirmer';
 import { getDocuments, createDocument, deleteDocument } from '@/api/documents';
 import { getModules } from '@/api/academique';
 
@@ -210,10 +211,15 @@ export default function DocumentsPage({ readOnly = false }) {
                       variant="ghost" 
                       size="icon" 
                       className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                      onClick={() => {
-                        if (window.confirm("Voulez-vous vraiment supprimer ce document ?")) {
-                          deleteMutation.mutate(doc.id);
-                        }
+                      aria-label={`Supprimer le document ${doc.titre ?? ''}`.trim()}
+                      onClick={async () => {
+                        const ok = await confirmer({
+                          titre: 'Supprimer ce document ?',
+                          description: 'Les étudiants ne pourront plus le consulter ni le télécharger.',
+                          libelleConfirmer: 'Supprimer',
+                          destructif: true,
+                        });
+                        if (ok) deleteMutation.mutate(doc.id);
                       }}
                     >
                       <Trash2 className="h-4 w-4" />
