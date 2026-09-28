@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getEnseignants } from "@/api/acteurs";
+import PageHeader from "@/components/shared/PageHeader";
 import EnseignantRow from "./EnseignantRow";
 
 export default function EnseignantsPage() {
@@ -9,28 +10,25 @@ export default function EnseignantsPage() {
     isError,
   } = useQuery({
     queryKey: ["enseignants"],
-    queryFn: getEnseignants,
+    // Fonction fléchée : passée directement, getEnseignants recevait le
+    // contexte de React Query comme filtres et l'envoyait au serveur
+    // (?client=[object Object]&signal=…).
+    queryFn: () => getEnseignants(),
   });
 
   return (
     <div className="space-y-6 w-full max-w-7xl mx-auto">
-      <div className="flex items-center justify-between border-b border-border pb-5">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Enseignants
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Consultation du corps enseignant et de leurs avancements.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        titre="Enseignants"
+        description="Cliquez sur un enseignant pour voir ses coordonnées, ses modules et l'avancement de ses heures."
+      />
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {isLoading ? (
-          <div className="animate-pulse space-y-4">
-            <div className="h-16 bg-muted/40 rounded-lg w-full"></div>
-            <div className="h-16 bg-muted/40 rounded-lg w-full"></div>
-            <div className="h-16 bg-muted/40 rounded-lg w-full"></div>
+          <div className="animate-pulse space-y-3">
+            <div className="h-16 bg-muted rounded-lg w-full" />
+            <div className="h-16 bg-muted rounded-lg w-full" />
+            <div className="h-16 bg-muted rounded-lg w-full" />
           </div>
         ) : isError ? (
           <div className="p-5 text-center text-destructive bg-destructive/10 rounded-lg">

@@ -6,6 +6,7 @@ import { LogOut } from 'lucide-react';
 import useAuthStore from '@/store/authStore';
 import { logout } from '@/api/auth';
 import { NAV_ITEMS } from '@/lib/navigation';
+import logoUccb from '@/assets/login/logo-uccb.svg';
 
 export default function Sidebar() {
   // CORRECTION : sélecteur ciblé — évite les re-renders sur tout changement du store
@@ -40,13 +41,16 @@ export default function Sidebar() {
     <aside className="w-[240px] h-full flex flex-col bg-background border-r border-border select-none">
 
       {/* En-tête */}
-      <div className="h-14 px-6 flex flex-col justify-center border-b border-border">
-        <h1 className="text-base font-bold tracking-tight text-foreground">
-          EDT UCCB
-        </h1>
-        <p className="text-[11px] text-muted-foreground truncate">
-          Gestion des emplois du temps
-        </p>
+      <div className="h-14 px-4 flex items-center gap-3 border-b border-border">
+        <img src={logoUccb} alt="" className="size-9 shrink-0" />
+        <div className="min-w-0">
+          <h1 className="text-base font-bold tracking-tight text-foreground">
+            EDT UCCB
+          </h1>
+          <p className="text-[11px] text-muted-foreground truncate">
+            Gestion des emplois du temps
+          </p>
+        </div>
       </div>
 
       {/* Navigation */}

@@ -22,7 +22,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -37,6 +36,9 @@ import {
 // Composants partagés
 import DataTable from '@/components/shared/DataTable';
 import FormModal from '@/components/shared/FormModal';
+import PageHeader from '@/components/shared/PageHeader';
+import { formatNombreHeures } from '@/lib/utils';
+import { toast } from '@/hooks/use-toast';
 
 // Panel d'affectation
 import AffectationsPanel from '@/features/affectations/AffectationsPanel';
@@ -68,10 +70,13 @@ function groupKey(classe) {
 
 /**
  * Construit le libellé lisible d'un groupe.
- * Exemple : "L1 MIP · 2025-2026"
+ * Exemple : "L1 MIP · 2025-2026" — même abréviation (L1, L2, M1…) que le nom
+ * des classes (« L2 S1 Informatique 2026-2027 ») affiché dans le reste de
+ * l'application, au lieu de « Licence 2 ».
  */
 function groupLabel(classe) {
-  const parcours    = classe.parcours?.libelle ?? '';
+  const { type_parcours: type, niveau } = classe.parcours ?? {};
+  const parcours    = type && niveau ? `${type.charAt(0).toUpperCase()}${niveau}` : (classe.parcours?.libelle ?? '');
   const identifiant = classe.filiere?.libelle ?? classe.code ?? '';
   const annee       = classe.annee?.libelle ?? '';
   return `${parcours} ${identifiant} · ${annee}`;
@@ -101,76 +106,47 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
 
   const totalCredits = modules.reduce((sum, m) => sum + (m.credits || 0), 0);
   const semestreLabel = classe?.semestre?.libelle ?? '—';
-  const semestreNum   = getSemestreNum(classe?.semestre);
 
-  const badgeColor  = semestreNum === 1
-    ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300'
-    : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300';
-
+  // Colonne « Matière » retirée : elle affichait la même valeur sur chaque
+  // ligne et poussait les actions hors de l'écran à 1366 px de large.
   const columns = [
     {
       key: 'libelle',
       label: 'Module',
-      render: (row) => <span className="font-medium">{row.libelle}</span>,
-    },
-    {
-      key: 'matiere',
-      label: 'Matière',
-      render: (row) => (
-        <span className="text-muted-foreground text-xs">
-          {row.matiere?.libelle || '—'}
-        </span>
-      ),
+      render: (row) => <span className="font-medium text-pretty">{row.libelle}</span>,
     },
     {
       key: 'credits',
       label: 'ECTS',
       render: (row) => (
-        <Badge variant="secondary" className="font-semibold text-xs">
-          {row.credits}
-        </Badge>
+        <span className="text-sm font-semibold tabular-nums">{row.credits}</span>
       ),
     },
     {
       key: 'volume',
-      label: 'Volume',
+      label: 'Heures planifiées',
       render: (row) => {
-        const consomme = row.heures_consommees || 0;
-        const max      = row.heures_max || 1;
+        const consomme = Number(row.heures_consommees) || 0;
+        const max      = Number(row.heures_max) || 1;
         const pct      = Math.min((consomme / max) * 100, 100);
-        let barColor   = 'bg-green-500';
-        if (pct >= 80 && pct < 100) barColor = 'bg-orange-500';
-        else if (pct >= 100)        barColor = 'bg-red-500';
+        // Tout planifié = objectif atteint (barre pleine), pas une alerte. Le
+        // rouge est réservé à un vrai dépassement du volume du module.
+        const barColor = consomme > max ? 'bg-destructive' : 'bg-primary';
         return (
-          <div className="flex flex-col gap-1 w-32">
-            <div className="flex justify-between text-[11px] text-muted-foreground">
-              <span>{consomme}h / {max}h</span>
-              <span>{Math.round(pct)}%</span>
+          <div className="flex flex-col gap-1 w-36">
+            <div className="flex justify-between text-[11px] text-muted-foreground tabular-nums">
+              <span>{formatNombreHeures(consomme)} / {formatNombreHeures(max)}</span>
+              <span>{Math.round(pct)} %</span>
             </div>
-            <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden border border-border/30">
+            <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
               <div
-                className={`h-full ${barColor} transition-all duration-300 rounded-full`}
+                className={`h-full ${barColor} rounded-full`}
                 style={{ width: `${pct}%` }}
               />
             </div>
           </div>
         );
       },
-    },
-    {
-      key: 'affectations',
-      label: '',
-      render: (row) => (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-          onClick={(e) => { e.stopPropagation(); onAffecterModule(row); }}
-        >
-          <Users className="h-3.5 w-3.5" />
-          Affecter
-        </Button>
-      ),
     },
   ];
 
@@ -181,24 +157,18 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
   return (
     <div className="flex-1 flex flex-col">
       {/* En-tête */}
-      <div className="px-5 py-4 border-b border-border/50 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${badgeColor}`}>
-            {semestreLabel}
-          </div>
-          <span className="text-xs text-muted-foreground">
+      <div className="py-3 flex items-center justify-between gap-3">
+        <div className="flex items-baseline gap-3 min-w-0">
+          <h2 className="text-base font-semibold text-foreground">{semestreLabel}</h2>
+          <span className="text-xs text-muted-foreground tabular-nums">
             {isLoading ? '…' : `${modules.length} module${modules.length > 1 ? 's' : ''}`}
             {' · '}
-            <span className="font-semibold">{totalCredits} ECTS</span>
+            {totalCredits} ECTS
           </span>
         </div>
-        <Button
-          size="sm"
-          className="h-7 gap-1.5 text-xs shadow-sm rounded-full bg-blue-600 hover:bg-blue-700 text-white"
-          onClick={() => onAddModule(classe)}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Ajouter
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onAddModule(classe)}>
+          <Plus className="size-3.5" />
+          Ajouter un module
         </Button>
       </div>
 
@@ -221,7 +191,7 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
             <p className="text-sm">Aucun module pour ce semestre.</p>
             <Button
               size="sm"
-              className="mt-1 text-xs gap-1.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="mt-1 gap-1.5"
               onClick={() => onAddModule(classe)}
             >
               <Plus className="h-3.5 w-3.5" />
@@ -236,6 +206,11 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
             isError={false}
             onEdit={onEditModule}
             onDelete={(row) => onDeleteModule(row)}
+            actionsSupplementaires={[
+              { libelle: 'Affecter des enseignants', icone: Users, onClick: onAffecterModule },
+            ]}
+            actionsEnMenu
+            libelleLigne={(row) => row.libelle}
             emptyMessage="Aucun module pour ce semestre."
           />
         )}
@@ -344,7 +319,18 @@ export default function ContenuPedagogiquePage() {
 
   const deleteMutation = useMutation({
     mutationFn: removeModule,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['modules'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['modules'] });
+      toast({ title: 'Module supprimé' });
+    },
+    // Sans ce message, un refus du serveur (module déjà planifié…) passait
+    // inaperçu : le module restait simplement dans la liste.
+    onError: (err) =>
+      toast({
+        variant: 'destructive',
+        title: "Le module n'a pas pu être supprimé",
+        description: err?.response?.data?.detail ?? 'Réessayez ; si le problème persiste, rechargez la page.',
+      }),
   });
 
   // ── Gestionnaires ──────────────────────────────────────────
@@ -411,38 +397,36 @@ export default function ContenuPedagogiquePage() {
   // ── Rendu ──────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6 p-6 max-w-7xl mx-auto">
+    <div className="space-y-6 w-full max-w-7xl mx-auto">
 
-      {/* EN-TÊTE */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b pb-5">
-        <div className="flex items-center gap-3">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Contenu Pédagogique</h1>
-            <p className="text-muted-foreground text-sm mt-0.5">
-              Gérez les modules de chaque classe par semestre de l'année académique.
-            </p>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        titre="Contenu pédagogique"
+        description="Les modules de chaque classe, semestre par semestre, et les enseignants qui les assurent."
+      />
 
-      <div className="flex flex-col md:flex-row gap-8 items-start">
-        {/* SIDEBAR CLASSES */}
-        <div className="w-full md:w-64 flex-shrink-0 flex flex-col gap-1 md:border-r md:border-border md:pr-4">
-          <div className="flex items-center gap-2 mb-3 px-2">
-            <h2 className="text-sm font-semibold text-foreground">Classes</h2>
-          </div>
+      <div className="flex flex-col md:flex-row gap-6 items-start">
+        {/* Choix de la classe : liste verticale sur grand écran, rangée de
+            boutons défilante sur mobile (la liste empilée repoussait les
+            modules sous l'écran). */}
+        <nav
+          aria-label="Classes"
+          className="w-full md:w-52 flex-shrink-0 flex md:flex-col gap-1 overflow-x-auto no-scrollbar md:border-r md:border-border md:pr-4"
+        >
+          <h2 className="hidden md:block text-xs font-semibold text-muted-foreground uppercase mb-2 px-3">Classes</h2>
           {classesLoading ? (
-             <p className="text-sm text-muted-foreground px-2">Chargement...</p>
+             <p className="text-sm text-muted-foreground px-3">Chargement…</p>
           ) : groupedClasses.length === 0 ? (
-             <p className="text-sm text-muted-foreground px-2">Aucune classe disponible.</p>
+             <p className="text-sm text-muted-foreground px-3">Aucune classe disponible.</p>
           ) : (
               groupedClasses.map(group => (
                   <button
                       key={group.key}
+                      type="button"
+                      aria-current={selectedGroupKey === group.key ? 'true' : undefined}
                       onClick={() => setSelectedGroupKey(group.key)}
-                      className={`text-left px-3 py-2.5 rounded-md text-sm transition-colors ${
+                      className={`shrink-0 text-left px-3 py-2 rounded-md text-sm whitespace-nowrap md:whitespace-normal transition-colors ${
                           selectedGroupKey === group.key
-                              ? 'bg-primary text-primary-foreground font-medium shadow-sm'
+                              ? 'bg-primary/10 text-primary font-semibold'
                               : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
                       }`}
                   >
@@ -450,7 +434,7 @@ export default function ContenuPedagogiquePage() {
                   </button>
               ))
           )}
-        </div>
+        </nav>
 
         {/* VUE MODULES */}
         <div className="flex-1 w-full min-w-0">
@@ -577,9 +561,9 @@ export default function ContenuPedagogiquePage() {
               Gérez les affectations des enseignants sur ce module.
               {moduleAffectation && (
                 <span className="block mt-1 text-xs">
-                  Volume max : {moduleAffectation.heures_max}h
+                  Volume du module : {formatNombreHeures(moduleAffectation.heures_max)}
                   {' · '}
-                  Consommé : {moduleAffectation.heures_consommees}h
+                  Déjà planifié : {formatNombreHeures(moduleAffectation.heures_consommees)}
                 </span>
               )}
             </DialogDescription>

@@ -84,7 +84,7 @@ export const getSeanceColumns = ({ onEdit, onReport, onDelete, onPublier, onDepu
                     <Button
                         variant="ghost"
                         size="sm"
-                        className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950"
+                        className="text-primary hover:text-primary hover:bg-primary/10"
                         onClick={() => onPublier(row)}
                     >
                         Publier

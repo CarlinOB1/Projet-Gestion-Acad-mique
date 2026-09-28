@@ -59,7 +59,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                             {statut}
                         </Badge>
                         {seance.is_mutualise && (
-                            <Badge variant="outline" className="border-indigo-200 text-indigo-700 bg-indigo-50 ml-auto">
+                            <Badge variant="outline" className="ml-auto">
                                 Mutualisée
                             </Badge>
                         )}
@@ -82,7 +82,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                     {/* Date & Heure */}
                     <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/40">
                         <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                            <Clock className="h-4 w-4 text-blue-500" />
+                            <Clock className="h-4 w-4 text-primary" />
                         </div>
                         <div className="min-w-0">
                             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
@@ -112,7 +112,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                     {/* Enseignant */}
                     <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                         <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                            <User className="h-4 w-4 text-blue-500" />
+                            <User className="h-4 w-4 text-primary" />
                         </div>
                         <div className="min-w-0">
                             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Enseignant</p>
@@ -129,7 +129,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                     <div className="grid grid-cols-2 gap-3">
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                             <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                                <Users className="h-4 w-4 text-blue-500" />
+                                <Users className="h-4 w-4 text-primary" />
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Classe</p>
@@ -141,7 +141,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
 
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                             <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                                <MapPin className="h-4 w-4 text-blue-500" />
+                                <MapPin className="h-4 w-4 text-primary" />
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Salle</p>
@@ -156,7 +156,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                     {module?.code && (
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                             <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                                <Tag className="h-4 w-4 text-blue-500" />
+                                <Tag className="h-4 w-4 text-primary" />
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Code module</p>

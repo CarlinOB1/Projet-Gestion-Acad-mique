@@ -22,6 +22,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { formatNombreHeures } from '@/lib/utils';
 
 const seanceSchema = z.object({
   semestre_id: z.string().min(1, 'Le semestre est requis'),
@@ -57,6 +58,7 @@ export default function SeanceForm({
   classe = null,
   defaultValues = null,
   onSubmit,
+  onCancel,
   isPending,
   serverError = null,
 }) {
@@ -90,6 +92,21 @@ export default function SeanceForm({
   // l'ANCIEN type après un changement de champ, alors que le NOUVEAU type est
   // ce qui part réellement au serveur (CORRECTIONS_A_FAIRE.md, point 4).
   const typeSeance = useWatch({ control, name: 'type_seance' });
+  const moduleIdCourant = useWatch({ control, name: 'module_id' });
+
+  // En modification, les soldes renvoyés par le serveur comptent déjà la
+  // séance qu'on modifie : sans correction, une séance tout à fait valable
+  // affichait « 0h restantes » en rouge. On rajoute sa durée tant que le
+  // module (et, pour l'affectation, l'enseignant et le type) n'ont pas changé.
+  const estEdition = !!defaultValues?.module_id;
+  const dureeInitiale = (() => {
+    if (!estEdition || !defaultValues.heure_debut || !defaultValues.heure_fin) return 0;
+    const enMinutes = (t) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
+    return Math.max(0, enMinutes(defaultValues.heure_fin) - enMinutes(defaultValues.heure_debut)) / 60;
+  })();
 
   useEffect(() => {
     if (semestreId) setValue('semestre_id', String(semestreId));
@@ -129,8 +146,23 @@ export default function SeanceForm({
     const aff =
       affectationsEnseignant.find((a) => a.type_seance === typeSeance) ??
       affectationsEnseignant.find((a) => a.type_seance === null);
-    return aff ? { restantes: aff.heures_restantes, prevues: aff.heures_prevues, type: aff.type_seance } : null;
+    if (!aff) return null;
+    const memeAffectation =
+      estEdition &&
+      String(selectedEnseignantId) === String(defaultValues.enseignant_id) &&
+      String(moduleIdCourant) === String(defaultValues.module_id) &&
+      typeSeance === defaultValues.type_seance;
+    return {
+      restantes: Number(aff.heures_restantes) + (memeAffectation ? dureeInitiale : 0),
+      prevues: aff.heures_prevues,
+      type: aff.type_seance,
+    };
   };
+
+  const heuresRestantesModule = moduleSelectionne
+    ? Number(moduleSelectionne.heures_restantes) +
+      (estEdition && String(moduleIdCourant) === String(defaultValues.module_id) ? dureeInitiale : 0)
+    : null;
 
   const getHeuresColor = (h) => {
     if (h > 4) return 'text-green-600 dark:text-green-400';
@@ -170,8 +202,8 @@ export default function SeanceForm({
         )} />
         {errors.module_id && <p className="text-xs text-destructive">{errors.module_id.message}</p>}
         {moduleSelectionne && (
-          <p className={`text-xs font-medium ${getHeuresColor(moduleSelectionne.heures_restantes)}`}>
-            Heures restantes : {moduleSelectionne.heures_restantes}h / {moduleSelectionne.heures_max}h max
+          <p className={`text-xs font-medium tabular-nums ${getHeuresColor(heuresRestantesModule)}`}>
+            Reste à planifier : {formatNombreHeures(heuresRestantesModule)} sur {formatNombreHeures(moduleSelectionne.heures_max)}
           </p>
         )}
       </div>
@@ -206,10 +238,11 @@ export default function SeanceForm({
             : solde.restantes > 0 ? 'text-orange-600 dark:text-orange-400'
             : 'text-red-600 dark:text-red-400';
           return (
-            <p className={`text-xs font-medium flex items-center gap-1 ${cls}`}>
-              <AlertTriangle className="h-3 w-3" />
-              Solde affectation ({solde.type ?? 'Générique'}) :
-              {' '}{solde.restantes}h restantes / {solde.prevues}h prévues
+            <p className={`text-xs font-medium flex items-center gap-1 tabular-nums ${cls}`}>
+              {solde.restantes <= 0 && <AlertTriangle className="size-3 shrink-0" aria-hidden />}
+              {solde.restantes < 0
+                ? `Dépassement de ${formatNombreHeures(-solde.restantes)} sur ses ${formatNombreHeures(solde.prevues)} de ${solde.type ?? 'cours'} prévues`
+                : `Il lui reste ${formatNombreHeures(solde.restantes)} de ${solde.type ?? 'cours'} sur ${formatNombreHeures(solde.prevues)} prévues`}
             </p>
           );
         })()}
@@ -257,11 +290,16 @@ export default function SeanceForm({
       </div>
 
       {/* 7. Erreur serveur / Conflit Popover */}
-      <div className="md:col-span-2 pt-2">
+      <div className="md:col-span-2 pt-2 flex flex-col-reverse sm:flex-row gap-2">
+        {onCancel && (
+          <Button type="button" variant="outline" className="sm:w-40" onClick={onCancel} disabled={isPending}>
+            Annuler
+          </Button>
+        )}
         <Popover open={!!serverError}>
           <PopoverTrigger asChild>
-            <div className="w-full">
-              <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSubmit(onFormSubmit)} disabled={isPending}>
+            <div className="flex-1">
+              <Button className="w-full" onClick={handleSubmit(onFormSubmit)} disabled={isPending}>
                 {isPending ? 'Enregistrement...' : 'Enregistrer la séance'}
               </Button>
             </div>

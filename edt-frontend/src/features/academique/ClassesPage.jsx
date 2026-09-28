@@ -6,8 +6,9 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   GraduationCap, ChevronDown, ChevronUp, Users, ArrowRightCircle,
-  CheckCircle2, Plus, UserX, UserCheck, School,
+  CheckCircle2, Plus, UserX, UserCheck, School, Search,
 } from 'lucide-react';
+import PageHeader from '@/components/shared/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
@@ -23,7 +24,7 @@ import {
   getSemestres, getParcours, getFilieres, getAnnees,
 } from '@/api/academique';
 import { getEtudiants } from '@/api/acteurs';
-import { STATUT_COLORS } from '@/lib/constants';
+import { STATUT_COLORS, STATUT_LABELS } from '@/lib/constants';
 import useAuthStore from '@/store/authStore';
 
 // ── Sous-composant : ligne étudiant ──────────────────────────────────────────
@@ -47,13 +48,18 @@ function EtudiantRow({ etudiant, onStatut, readOnly = false }) {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <Badge variant="outline" className={`text-xs ${STATUT_COLORS[statut]?.bg} ${STATUT_COLORS[statut]?.text} ${STATUT_COLORS[statut]?.border}`}>
-          {statut}
-        </Badge>
+        {/* Badge seulement pour un statut inhabituel : « actif » sur chaque
+            ligne n'apprenait rien et noyait les vrais cas à repérer. */}
+        {statut !== 'actif' && (
+          <Badge variant="outline" className={`text-xs ${STATUT_COLORS[statut]?.bg} ${STATUT_COLORS[statut]?.text} ${STATUT_COLORS[statut]?.border}`}>
+            {STATUT_LABELS[statut] ?? statut}
+          </Badge>
+        )}
         {!readOnly && !isChefDepartement && (
           <Button
             variant="ghost" size="icon" className="h-7 w-7"
             title={statut === 'actif' ? 'Suspendre' : 'Réactiver'}
+            aria-label={statut === 'actif' ? 'Suspendre' : 'Réactiver'}
             onClick={() => onStatut(etudiant)}
           >
             {statut === 'actif'
@@ -69,6 +75,7 @@ function EtudiantRow({ etudiant, onStatut, readOnly = false }) {
 // ── Sous-composant : carte classe accordéon ───────────────────────────────────
 function ClasseCard({ classe, onPasserSemestre, readOnly = false }) {
   const [open, setOpen] = useState(false);
+  const [recherche, setRecherche] = useState('');
   const [isStatutDrawerOpen, setIsStatutDrawerOpen] = useState(false);
   const [etudiantForStatut, setEtudiantForStatut] = useState(null);
 
@@ -79,47 +86,72 @@ function ClasseCard({ classe, onPasserSemestre, readOnly = false }) {
     staleTime: 1000 * 30,
   });
 
+  const terme = recherche.trim().toLowerCase();
+  const etudiantsAffiches = terme
+    ? etudiants.filter((et) =>
+        [et.profil?.user?.last_name, et.profil?.user?.first_name, et.matricule]
+          .filter(Boolean)
+          .some((v) => v.toLowerCase().includes(terme)))
+    : etudiants;
+  const nb = classe.nombre_etudiants ?? 0;
+  const panneauId = `classe-${classe.id}-etudiants`;
+
   return (
-    <div className="border border-border rounded-xl overflow-hidden bg-card shadow-sm">
+    <div className="border border-border rounded-xl overflow-hidden bg-card">
+      {/* Le nom de la classe contient déjà filière, semestre et année : la
+          sous-ligne qui les répétait a été retirée. */}
       <button
         type="button"
+        aria-expanded={open}
+        aria-controls={panneauId}
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors text-left"
+        className="w-full flex items-center justify-between gap-3 px-5 py-4 hover:bg-muted/30 transition-colors text-left"
       >
-        <div className="flex items-center gap-3">
-          <div>
-            <p className="font-semibold text-foreground">{classe.libelle}</p>
-            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-              <span className="text-xs text-muted-foreground">{classe.filiere?.libelle || classe.code || '—'}</span>
-              <span className="text-muted-foreground/40 text-xs">·</span>
-              <Badge variant="secondary" className="text-xs py-0">{classe.semestre?.libelle}</Badge>
-              <span className="text-muted-foreground/40 text-xs">·</span>
-              <span className="text-xs text-muted-foreground">{classe.annee?.libelle}</span>
-            </div>
-          </div>
-        </div>
+        <p className="font-semibold text-foreground min-w-0 truncate">{classe.libelle}</p>
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Users className="h-3.5 w-3.5" />
-            <span>{classe.nombre_etudiants ?? 0} Étudiant{(classe.nombre_etudiants ?? 0) !== 1 ? 's' : ''}</span>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+            <Users className="size-3.5" aria-hidden />
+            <span>{nb} étudiant{nb !== 1 ? 's' : ''}</span>
           </div>
-          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          {open ? <ChevronUp className="size-4 text-muted-foreground" aria-hidden /> : <ChevronDown className="size-4 text-muted-foreground" aria-hidden />}
         </div>
       </button>
 
       {open && (
-        <div className="border-t border-border/60">
+        <div id={panneauId} className="border-t border-border/60">
           {isLoading && (
-            <div className="py-6 flex items-center justify-center">
-              <div className="animate-pulse text-sm text-muted-foreground">Chargement des étudiants…</div>
+            <div className="space-y-2 p-4" aria-label="Chargement des étudiants">
+              {[1, 2, 3].map((i) => <div key={i} className="h-10 rounded-md bg-muted animate-pulse" />)}
             </div>
           )}
           {!isLoading && etudiants.length === 0 && (
             <div className="py-6 text-center text-sm text-muted-foreground">Aucun étudiant dans cette classe.</div>
           )}
-          {!isLoading && etudiants.length > 0 && (
+          {!isLoading && etudiants.length > 8 && (
+            <div className="px-4 pt-3">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" aria-hidden />
+                <Input
+                  value={recherche}
+                  onChange={(e) => setRecherche(e.target.value)}
+                  placeholder="Rechercher un étudiant (nom ou matricule)…"
+                  aria-label={`Rechercher un étudiant de ${classe.libelle}`}
+                  className="pl-8"
+                />
+              </div>
+            </div>
+          )}
+          {!isLoading && etudiants.length > 0 && etudiantsAffiches.length === 0 && (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              Aucun étudiant ne correspond à « {recherche} ».{' '}
+              <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setRecherche('')}>
+                Effacer la recherche
+              </button>
+            </div>
+          )}
+          {!isLoading && etudiantsAffiches.length > 0 && (
             <div className="divide-y divide-border/40 px-2 py-1">
-              {etudiants.map((et) => (
+              {etudiantsAffiches.map((et) => (
                 <EtudiantRow
                   key={et.profil?.user?.id ?? et.matricule}
                   etudiant={et}
@@ -279,29 +311,22 @@ export default function ClassesPage({ readOnly = false }) {
   return (
     <div className="space-y-6 w-full max-w-7xl mx-auto">
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
-        <div className="flex items-center gap-3">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Classes & Étudiants</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Gérez les classes et la liste des étudiants de votre département.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Select value={selectedSemestreId} onValueChange={setSelectedSemestreId}>
-            <SelectTrigger className="w-[200px] bg-background">
-              <SelectValue placeholder="Filtrer par semestre" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Tous les semestres</SelectItem>
-              {semestres.map((s) => (
-                <SelectItem key={s.id} value={s.id.toString()}>{s.libelle}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      <PageHeader
+        titre="Classes & Étudiants"
+        description="Les classes de votre département ; ouvrez-en une pour voir ses étudiants."
+      >
+        <Select value={selectedSemestreId} onValueChange={setSelectedSemestreId}>
+          <SelectTrigger className="w-[200px] bg-background" aria-label="Filtrer par semestre">
+            <SelectValue placeholder="Filtrer par semestre" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous les semestres</SelectItem>
+            {semestres.map((s) => (
+              <SelectItem key={s.id} value={s.id.toString()}>{s.libelle}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </PageHeader>
 
       {/* Liste accordéon */}
       {isLoading && (

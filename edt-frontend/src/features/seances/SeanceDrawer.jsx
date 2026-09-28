@@ -77,7 +77,7 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className="sm:max-w-3xl w-[90vw] max-h-[90vh] overflow-y-auto p-8">
         <DialogHeader>
-          <DialogTitle className="text-xl text-blue-900">
+          <DialogTitle className="text-xl">
             {isEditMode ? 'Modifier la séance' : 'Nouvelle séance'}
           </DialogTitle>
           <DialogDescription>
@@ -92,6 +92,7 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
             classe={classeContext}
             defaultValues={normalizedDefaults}
             onSubmit={handleSubmit}
+            onCancel={onClose}
             isPending={activeMutation.isPending}
             serverError={serverError}
           />

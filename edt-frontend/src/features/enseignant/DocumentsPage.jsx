@@ -6,6 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGr
 import { Badge } from '@/components/ui/badge';
 import FormModal from '@/components/shared/FormModal';
 import { confirmer } from '@/lib/confirmer';
+import { toast } from '@/hooks/use-toast';
+import PageHeader from '@/components/shared/PageHeader';
 import { getDocuments, createDocument, deleteDocument } from '@/api/documents';
 import { getModules } from '@/api/academique';
 
@@ -48,8 +50,10 @@ export default function DocumentsPage({ readOnly = false }) {
   const [moduleId, setModuleId] = useState('');
   const [file, setFile] = useState(null);
 
+  // Clé distincte de ['mes-modules'] (page « Mes modules », autre requête) :
+  // partager la clé faisait afficher à une page la liste chargée par l'autre.
   const { data: modules = [] } = useQuery({
-    queryKey: ['mes-modules'],
+    queryKey: ['modules', 'documents'],
     queryFn: () => getModules(),
   });
 
@@ -75,7 +79,16 @@ export default function DocumentsPage({ readOnly = false }) {
 
   const deleteMutation = useMutation({
     mutationFn: deleteDocument,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['documents'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['documents'] });
+      toast({ title: 'Document supprimé' });
+    },
+    onError: () =>
+      toast({
+        variant: 'destructive',
+        title: "Le document n'a pas pu être supprimé",
+        description: 'Réessayez ; si le problème persiste, rechargez la page.',
+      }),
   });
 
   const handleCloseModal = () => {
@@ -104,24 +117,16 @@ export default function DocumentsPage({ readOnly = false }) {
   };
 
   return (
-    <div className="space-y-6 p-6 max-w-7xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b pb-5">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 text-primary rounded-lg hidden sm:block">
-            <FileText className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Documents Pédagogiques</h1>
-            <p className="text-muted-foreground text-sm mt-0.5">
-              Gérez les supports de cours, TD, TP et examens de vos modules.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-6 w-full max-w-7xl mx-auto">
+      <PageHeader
+        titre={readOnly ? 'Documents' : 'Mes documents'}
+        description={readOnly
+          ? 'Les supports de cours, TD et TP déposés par vos enseignants.'
+          : 'Les supports de cours, TD et TP que vous mettez à disposition de vos étudiants.'}
+      >
           <div className="w-[200px]">
             <Select value={selectedModuleId} onValueChange={setSelectedModuleId}>
-              <SelectTrigger className="bg-background shadow-sm">
+              <SelectTrigger className="bg-background" aria-label="Filtrer par module">
                 <SelectValue placeholder="Filtrer par module" />
               </SelectTrigger>
               <SelectContent>
@@ -148,13 +153,12 @@ export default function DocumentsPage({ readOnly = false }) {
           </div>
 
           {!readOnly && (
-            <Button onClick={() => setIsModalOpen(true)} className="shadow-sm">
-              <Plus className="mr-2 h-4 w-4" />
-              Uploader un document
+            <Button onClick={() => setIsModalOpen(true)} className="gap-2">
+              <Plus className="size-4" />
+              Ajouter un document
             </Button>
           )}
-        </div>
-      </div>
+      </PageHeader>
 
       {/* Liste des documents */}
       {isLoading && (
@@ -166,9 +170,26 @@ export default function DocumentsPage({ readOnly = false }) {
       )}
       
       {!isLoading && !isError && documents.length === 0 && (
-        <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground">
-          <FileText className="h-10 w-10 opacity-30" />
-          <p className="text-sm">Aucun document pédagogique trouvé.</p>
+        <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground text-center">
+          <FileText className="size-10 opacity-30" aria-hidden />
+          <p className="text-sm text-pretty">
+            {selectedModuleId !== 'all'
+              ? 'Aucun document pour ce module.'
+              : readOnly
+                ? 'Vos enseignants n’ont encore déposé aucun document.'
+                : 'Vous n’avez encore déposé aucun document.'}
+          </p>
+          {/* Une action claire depuis l'état vide, plutôt qu'un simple constat. */}
+          {selectedModuleId !== 'all' ? (
+            <Button variant="outline" size="sm" onClick={() => setSelectedModuleId('all')}>
+              Voir tous les modules
+            </Button>
+          ) : !readOnly && (
+            <Button size="sm" className="gap-2" onClick={() => setIsModalOpen(true)}>
+              <Plus className="size-4" />
+              Ajouter un document
+            </Button>
+          )}
         </div>
       )}
 
@@ -196,12 +217,14 @@ export default function DocumentsPage({ readOnly = false }) {
               </div>
 
               <div className="flex items-center justify-between mt-auto pt-4 border-t border-border/40">
-                <div className="text-[11px] text-muted-foreground">
-                  {new Date(doc.created_at).toLocaleDateString()}
-                  {doc.taille && ` · ${(doc.taille / 1024 / 1024).toFixed(2)} MB`}
+                <div className="text-[11px] text-muted-foreground tabular-nums">
+                  {new Date(doc.created_at).toLocaleDateString('fr-FR')}
+                  {doc.taille && ` · ${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(doc.taille / 1024 / 1024)} Mo`}
                 </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" asChild>
+                {/* Toujours visibles : cachés jusqu'au survol, ces boutons
+                    n'apparaissaient jamais sur téléphone. */}
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" asChild aria-label={`Télécharger ${doc.titre ?? 'le document'}`}>
                     <a href={doc.fichier_url} target="_blank" rel="noopener noreferrer" download>
                       <Download className="h-4 w-4" />
                     </a>
@@ -237,7 +260,7 @@ export default function DocumentsPage({ readOnly = false }) {
         open={isModalOpen}
         onClose={handleCloseModal}
         onConfirm={handleFormSubmit}
-        title="Uploader un document pédagogique"
+        title="Ajouter un document"
         description="Ajoutez un support de cours, TD, TP ou examen pour vos étudiants."
         isPending={createMutation.isPending}
       >

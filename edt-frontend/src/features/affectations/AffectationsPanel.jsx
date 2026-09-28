@@ -211,7 +211,7 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
 
       <DialogFooter className="pt-2 gap-2">
         <Button type="button" variant="outline" onClick={onCancel} className="flex-1 sm:flex-none">Annuler</Button>
-        <Button type="submit" disabled={mutation.isPending} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white">
+        <Button type="submit" disabled={mutation.isPending} className="flex-1 sm:flex-none">
           {mutation.isPending ? 'Enregistrement...' : affectation ? 'Enregistrer les modifications' : 'Ajouter l\'affectation'}
         </Button>
       </DialogFooter>

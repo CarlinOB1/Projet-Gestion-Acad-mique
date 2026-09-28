@@ -28,6 +28,20 @@ export const STATUT_SEANCE = Object.freeze({
   REPORTEE: 'Reportée',
 });
 
+/**
+ * Libellé affiché de chaque statut. Les valeurs ci-dessus viennent de l'API
+ * (dont « brouillon » en minuscule) ; on ne les affiche jamais telles quelles.
+ */
+export const STATUT_LABELS = Object.freeze({
+  [STATUT_SEANCE.BROUILLON]: 'Brouillon',
+  [STATUT_SEANCE.CONFIRMEE]: 'Confirmée',
+  [STATUT_SEANCE.ANNULEE]: 'Annulée',
+  [STATUT_SEANCE.REPORTEE]: 'Reportée',
+  actif: 'Actif',
+  inactif: 'Inactif',
+  suspendu: 'Suspendu',
+});
+
 export const SEANCE_COLORS = Object.freeze({
   [TYPE_SEANCE.CM]: {
     bg: 'bg-blue-100 dark:bg-blue-950/40',

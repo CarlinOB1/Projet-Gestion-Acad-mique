@@ -21,14 +21,8 @@ export default function Topbar({ onMenuToggle }) {
     NAV_ITEMS.find((item) => location.pathname.startsWith(`${item.path}/`));
   const pageTitle = currentItem?.label ?? '';
 
-  const roleStyles = {
-    admin: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900',
-    chef_departement: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-400 dark:border-indigo-900',
-    referent_l1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/40 dark:text-teal-400 dark:border-teal-900',
-    enseignant:  'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900',
-    etudiant:    'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-900',
-  };
-
+  // Une seule couleur pour tous les rôles : chacun ne voit que le sien,
+  // une couleur par rôle ajoutait seulement un accent de plus à l'écran.
   const currentRole = user?.role || 'etudiant';
 
   return (
@@ -54,7 +48,7 @@ export default function Topbar({ onMenuToggle }) {
             <p className="text-base font-semibold text-foreground leading-tight">
               {user?.nom_complet}
             </p>
-            <span className={`mt-1.5 inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold border ${roleStyles[currentRole] || roleStyles.etudiant}`}>
+            <span className="mt-1.5 inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-primary/10 text-primary border-primary/20">
               {ROLE_LABELS[currentRole] || 'Étudiant'}
             </span>
           </div>

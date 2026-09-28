@@ -7,6 +7,7 @@ import { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, CalendarDays, Clock, AlertCircle, CalendarX, Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SEANCE_COLORS } from '@/lib/constants';
+import { formatNombreHeures } from '@/lib/utils';
 
 // ── Créneaux horaires du planning UCCB ─────────────────────────────────────────
 const TIME_SLOTS = [
@@ -118,17 +119,17 @@ function EmptyCell({ onClick, disabled }) {
       onMouseLeave={() => setIsHovered(false)}
       className={`
         w-full h-full flex flex-col items-center justify-center gap-1 rounded-lg border transition-all duration-150 cursor-pointer
-        ${isHovered ? 'border-blue-400 bg-blue-50/70 shadow-sm' : 'border-dashed border-border/60 bg-transparent'}
+        ${isHovered ? 'border-primary/50 bg-primary/5 shadow-sm' : 'border-dashed border-border/60 bg-transparent'}
       `}
     >
-      <Plus className={`w-4 h-4 transition-colors ${isHovered ? 'text-blue-600' : 'text-muted-foreground/40'}`} />
-      {isHovered && <span className="text-[10px] text-blue-600 font-bold">Affecter</span>}
+      <Plus className={`w-4 h-4 transition-colors ${isHovered ? 'text-primary' : 'text-muted-foreground/40'}`} />
+      {isHovered && <span className="text-[10px] text-primary font-bold">Affecter</span>}
     </button>
   );
 }
 
 // ── Carte de cours ──────────────────────────────────────────────────────────────
-function CourseCard({ seance, onClick, isPrintMode }) {
+function CourseCard({ seance, onClick, isPrintMode, masquer = [] }) {
   const { type_seance, statut, module, enseignant, classe } = seance;
   const typeStyle = SEANCE_COLORS[type_seance] || {
     bg: 'bg-slate-100', text: 'text-slate-900', border: 'border-slate-400',
@@ -154,7 +155,7 @@ function CourseCard({ seance, onClick, isPrintMode }) {
           <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded bg-white/70 shadow-2xs ${typeStyle.text}`}>
             {type_seance}
           </span>
-          {classe?.libelle && (
+          {classe?.libelle && !masquer.includes('classe') && (
             <span className={`${isPrintMode ? 'text-[8px]' : 'text-[9px]'} font-semibold px-1 py-0.5 rounded bg-black/5 text-foreground/80`}>
               {classe.libelle}
             </span>
@@ -166,7 +167,7 @@ function CourseCard({ seance, onClick, isPrintMode }) {
             <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700`}>Reportée</span>
           )}
           {seance.is_mutualise && (
-            <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700`}>Mutualisée</span>
+            <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-bold px-1.5 py-0.5 rounded bg-white/70 text-foreground/80`}>Mutualisée</span>
           )}
         </div>
 
@@ -174,12 +175,24 @@ function CourseCard({ seance, onClick, isPrintMode }) {
         <p className={`${isPrintMode ? 'text-xs' : 'text-xs sm:text-sm'} font-bold leading-snug ${isPrintMode ? '' : 'line-clamp-2'} ${typeStyle.text} ${estAnnulee ? 'line-through' : ''}`}>
           {module?.libelle || '—'}
         </p>
+
+        {/* Matière du module */}
+        {module?.matiere?.libelle && (
+          <p
+            title={module.matiere.libelle}
+            className={`${isPrintMode ? 'text-[9px]' : 'text-[10px]'} mt-0.5 text-foreground/70 ${isPrintMode ? '' : 'truncate'}`}
+          >
+            {module.matiere.libelle}
+          </p>
+        )}
       </div>
 
       {/* Bottom : enseignant */}
-      <p className={`${isPrintMode ? 'text-[10px] mt-1' : 'text-[11px] mt-1'} text-muted-foreground ${isPrintMode ? '' : 'truncate'} font-semibold`}>
-        {enseignant?.nom_complet || 'Non assigné'}
-      </p>
+      {!masquer.includes('enseignant') && (
+        <p className={`${isPrintMode ? 'text-[10px] mt-1' : 'text-[11px] mt-1'} text-muted-foreground ${isPrintMode ? '' : 'truncate'} font-semibold`}>
+          {enseignant?.nom_complet || 'Non assigné'}
+        </p>
+      )}
     </button>
   );
 }
@@ -197,6 +210,7 @@ export default function PlanningTableView({
   isPrintMode = false,
   readOnly = false,
   title = "Emploi du temps",
+  masquer = [],
 }) {
   const [internalWeekStart, setInternalWeekStart] = useState(() => getMondayOf(new Date()));
 
@@ -281,13 +295,9 @@ export default function PlanningTableView({
     return count;
   }, [weekDays, eventMap]);
 
-  if (isLoading) {
-    return (
-      <div className="w-full h-64 bg-muted/40 animate-pulse rounded-xl border border-border/60 flex items-center justify-center">
-        <span className="text-sm text-muted-foreground font-medium">Chargement de l'emploi du temps…</span>
-      </div>
-    );
-  }
+  // Pendant le chargement (jusqu'à ~25 s sur un gros semestre), on garde la
+  // grille et la navigation à l'écran avec des blocs gris à la place des
+  // séances, plutôt qu'un simple texte « Chargement… ».
   if (isError) {
     return (
       <div className="w-full h-64 flex flex-col items-center justify-center gap-3 border border-destructive/20 bg-destructive/5 rounded-xl p-6 text-center">
@@ -314,7 +324,7 @@ export default function PlanningTableView({
     <div className={`flex flex-col gap-4 ${isPrintMode ? 'w-[1050px] bg-background p-4' : ''}`}>
 
       {/* ── État vide contextualisé ── */}
-      {hasNoEventsAtAll && !isPrintMode && (
+      {hasNoEventsAtAll && !isLoading && !isPrintMode && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border bg-muted/30 py-12 px-6 text-center">
           <CalendarX className="h-10 w-10 text-muted-foreground/60" />
           <div>
@@ -334,18 +344,18 @@ export default function PlanningTableView({
         {!isPrintMode ? (
           <div className="flex items-center gap-2">
             <Button variant="outline" size="icon" onClick={handlePrev} aria-label="Semaine précédente" className="h-9 w-9">
-              <ChevronLeft className="h-4 w-4 text-blue-600" />
+              <ChevronLeft className="h-4 w-4" />
             </Button>
             <Button variant="outline" onClick={handleToday} className="h-9 px-4 text-sm font-medium gap-2">
-              <CalendarDays className="h-4 w-4 text-blue-600" />
+              <CalendarDays className="h-4 w-4" />
               Aujourd'hui
             </Button>
             <Button variant="outline" size="icon" onClick={handleNext} aria-label="Semaine suivante" className="h-9 w-9">
-              <ChevronRight className="h-4 w-4 text-blue-600" />
+              <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         ) : (
-          <div className="text-xl font-extrabold text-foreground tracking-tight text-left flex-1 border-l-4 border-blue-500 pl-3">
+          <div className="text-xl font-extrabold text-foreground tracking-tight text-left flex-1 border-l-4 border-primary pl-3">
             {title}
           </div>
         )}
@@ -375,9 +385,9 @@ export default function PlanningTableView({
             </div>
           )}
           {!isPrintMode && (
-            <div className="flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-md text-xs font-bold ml-1">
-              <Clock className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-              <span>{totalHours}h</span>
+            <div className="flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 px-2.5 py-1 rounded-md text-xs font-bold ml-1 tabular-nums">
+              <Clock className="h-3.5 w-3.5 shrink-0" />
+              <span>{isLoading ? '… h de cours' : `${formatNombreHeures(totalHours)} de cours`}</span>
             </div>
           )}
         </div>
@@ -404,16 +414,16 @@ export default function PlanningTableView({
                 return (
                   <th
                     key={day.offset}
-                    className={`p-3 border-b border-r border-border text-center last:border-r-0 ${isToday ? 'bg-blue-50/60 dark:bg-blue-950/20' : 'bg-muted/60'}`}
+                    className={`p-3 border-b border-r border-border text-center last:border-r-0 ${isToday ? 'bg-primary/10' : 'bg-muted/60'}`}
                   >
-                    <p className={`text-xs font-bold uppercase tracking-wider ${isToday ? 'text-blue-600' : 'text-foreground'}`}>
+                    <p className={`text-xs font-bold uppercase tracking-wider ${isToday ? 'text-primary' : 'text-foreground'}`}>
                       {day.full}
                     </p>
-                    <p className={`text-xs mt-0.5 ${isToday ? 'text-blue-600 font-semibold' : 'text-muted-foreground'}`}>
+                    <p className={`text-xs mt-0.5 ${isToday ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>
                       {formatDayDate(day.date)}
                     </p>
                     {isToday && (
-                      <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-600 mx-auto" />
+                      <div className="mt-1.5 size-1.5 rounded-full bg-primary mx-auto" />
                     )}
                   </th>
                 );
@@ -462,7 +472,7 @@ export default function PlanningTableView({
                         className={`
                           border-r border-b ${isLast ? 'border-b-0' : ''} last:border-r-0 border-border p-1.5
                           ${slot.isPause ? 'bg-amber-50/30 dark:bg-amber-950/10' : ''}
-                          ${isToday && !slot.isPause ? 'bg-blue-50/20 dark:bg-blue-950/10' : ''}
+                          ${isToday && !slot.isPause ? 'bg-primary/[0.03]' : ''}
                         `}
                         style={{
                           height: slot.rowH,
@@ -471,7 +481,11 @@ export default function PlanningTableView({
                         }}
                       >
                         {/* Case en conflit */}
-                        {hasConflictInCell ? (
+                        {isLoading ? (
+                          !slot.isPause && (
+                            <div className="h-full w-full rounded-lg bg-muted animate-pulse" aria-hidden />
+                          )
+                        ) : hasConflictInCell ? (
                           <ConflictCell seances={activeSeances} onClick={onSeanceClick} />
                         ) : cellSeances.length > 0 ? (
                           <div
@@ -487,7 +501,7 @@ export default function PlanningTableView({
                                 key={seance.id ?? i}
                                 style={{ flex: 1, minHeight: 'fit-content', display: 'flex', flexDirection: 'column' }}
                               >
-                                <CourseCard seance={seance} onClick={onSeanceClick} isPrintMode={isPrintMode} />
+                                <CourseCard seance={seance} onClick={onSeanceClick} isPrintMode={isPrintMode} masquer={masquer} />
                               </div>
                             ))}
                           </div>

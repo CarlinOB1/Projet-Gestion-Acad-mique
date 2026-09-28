@@ -11,7 +11,7 @@ import {
     Select, SelectContent, SelectItem,
     SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { TYPE_SEANCE, STATUT_SEANCE } from '@/lib/constants';
+import { TYPE_SEANCE, STATUT_SEANCE, STATUT_LABELS } from '@/lib/constants';
 import { aDesFiltresActifs } from '@/lib/planningFilters';
 
 const SENTINEL_TOUS = '__tous__';
@@ -21,14 +21,17 @@ const SENTINEL_TOUS = '__tous__';
  *   filters: Object,
  *   onChange: (filters: Object) => void,
  *   showEnseignantFilter?: boolean,
- *   semesterSelect?: React.ReactNode,
+ *   avant?: React.ReactNode,
  * }} props
+ * `avant` s'affiche au début de la barre (choix de la classe côté gestionnaire),
+ * pour tenir sur une seule ligne au lieu d'empiler une barre de plus.
  */
 export default function PlanningFilters({
     filters,
     onChange,
     enseignants = [],
     showEnseignantFilter = true,
+    avant = null,
 }) {
     const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -47,6 +50,7 @@ export default function PlanningFilters({
         <div className="flex flex-col gap-3">
             {/* Filtres principaux */}
             <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3 bg-muted/40 border border-border/60 rounded-lg p-3">
+                {avant}
                 <div className="relative flex-1 min-w-[180px]">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -119,7 +123,7 @@ export default function PlanningFilters({
                         <SelectContent>
                             <SelectItem value={SENTINEL_TOUS}>Tous statuts</SelectItem>
                             {Object.values(STATUT_SEANCE).map((statut) => (
-                                <SelectItem key={statut} value={statut}>{statut}</SelectItem>
+                                <SelectItem key={statut} value={statut}>{STATUT_LABELS[statut] ?? statut}</SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
