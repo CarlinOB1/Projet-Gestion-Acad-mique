@@ -82,6 +82,14 @@ def modules_autorises(user):
     perimetre = Q()
     if departements_diriges.exists():
         perimetre |= Q(matiere__departement__in=departements_diriges)
+        # Symétrique de la branche référent ci-dessous : un chef peut créer
+        # une AffectationModule hors_departement=True sur une classe qu'il
+        # dirige (AffectationModuleSerializer.validate() l'autorise), il doit
+        # donc pouvoir la relire/modifier/supprimer ensuite — sans quoi
+        # l'objet devient introuvable juste après sa création
+        # (CORRECTIONS_A_FAIRE.md, point 2).
+        classes_dirigees = Classe.objects.filter(filiere__departement__in=departements_diriges)
+        perimetre |= Q(classe__in=classes_dirigees) | Q(seance__classe__in=classes_dirigees)
     if est_referent:
         classes_ref = enseignant.referent_classes.classes.all()
         # Un module peut être rattaché directement à une classe (classe_id),

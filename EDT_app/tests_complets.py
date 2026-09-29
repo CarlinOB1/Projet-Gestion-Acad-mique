@@ -774,25 +774,35 @@ class TestModulePerimetreChef(TestCase):
         self.assertIn(self.module_a.id, ids)
         self.assertNotIn(self.module_b.id, ids)
 
-    def test_modification_module_autre_departement_invisible(self):
+    def test_modification_module_autre_departement_refusee(self):
         """
-        La liste (get_queryset) cadre déjà l'accès : un module d'un autre
-        département est totalement invisible pour ce chef, la tentative de
-        modification échoue donc au niveau de l'objet lui-même (404), avant
-        même d'atteindre la validation d'écriture.
+        CORRECTIONS_A_FAIRE.md, point 3, corrigé : get_queryset() ne filtre
+        plus les routes de détail par périmètre, donc l'objet est désormais
+        atteint et c'est ModuleSerializer.validate() (garde-fou déjà en
+        place : un chef ne peut modifier qu'un module de son propre
+        département) qui refuse la requête avec un 400 explicite — plutôt
+        que le 404 qui la rendait inatteignable avant même que cette
+        validation n'ait la moindre chance de s'exécuter.
         """
         resp = self.client_chef.patch(
             f"/api/modules/{self.module_b.id}/",
             {"libelle": "Piraté"},
             format="json",
         )
-        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.module_b.refresh_from_db()
         self.assertNotEqual(self.module_b.libelle, "Piraté")
 
-    def test_suppression_module_autre_departement_invisible(self):
+    def test_suppression_module_autre_departement_refusee(self):
+        """
+        CORRECTIONS_A_FAIRE.md, point 3, corrigé : get_queryset() ne filtre
+        plus les routes de détail par périmètre (seul `list` l'est), donc
+        l'objet est désormais atteint par perform_destroy(), qui lève enfin
+        le 403 explicite que cette méthode existe précisément pour produire
+        — plutôt qu'un 404 qui la rendait inatteignable (code mort).
+        """
         resp = self.client_chef.delete(f"/api/modules/{self.module_b.id}/")
-        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertTrue(Module.objects.filter(pk=self.module_b.id).exists())
 
     def test_reassignation_module_propre_vers_matiere_etrangere_refusee(self):
@@ -1431,6 +1441,34 @@ class TestActionChangerStatut(TestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_changer_statut_convertit_une_validationerror_django_en_400(self):
+        """
+        ProfilSuspensionSerializer.save() (comme SeanceReportSerializer.save())
+        appelle profil.save() directement, sans passer par ValidateOnSaveMixin.
+        Sa propre validate() ne vérifie que le motif de suspension — jamais
+        la règle "un profil ne peut pas être simultanément enseignant et
+        étudiant" (Profil.clean(), models.py:328). En construisant ce
+        double-rattachement directement au niveau modèle (les deux
+        serializers dédiés l'empêchent, mais rien ne l'interdit à ce niveau),
+        Profil.clean() la détecte à la prochaine sauvegarde et lève une
+        django.core.exceptions.ValidationError brute.
+
+        Avant EDT_app.exception_handlers.exception_handler, ce site
+        (jusque-là non répertorié dans CORRECTIONS_A_FAIRE.md) remontait en
+        500 comme les deux autres du même point 1/14 ; il est maintenant
+        converti en 400 comme n'importe quelle autre erreur de validation.
+        """
+        dept = DepartementFactory()
+        EnseignantFactory(profil=self.profil_cible, departement=dept)
+        EtudiantFactory(profil=self.profil_cible, classe=ClasseFactory())
+
+        resp = self.client.patch(
+            f"/api/profils/{self.profil_cible.user_id}/changer_statut/",
+            {"statut": "suspendu", "motif_suspension": "Test double rattachement"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

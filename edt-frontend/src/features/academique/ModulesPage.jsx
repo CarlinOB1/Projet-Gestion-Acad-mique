@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Layers, Users } from 'lucide-react';
+import { Plus, Layers, Users, AlertCircle } from 'lucide-react';
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
@@ -156,6 +156,18 @@ export default function ModulesPage() {
     };
 
     if (editingModule) {
+      const nbSeances = editingModule.nb_seances_liees || 0;
+      const nbAffectations = editingModule.nb_affectations_liees || 0;
+      if (nbSeances > 0 || nbAffectations > 0) {
+        const confirme = window.confirm(
+          `Attention : ce module est déjà utilisé (${nbSeances} séance(s) programmée(s), ` +
+          `${nbAffectations} affectation(s) d'enseignant(s)).\n\n` +
+          `Le modifier ne mettra pas à jour ces éléments existants et peut créer des ` +
+          `incohérences (heures dépassées, semestre non aligné).\n\n` +
+          `Continuer quand même ?`
+        );
+        if (!confirme) return;
+      }
       updateMutation.mutate({ id: editingModule.id, data: payload });
     } else {
       createMutation.mutate(payload);
@@ -293,6 +305,16 @@ export default function ModulesPage() {
           {serverError && (
             <div className="p-3 bg-destructive/10 text-destructive text-sm font-medium rounded-md border border-destructive/20 animate-shake">
               {serverError}
+            </div>
+          )}
+
+          {/* Avertissement : module déjà utilisé */}
+          {editingModule && ((editingModule.nb_seances_liees || 0) > 0 || (editingModule.nb_affectations_liees || 0) > 0) && (
+            <div className="p-3 bg-amber-500/10 text-amber-700 text-sm rounded-md border border-amber-500/20">
+              <AlertCircle className="inline-block h-4 w-4 mr-1.5 -mt-0.5" />
+              Ce module est déjà utilisé : {editingModule.nb_seances_liees || 0} séance(s) programmée(s)
+              et {editingModule.nb_affectations_liees || 0} affectation(s) d'enseignant(s). Le modifier ne
+              mettra pas à jour ces éléments existants.
             </div>
           )}
 

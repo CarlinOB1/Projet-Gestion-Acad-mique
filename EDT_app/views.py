@@ -1,5 +1,6 @@
 from django.shortcuts import render
-from django.db.models import Q
+from django.db import transaction
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -593,8 +594,19 @@ class MatiereViewSet(BaseViewSet):
 
 
 class ModuleViewSet(BaseViewSet):
+    # `_seances_volume` précharge en une seule requête (par page, pas par
+    # module) les séances utilisées par Module.heures_consommees() /
+    # heures_effectuees() — sans ce Prefetch, ModuleSerializer déclenchait
+    # une requête par module et par champ heures_* (jusqu'à ~100 requêtes
+    # pour une page de 20 modules).
     queryset = Module.objects.select_related(
         'matiere__departement', 'semestre__annee'
+    ).prefetch_related(
+        Prefetch(
+            'seance_set',
+            queryset=Seance.objects.filter(statut__in=['Confirmée', 'Reportée']),
+            to_attr='_seances_volume',
+        ),
     ).all()
     serializer_class   = ModuleSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
@@ -603,9 +615,14 @@ class ModuleViewSet(BaseViewSet):
         qs          = super().get_queryset()
         user        = self.request.user
 
-        perimetre = modules_autorises(user)
-        if perimetre is not None:
-            qs = qs.filter(pk__in=perimetre.values_list('pk', flat=True))
+        # Restreint à `list` : sur les routes de détail, filtrer ici masquerait
+        # l'objet AVANT que perform_destroy() n'ait la main, produisant un 404
+        # au lieu du 403 explicite que cette même méthode lève déjà pour le
+        # même cas — incohérence corrigée (CORRECTIONS_A_FAIRE.md, point 3).
+        if self.action == 'list':
+            perimetre = modules_autorises(user)
+            if perimetre is not None:
+                qs = qs.filter(pk__in=perimetre.values_list('pk', flat=True))
 
         semestre_id = self.request.query_params.get('semestre_id')
         matiere_id  = self.request.query_params.get('matiere_id')
@@ -665,6 +682,35 @@ class ModuleViewSet(BaseViewSet):
 # 4. PLANIFICATION
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _precharger_seances_volume(affectations):
+    """
+    Attache `_seances_volume` (liste de Seance Confirmée/Reportée) à chaque
+    AffectationModule de `affectations`, en une seule requête groupée sur
+    tous les couples (module_id, enseignant_id) de la page. Voir
+    AffectationModule._seances_pour_volume() (EDT_app/models.py), qui lit
+    cet attribut s'il est présent.
+    """
+    if not affectations:
+        return
+
+    filtres = Q()
+    for affectation in affectations:
+        filtres |= Q(module_id=affectation.module_id, enseignant_id=affectation.enseignant_id)
+
+    toutes_seances = list(
+        Seance.objects.filter(filtres, statut__in=['Confirmée', 'Reportée'])
+    )
+
+    for affectation in affectations:
+        seances = [
+            s for s in toutes_seances
+            if s.module_id == affectation.module_id and s.enseignant_id == affectation.enseignant_id
+        ]
+        if affectation.type_seance:
+            seances = [s for s in seances if s.type_seance == affectation.type_seance]
+        affectation._seances_volume = seances
+
+
 class AffectationModuleViewSet(BaseViewSet):
     queryset = AffectationModule.objects.select_related(
         'module__matiere__departement',
@@ -677,9 +723,15 @@ class AffectationModuleViewSet(BaseViewSet):
         qs = super().get_queryset()
         user = self.request.user
 
-        perimetre = modules_autorises(user)
-        if perimetre is not None:
-            qs = qs.filter(module_id__in=perimetre.values_list('pk', flat=True))
+        # Restreint à `list` : cf. ModuleViewSet.get_queryset / SeanceViewSet.
+        # get_queryset — filtrer aussi les routes de détail masquerait l'objet
+        # AVANT perform_update()/perform_destroy(), produisant un 404 au lieu
+        # du 403 explicite que ces méthodes lèvent désormais
+        # (CORRECTIONS_A_FAIRE.md, point 3).
+        if self.action == 'list':
+            perimetre = modules_autorises(user)
+            if perimetre is not None:
+                qs = qs.filter(module_id__in=perimetre.values_list('pk', flat=True))
 
         module_id = self.request.query_params.get('module_id')
         enseignant_id = self.request.query_params.get('enseignant_id')
@@ -698,6 +750,47 @@ class AffectationModuleViewSet(BaseViewSet):
         if semestre_id:
             qs = qs.filter(module__semestre_id=semestre_id)
         return qs
+
+    def list(self, request, *args, **kwargs):
+        """
+        Précharge en une seule requête les séances utilisées par
+        AffectationModule.heures_consommees()/heures_effectuees() pour toute
+        la page — sans FK direct Seance -> AffectationModule, un Prefetch
+        standard (comme sur ModuleViewSet) n'est pas possible ; on fait donc
+        le regroupement manuellement ici, avant sérialisation. Sans ça,
+        AffectationModuleSerializer déclenchait plusieurs requêtes par ligne
+        (une par champ heures_*).
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        objets = page if page is not None else list(queryset)
+        _precharger_seances_volume(objets)
+        serializer = self.get_serializer(objets, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    def _verifier_perimetre(self, instance):
+        """
+        validate() du serializer couvre déjà la création/modification via les
+        champs postés, mais ne s'exécute pas sur DELETE, et ne protège pas
+        contre un objet retrouvé par pk hors du périmètre courant maintenant
+        que get_queryset() ne filtre plus les routes de détail.
+        """
+        perimetre = modules_autorises(self.request.user)
+        if perimetre is not None and not perimetre.filter(pk=instance.module_id).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                "Vous ne pouvez gérer que les affectations de modules de votre périmètre."
+            )
+
+    def perform_update(self, serializer):
+        self._verifier_perimetre(serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._verifier_perimetre(instance)
+        instance.delete()
 
 
 class SeanceViewSet(BaseViewSet):
@@ -766,29 +859,123 @@ class SeanceViewSet(BaseViewSet):
             )
         return classes_ids
 
+    def _verifier_departement_module(self, module, enseignant):
+        """
+        Symétrique du garde-fou `hors_departement` d'AffectationModuleSerializer.
+        validate() : celui-ci exige explicitement ce flag avant qu'un chef
+        puisse affecter un enseignant à un module d'un autre département via
+        une AffectationModule, mais rien n'empêchait jusqu'ici de contourner
+        cette règle en assignant directement le même module et le même
+        enseignant à une séance (CORRECTIONS_A_FAIRE.md, point 8). On
+        n'autorise donc plus ce cas, sauf si une AffectationModule
+        `hors_departement=True` couvre déjà ce couple (module, enseignant) —
+        preuve que l'intervention inter-départements a bien été déclarée.
+        """
+        user = self.request.user
+        if user.is_superuser or user.groups.filter(name='responsable').exists():
+            return
+        if not (module and enseignant):
+            return
+        if not hasattr(user, 'profil') or not hasattr(user.profil, 'enseignant'):
+            return
+
+        chef = user.profil.enseignant
+        departements_diriges = list(
+            chef.departements_diriges.values_list('pk', flat=True)
+        )
+        if not departements_diriges:
+            return  # pas chef de département : rien à ajouter ici
+
+        if module.matiere.departement_id in departements_diriges:
+            return  # cas normal, module de son propre département
+
+        from EDT_app.models import AffectationModule
+        couverte = AffectationModule.objects.filter(
+            module=module, enseignant=enseignant, hors_departement=True,
+        ).exists()
+        if not couverte:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                "Ce module relève d'un autre département. Affectez d'abord "
+                "l'enseignant à ce module via une affectation avec "
+                "« intervention inter-départements » avant de planifier "
+                "une séance."
+            )
+
+    def _locker_pour_validation(self, enseignants=(), classes=()):
+        """
+        Verrouille (SELECT ... FOR UPDATE) les lignes Enseignant/Classe
+        concernées avant de lancer les validations de conflit/volume
+        (valider_conflit_enseignant, valider_conflit_classe,
+        valider_volume_module, valider_affectation, valider_volume_journalier).
+
+        Sans ce verrou, deux requêtes concurrentes portant sur le même
+        enseignant ou la même classe peuvent chacune lire un état encore
+        valide avant l'écriture de l'autre, passer leurs contrôles
+        indépendamment, puis s'enregistrer toutes les deux — double
+        réservation ou dépassement de volume que l'application est censée
+        interdire (CORRECTIONS_A_FAIRE.md, point 9). À appeler uniquement à
+        l'intérieur d'une transaction.atomic().
+
+        Ordre de verrouillage toujours identique (Enseignant puis Classe,
+        chacun trié par pk) pour éviter les deadlocks entre deux appels
+        concurrents portant sur des ensembles qui se recoupent partiellement.
+        """
+        from EDT_app.models import Enseignant, Classe
+
+        ens_ids = {e.pk for e in enseignants if e}
+        if ens_ids:
+            list(Enseignant.objects.select_for_update().filter(pk__in=ens_ids).order_by('pk'))
+
+        classe_ids = {c.pk for c in classes if c}
+        if classe_ids:
+            list(Classe.objects.select_for_update().filter(pk__in=classe_ids).order_by('pk'))
+
     def perform_create(self, serializer):
         """Vérifie que la classe cible est dans le périmètre autorisé."""
-        classes_autorisees = self._get_classes_autorisees()
-        if classes_autorisees is not None:  # None = accès total
+        with transaction.atomic():
+            classes_autorisees = self._get_classes_autorisees()
             classe = serializer.validated_data.get('classe')
-            if classe and classe.id not in classes_autorisees:
-                from rest_framework.exceptions import PermissionDenied
-                raise PermissionDenied(
-                    "Vous n'avez pas les droits pour planifier des séances dans cette classe."
-                )
-        serializer.save()
+            if classes_autorisees is not None:  # None = accès total
+                if classe and classe.id not in classes_autorisees:
+                    from rest_framework.exceptions import PermissionDenied
+                    raise PermissionDenied(
+                        "Vous n'avez pas les droits pour planifier des séances dans cette classe."
+                    )
+            enseignant = serializer.validated_data.get('enseignant')
+            self._locker_pour_validation(enseignants=[enseignant], classes=[classe])
+            self._verifier_departement_module(
+                serializer.validated_data.get('module'),
+                enseignant,
+            )
+            serializer.save()
 
     def perform_update(self, serializer):
         """Même vérification à la mise à jour."""
-        classes_autorisees = self._get_classes_autorisees()
-        if classes_autorisees is not None:
-            classe = serializer.validated_data.get('classe', self.get_object().classe)
-            if classe and classe.id not in classes_autorisees:
-                from rest_framework.exceptions import PermissionDenied
-                raise PermissionDenied(
-                    "Vous n'avez pas les droits pour modifier des séances dans cette classe."
-                )
-        serializer.save()
+        with transaction.atomic():
+            instance = self.get_object()
+            classes_autorisees = self._get_classes_autorisees()
+            classe = serializer.validated_data.get('classe', instance.classe)
+            if classes_autorisees is not None:
+                if classe and classe.id not in classes_autorisees:
+                    from rest_framework.exceptions import PermissionDenied
+                    raise PermissionDenied(
+                        "Vous n'avez pas les droits pour modifier des séances dans cette classe."
+                    )
+            enseignant = serializer.validated_data.get('enseignant', instance.enseignant)
+            # Verrouille l'ancien ET le nouvel enseignant/classe si l'un ou
+            # l'autre change : un remplacement d'enseignant/module doit aussi
+            # se sérialiser avec toute autre opération concurrente touchant
+            # l'ancien couple, pas seulement le nouveau.
+            self._locker_pour_validation(
+                enseignants=[enseignant, instance.enseignant],
+                classes=[classe, instance.classe],
+            )
+            self._verifier_departement_module(
+                serializer.validated_data.get('module', instance.module),
+                enseignant,
+            )
+            serializer.save()
 
     def perform_destroy(self, instance):
         """Vérifie que la classe cible de la séance est dans le périmètre autorisé avant suppression."""
@@ -820,7 +1007,17 @@ class SeanceViewSet(BaseViewSet):
         # Filtre pour Chef de Département : union département + classes en référence
         # (mêmes droits que _get_classes_autorisees, pour ne jamais désynchroniser
         # ce qu'un chef peut lister de ce qu'il a le droit de créer/modifier).
-        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+        #
+        # Restreint à `list` : sur les routes de détail (retrieve/update/
+        # partial_update/destroy), filtrer ici masquerait l'objet AVANT que
+        # perform_update()/perform_destroy() n'aient la main, produisant un
+        # 404 au lieu du 403 explicite qu'un référent hors périmètre reçoit
+        # déjà pour le même cas — incohérence corrigée
+        # (CORRECTIONS_A_FAIRE.md, point 3). La lecture d'une séance hors
+        # département reste ainsi possible pour un chef (comme pour tout
+        # utilisateur actif, cf. get_permissions), seule l'écriture reste
+        # bloquée par perform_update/perform_destroy.
+        if self.action == 'list' and hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
             if enseignant.departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
                 classes_autorisees = self._get_classes_autorisees()
@@ -890,13 +1087,17 @@ class SeanceViewSet(BaseViewSet):
         Le statut passe automatiquement à 'Reportée'.
         Toutes les validations du modèle sont réappliquées sur le nouveau créneau.
         """
-        seance     = self.get_object()
-        serializer = SeanceReportSerializer(
-            data=request.data,
-            context={'seance': seance},
-        )
-        serializer.is_valid(raise_exception=True)
-        seance_maj = serializer.save()
+        seance = self.get_object()
+        with transaction.atomic():
+            self._locker_pour_validation(
+                enseignants=[seance.enseignant], classes=[seance.classe],
+            )
+            serializer = SeanceReportSerializer(
+                data=request.data,
+                context={'seance': seance},
+            )
+            serializer.is_valid(raise_exception=True)
+            seance_maj = serializer.save()
         return Response(
             SeanceSerializer(seance_maj).data,
             status=status.HTTP_200_OK,
@@ -916,10 +1117,14 @@ class SeanceViewSet(BaseViewSet):
         if seance.statut != 'brouillon':
             from rest_framework.exceptions import ValidationError
             raise ValidationError("Seules les séances en brouillon peuvent être publiées.")
-        
-        seance.statut = 'Confirmée'
-        seance.full_clean()  # Rejoue toutes les validations (dont les conflits)
-        seance.save(update_fields=['statut'])
+
+        with transaction.atomic():
+            self._locker_pour_validation(
+                enseignants=[seance.enseignant], classes=[seance.classe],
+            )
+            seance.statut = 'Confirmée'
+            seance.full_clean()  # Rejoue toutes les validations (dont les conflits)
+            seance.save(update_fields=['statut'])
         return Response(SeanceSerializer(seance).data, status=status.HTTP_200_OK)
 
     @action(
@@ -955,12 +1160,15 @@ class SeanceViewSet(BaseViewSet):
         if len(seances) != len(seance_ids):
             return Response({'detail': 'Certaines séances sont introuvables ou ne sont pas en brouillon.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from django.db import transaction
         from django.core.exceptions import ValidationError
-        
+
         erreurs = []
         try:
             with transaction.atomic():
+                self._locker_pour_validation(
+                    enseignants=[s.enseignant for s in seances],
+                    classes=[s.classe for s in seances],
+                )
                 for seance in seances:
                     seance.statut = 'Confirmée'
                     try:
@@ -1014,38 +1222,35 @@ class SeanceViewSet(BaseViewSet):
                     from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("Ce semestre n'appartient pas à votre département.")
 
-        seances = Seance.objects.filter(
+        # Chargée une seule fois, comparée en Python (O(n²) borné par le
+        # nombre de séances confirmées du semestre — quelques centaines au
+        # plus) au lieu de relancer deux requêtes filter().exists() par
+        # séance : avant ce correctif, un semestre de N séances déclenchait
+        # jusqu'à 2N+1 requêtes SQL pour cette seule action.
+        seances = list(Seance.objects.filter(
             classe__semestre_id=semestre_id,
             statut='Confirmée',
         ).select_related(
             'enseignant__profil__user',
             'classe__filiere',
             'module__matiere',
-        ).order_by('date_seance', 'heure_debut')
+        ).order_by('date_seance', 'heure_debut'))
 
         conflits_ids = set()
 
-        for seance in seances:
-            # Conflit enseignant
-            conflit_ens = seances.filter(
-                enseignant=seance.enseignant,
-                date_seance=seance.date_seance,
-                heure_debut__lt=seance.heure_fin,
-                heure_fin__gt=seance.heure_debut,
-            ).exclude(pk=seance.pk)
+        for i, seance in enumerate(seances):
+            for autre in seances[i + 1:]:
+                if autre.date_seance != seance.date_seance:
+                    # Trié par date croissante : au-delà, plus aucune séance
+                    # ne peut partager cette date.
+                    break
+                if not (autre.heure_debut < seance.heure_fin and autre.heure_fin > seance.heure_debut):
+                    continue
+                if autre.enseignant_id == seance.enseignant_id or autre.classe_id == seance.classe_id:
+                    conflits_ids.add(seance.pk)
+                    conflits_ids.add(autre.pk)
 
-            # Conflit classe
-            conflit_cls = seances.filter(
-                classe=seance.classe,
-                date_seance=seance.date_seance,
-                heure_debut__lt=seance.heure_fin,
-                heure_fin__gt=seance.heure_debut,
-            ).exclude(pk=seance.pk)
-
-            if conflit_ens.exists() or conflit_cls.exists():
-                conflits_ids.add(seance.pk)
-
-        seances_en_conflit = seances.filter(pk__in=conflits_ids)
+        seances_en_conflit = [s for s in seances if s.pk in conflits_ids]
         serializer = SeanceSerializer(seances_en_conflit, many=True)
         return Response(
             {

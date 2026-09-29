@@ -530,6 +530,10 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     # heures_consommees = volume planifie (base du controle de volume) ;
     # heures_effectuees = volume deja dispense (base de la progression).
     heures_effectuees = serializers.SerializerMethodField()
+    # Permet au frontend d'avertir avant de modifier un module déjà utilisé
+    # (aucun contrôle ne revalide séances/affectations existantes après coup).
+    nb_seances_liees      = serializers.SerializerMethodField()
+    nb_affectations_liees = serializers.SerializerMethodField()
 
     class Meta:
         model  = Module
@@ -541,6 +545,7 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'heures_cm', 'heures_td', 'heures_tp',
             'heures_max', 'heures_consommees', 'heures_restantes',
             'heures_effectuees',
+            'nb_seances_liees', 'nb_affectations_liees',
         ]
         read_only_fields = ['created_at']
 
@@ -555,6 +560,12 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
     def get_heures_effectuees(self, obj):
         return round(obj.heures_effectuees(), 2)
+
+    def get_nb_seances_liees(self, obj):
+        return obj.nb_seances_liees()
+
+    def get_nb_affectations_liees(self, obj):
+        return obj.nb_affectations_liees()
 
     def validate(self, data):
         """
@@ -815,6 +826,7 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             valider_volume_module,
             valider_affectation,
             valider_volume_journalier,
+            valider_module_seance_liee,
             MAX_HEURES_JOUR,
         )
         from EDT_app.validation_seance import _calculer_duree_effective
@@ -827,7 +839,11 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         classe      = data.get('classe')
         annee       = data.get('annee')
         statut      = data.get('statut', 'Confirmée')
-        seance_liee = data.get('seance_liee')
+        # Fallback sur l'instance existante (mise à jour partielle) : sans
+        # lui, un PATCH qui ne touche pas `seance_liee` verrait ce champ
+        # comme absent ici alors que la séance est bien mutualisée côté
+        # base — même pattern que AffectationModuleSerializer.validate().
+        seance_liee = data.get('seance_liee', getattr(self.instance, 'seance_liee', None))
         pk          = self.instance.pk if self.instance else None
 
         # 1. Ordre heure_debut / heure_fin
@@ -906,14 +922,33 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             except Exception as exc:
                 self._to_drf_error('enseignant_id', exc)
 
-        # 10. Conflit enseignant (levé si séance liée / mutualisée)
+        # 10. Conflit enseignant (levé si séance liée / mutualisée, dans les
+        # deux sens — CORRECTIONS_A_FAIRE.md, point 11)
+        pks_exemptes = list(
+            self.instance.seances_associees.values_list('pk', flat=True)
+        ) if self.instance else []
+        if seance_liee:
+            pks_exemptes.append(seance_liee.pk)
+
         try:
             valider_conflit_enseignant(
                 enseignant, date_seance, heure_debut, heure_fin, pk,
-                seance_liee_pk=seance_liee.pk if seance_liee else None,
+                pks_exemptes=pks_exemptes,
             )
         except Exception as exc:
             self._to_drf_error('enseignant_id', exc)
+
+        # 10b. Cohérence de module entre séances mutualisées
+        # (CORRECTIONS_A_FAIRE.md, point 6)
+        if module:
+            try:
+                valider_module_seance_liee(
+                    module.pk,
+                    seance_liee,
+                    self.instance.seances_associees.all() if self.instance else [],
+                )
+            except Exception as exc:
+                self._to_drf_error('module_id', exc)
 
         # 11. Conflit classe
         try:

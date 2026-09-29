@@ -470,11 +470,23 @@ class InscriptionTest(TestCase):
 
     def setUp(self):
         from EDT_app.factories import ClasseFactory, EtudiantFactory, ParcoursFactory
+        # classe_l2 est sur l'année académique qui suit directement celle de
+        # classe_l1 : Etudiant.reinscrire() n'accepte plus, pour un passage
+        # de niveau au sein d'un même cycle, qu'une progression normale
+        # (année suivante, niveau immédiatement supérieur) —
+        # CORRECTIONS_A_FAIRE.md, point 15.
         self.classe_l1 = ClasseFactory(parcours=ParcoursFactory(
             type_parcours='Licence', niveau=1))
+        annee_suivante = AnneeAcademiqueFactory(
+            libelle='2026-2027',
+            date_debut=date(2026, 9, 1), date_fin=date(2027, 6, 30),
+        )
         self.classe_l2 = ClasseFactory(
             parcours=ParcoursFactory(type_parcours='Licence', niveau=2),
-            semestre=self.classe_l1.semestre,
+            semestre=Semestre1Factory(
+                annee=annee_suivante,
+                date_debut=date(2026, 9, 1), date_fin=date(2027, 1, 31),
+            ),
         )
         self.etudiant = EtudiantFactory(classe=self.classe_l1)
 
@@ -719,23 +731,30 @@ class AffectationInterDepartementModificationAPITest(TestCase):
         assert creation.status_code == 201, creation.data
         self.affectation_id = creation.data['id']
 
-    def test_impossible_de_reacceder_a_laffectation_hors_departement_creee(self):
+    def test_affectation_hors_departement_creee_reste_accessible(self):
         """
-        Découverte en écrivant ce test : perimetre.modules_autorises() ne
-        prolonge PAS, pour un chef, la même règle que pour un référent
-        (inclure les modules des classes qu'il gère même hors de son
-        département) — seule la branche `matiere__departement__in` s'applique
-        aux chefs. Résultat : le chef peut CRÉER une affectation
-        hors_departement (autorisé par le serializer), mais ne peut plus la
-        retrouver ensuite via l'API standard (GET/PATCH/DELETE) puisque
-        get_queryset() la filtre hors de son périmètre -> 404, alors même
-        qu'il vient de la créer avec succès.
+        CORRECTIONS_A_FAIRE.md, point 2, corrigé : perimetre.modules_autorises()
+        prolonge désormais aux chefs la même règle qu'aux référents (inclure
+        les modules des classes qu'ils dirigent, même hors de leur propre
+        département). Le chef peut donc relire ET modifier l'affectation
+        hors_departement qu'il vient de créer, plutôt que de la voir
+        disparaître (404) juste après sa création.
+
+        Le PATCH porte sur `heures_prevues`, pas sur `hors_departement` :
+        remettre `hors_departement` à False resterait refusé par
+        AffectationModuleSerializer.validate() (le module reste d'un autre
+        département) — une règle distincte, toujours en vigueur, qu'on ne
+        veut pas mélanger avec le périmètre testé ici.
         """
-        resp = self.client.patch(
+        resp_get = self.client.get(f'/api/affectations/{self.affectation_id}/')
+        self.assertEqual(resp_get.status_code, 200)
+
+        resp_patch = self.client.patch(
             f'/api/affectations/{self.affectation_id}/',
-            {'hors_departement': False}, format='json',
+            {'heures_prevues': 15}, format='json',
         )
-        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp_patch.status_code, 200, resp_patch.data)
+        self.assertEqual(resp_patch.data['heures_prevues'], 15)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -773,20 +792,19 @@ class AffectationModuleSuppressionTest(TestCase):
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(AffectationModule.objects.filter(pk=affectation.pk).exists())
 
-    def test_chef_dun_autre_departement_recoit_404(self):
+    def test_chef_dun_autre_departement_recoit_403(self):
         """
-        Contrairement à ModuleViewSet.perform_destroy (garde explicite sur la
-        suppression), AffectationModuleViewSet n'a pas de contrôle dédié :
-        seul le filtrage de get_queryset() via modules_autorises() s'applique.
-        Un objet hors périmètre est donc simplement absent du queryset -> 404,
-        pas un 403 explicite. Comportement à figer par un test, pas à supposer.
+        CORRECTIONS_A_FAIRE.md, point 3, corrigé : AffectationModuleViewSet a
+        désormais son propre contrôle dédié (perform_destroy), symétrique de
+        celui de ModuleViewSet, qui s'exécute maintenant que get_queryset()
+        ne filtre plus les routes de détail par périmètre.
         """
         affectation = AffectationModuleFactory(
             module=self.module_a, enseignant=self.enseignant_a,
             type_seance='CM', heures_prevues=10,
         )
         resp = _client_pour(self.chef_b).delete(f"/api/affectations/{affectation.pk}/")
-        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.status_code, 403)
         self.assertTrue(AffectationModule.objects.filter(pk=affectation.pk).exists())
 
     def test_referent_seul_refuse(self):
@@ -916,6 +934,30 @@ class AffectationModuleQuotaMethodesTest(TestCase):
         self._creer_seance(-10, time(9, 0), time(11, 0))               # 2h comptées
         annulee = self._creer_seance(-5, time(14, 15), time(16, 15))   # 2h, puis annulée
         Seance.objects.filter(pk=annulee.pk).update(statut='Annulée')
+
+        self.assertEqual(affectation.heures_consommees(), 2)
+        self.assertEqual(affectation.heures_restantes(), 8)
+
+    def test_cours_mutualise_ne_compte_quune_fois(self):
+        """
+        Symétrique du test module : un cours mutualisé entre deux classes ne
+        doit consommer qu'une fois le quota de l'affectation, pas deux
+        (CORRECTIONS_A_FAIRE.md, point 16).
+        """
+        from EDT_app.factories import SeanceFactory
+        affectation = AffectationModuleFactory(
+            module=self.module, enseignant=self.enseignant,
+            type_seance='CM', heures_prevues=10,
+        )
+        autre_classe = ClasseFactory(semestre=self.sem, annee=self.annee)
+
+        pivot = self._creer_seance(-10, time(9, 0), time(11, 0))  # 2h, classe 1
+        SeanceFactory(
+            module=self.module, classe=autre_classe, annee=self.annee,
+            enseignant=self.enseignant, date_seance=pivot.date_seance,
+            heure_debut=pivot.heure_debut, heure_fin=pivot.heure_fin,
+            type_seance='CM', statut='Confirmée', seance_liee=pivot,
+        )  # même créneau, classe 2 — jumelle mutualisée
 
         self.assertEqual(affectation.heures_consommees(), 2)
         self.assertEqual(affectation.heures_restantes(), 8)

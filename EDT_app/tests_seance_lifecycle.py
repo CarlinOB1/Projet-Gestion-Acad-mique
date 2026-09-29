@@ -208,13 +208,15 @@ class SeanceModificationTest(TestCase):
     def test_chef_hors_departement_refuse(self):
         """
         Chef d'un autre département : la permission globale passe (il est
-        bien chef), mais get_queryset() filtre déjà les séances par
-        _get_classes_autorisees() pour tout chef (pas pour un référent) —
-        l'objet est donc introuvable avant même perform_update, d'où un 404
-        et non le 403 qu'on pourrait attendre par analogie avec le référent.
+        bien chef), mais désormais get_queryset() ne filtre plus les routes
+        de détail par périmètre — seul `list` l'est — donc l'objet est
+        atteint et perform_update() lève le même 403 explicite qu'un
+        référent hors de ses classes (CORRECTIONS_A_FAIRE.md, point 3,
+        corrigé : plus de 404 pour le chef là où le référent recevait déjà
+        un 403 pour la même situation).
         """
         resp = self._patch(self.chef_b)
-        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.seance.refresh_from_db()
         self.assertEqual(self.seance.heure_debut, time(9, 0))
 
@@ -301,11 +303,13 @@ class SeanceReportTest(TestCase):
         la durée du créneau ORIGINAL (9h-11h, inchangé par le report) et
         échoue désormais.
 
-        Point notable : ce rejet se produit dans Seance.save() (appelé par
+        Ce rejet se produit dans Seance.save() (appelé par
         SeanceReportSerializer.save(), après que serializer.is_valid() a
         déjà réussi), donc comme une django.core.exceptions.ValidationError
-        brute, pas une réponse 400 propre : aucun exception_handler DRF
-        personnalisé ne l'intercepte sur ce chemin précis.
+        brute — mais EDT_app.exception_handlers.exception_handler
+        (câblé via REST_FRAMEWORK['EXCEPTION_HANDLER']) la convertit
+        désormais en réponse 400 DRF classique. Avant ce handler, elle
+        remontait en 500 (CORRECTIONS_A_FAIRE.md, point 1).
         """
         affectation = AffectationModuleFactory(
             module=self.module, enseignant=self.enseignant,
@@ -315,16 +319,16 @@ class SeanceReportTest(TestCase):
         affectation.save()
 
         client = client_for(self.chef)
-        with self.assertRaises(ValidationError):
-            client.patch(
-                f"/api/seances/{self.seance.pk}/reporter/",
-                {
-                    "date_report": self._date_libre().isoformat(),
-                    "heure_debut_report": "14:15:00",
-                    "heure_fin_report": "16:15:00",
-                },
-                format="json",
-            )
+        resp = client.patch(
+            f"/api/seances/{self.seance.pk}/reporter/",
+            {
+                "date_report": self._date_libre().isoformat(),
+                "heure_debut_report": "14:15:00",
+                "heure_fin_report": "16:15:00",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_referent_reporte_via_patch_normal_sans_passer_par_laction_reporter(self):
         """
@@ -416,14 +420,15 @@ class SeanceSuppressionTest(TestCase):
 
     def test_chef_hors_perimetre_refuse(self):
         """
-        Comme pour la modification : get_queryset() filtre déjà les séances
-        par département pour un chef, donc l'objet est introuvable (404)
-        avant même d'atteindre perform_destroy — pas un 403.
+        Comme pour la modification : get_queryset() ne filtre plus les
+        routes de détail par périmètre, donc l'objet est atteint et
+        perform_destroy() lève désormais un 403 explicite, uniforme avec
+        le cas référent (CORRECTIONS_A_FAIRE.md, point 3, corrigé).
         """
         seance = self._creer_seance(self.classe_a)
         client = client_for(self.chef_b)
         resp = client.delete(f"/api/seances/{seance.pk}/")
-        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertTrue(Seance.objects.filter(pk=seance.pk).exists())
 
     def test_enseignant_simple_refuse(self):

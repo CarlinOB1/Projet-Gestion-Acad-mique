@@ -52,6 +52,23 @@ import {
   removeModule,
 } from '@/api/academique';
 
+// Auth
+import useAuthStore, { selectIsChefDepartement, selectDepartementId } from '@/store/authStore';
+
+/**
+ * Extrait un message lisible depuis une erreur de réponse DRF
+ * (ex: {"matiere_id": ["Vous ne pouvez créer ou modifier..."]})
+ * plutôt que le générique axios "Request failed with status code 400".
+ */
+function extractErrorMessage(err, fallback) {
+  const detail = err?.response?.data;
+  if (detail && typeof detail === 'object') {
+    const msg = Object.values(detail).flat().join(' ');
+    if (msg) return msg;
+  }
+  return err?.message || fallback;
+}
+
 // -----------------------------------------------------------------
 // HELPERS
 // -----------------------------------------------------------------
@@ -250,6 +267,8 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
 
 export default function ContenuPedagogiquePage() {
   const queryClient = useQueryClient();
+  const isChef = useAuthStore(selectIsChefDepartement);
+  const departementId = useAuthStore(selectDepartementId);
 
   // Sélection du groupe de classe
   const [selectedGroupKey, setSelectedGroupKey] = useState('');
@@ -278,9 +297,13 @@ export default function ContenuPedagogiquePage() {
     queryFn: () => getClasses(),
   });
 
+  // Un chef de département ne peut créer/modifier des modules que pour les
+  // matières de son propre département (règle appliquée côté serveur) : on
+  // filtre déjà la liste ici pour ne pas lui proposer un choix qui échouera
+  // en 400 à la soumission (ex : matière homonyme dans un autre département).
   const { data: matieres = [] } = useQuery({
-    queryKey: ['matieres'],
-    queryFn: getMatieres,
+    queryKey: ['matieres', isChef ? departementId : 'all'],
+    queryFn: () => getMatieres(isChef && departementId ? { departement_id: departementId } : undefined),
     enabled: isModalOpen,
   });
 
@@ -330,7 +353,7 @@ export default function ContenuPedagogiquePage() {
       queryClient.invalidateQueries({ queryKey: ['modules'] });
       handleCloseModal();
     },
-    onError: (err) => setServerError(err.message || 'Erreur lors de la création du module'),
+    onError: (err) => setServerError(extractErrorMessage(err, 'Erreur lors de la création du module')),
   });
 
   const updateMutation = useMutation({
@@ -339,7 +362,7 @@ export default function ContenuPedagogiquePage() {
       queryClient.invalidateQueries({ queryKey: ['modules'] });
       handleCloseModal();
     },
-    onError: (err) => setServerError(err.message || 'Erreur lors de la modification du module'),
+    onError: (err) => setServerError(extractErrorMessage(err, 'Erreur lors de la modification du module')),
   });
 
   const deleteMutation = useMutation({
@@ -399,9 +422,21 @@ export default function ContenuPedagogiquePage() {
       semestre_id: parseInt(semestreId, 10),
       classe_id:   parseInt(classeId, 10) || null,
       credits:     parseInt(credits, 10),
-      description: description || null,
+      description,
     };
     if (editingModule) {
+      const nbSeances = editingModule.nb_seances_liees || 0;
+      const nbAffectations = editingModule.nb_affectations_liees || 0;
+      if (nbSeances > 0 || nbAffectations > 0) {
+        const confirme = window.confirm(
+          `Attention : ce module est déjà utilisé (${nbSeances} séance(s) programmée(s), ` +
+          `${nbAffectations} affectation(s) d'enseignant(s)).\n\n` +
+          `Le modifier ne mettra pas à jour ces éléments existants et peut créer des ` +
+          `incohérences (heures dépassées, semestre/classe non alignés).\n\n` +
+          `Continuer quand même ?`
+        );
+        if (!confirme) return;
+      }
       updateMutation.mutate({ id: editingModule.id, data: payload });
     } else {
       createMutation.mutate(payload);
@@ -495,6 +530,15 @@ export default function ContenuPedagogiquePage() {
           {serverError && (
             <div className="p-3 bg-destructive/10 text-destructive text-sm font-medium rounded-md border border-destructive/20">
               {serverError}
+            </div>
+          )}
+
+          {editingModule && ((editingModule.nb_seances_liees || 0) > 0 || (editingModule.nb_affectations_liees || 0) > 0) && (
+            <div className="p-3 bg-amber-500/10 text-amber-700 text-sm rounded-md border border-amber-500/20">
+              <AlertCircle className="inline-block h-4 w-4 mr-1.5 -mt-0.5" />
+              Ce module est déjà utilisé : {editingModule.nb_seances_liees || 0} séance(s) programmée(s)
+              et {editingModule.nb_affectations_liees || 0} affectation(s) d'enseignant(s). Le modifier ne
+              mettra pas à jour ces éléments existants.
             </div>
           )}
 
