@@ -4,7 +4,6 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   Plus,
   Printer,
-  Calendar,
   Pencil,
   CalendarClock,
   Trash2,
@@ -19,7 +18,6 @@ import apiClient from "@/api/client";
 import { ROLES, GESTIONNAIRE_ROLES } from "@/lib/constants";
 import {
   applyPlanningFilters,
-  getEnseignantsDisponibles,
   getClassesDisponibles,
   FILTRES_VIDES,
 } from "@/lib/planningFilters";
@@ -30,6 +28,11 @@ import SeanceDrawer from "@/features/seances/SeanceDrawer";
 import ReportDrawer from "@/features/seances/ReportDrawer";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { confirmer } from "@/lib/confirmer";
+import { toast } from "@/hooks/use-toast";
+import { formatDate, formatCreneau } from "@/lib/utils";
+import PageHeader from "@/components/shared/PageHeader";
+import { trouverSemestreEnCours } from "@/lib/semestres";
 import {
   Select,
   SelectContent,
@@ -39,12 +42,6 @@ import {
   SelectGroup,
   SelectLabel,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 export default function PlanningPage() {
   const role = useAuthStore((state) => state.user?.role);
@@ -78,7 +75,6 @@ export default function PlanningPage() {
   const [seanceToReport, setSeanceToReport] = useState(null);
   const [filters, setFilters] = useState(FILTRES_VIDES);
   const [detailsSeance, setDetailsSeance] = useState(null);
-  const [gestionnaireTarget, setGestionnaireTarget] = useState(null); // dialog actions gestionnaire
 
   const planningRef = useRef(null);
   const printRef = useRef(null);
@@ -103,12 +99,15 @@ export default function PlanningPage() {
     },
     staleTime: 1000 * 60 * 60,
   });
-  useEffect(() => {
-    if (semestres.length > 0 && !selectedSemestreId) {
-      const actif = semestres.find((s) => s.annee?.statut === "active");
-      setSelectedSemestreId(String(actif ? actif.id : semestres[0].id));
-    }
-  }, [semestres, selectedSemestreId]);
+  // Semestre par défaut calculé pendant le rendu, et non posé par un effet :
+  // au retour sur la page (semestres déjà en cache), l'effet laissait passer
+  // un premier affichage sans semestre ni classe (« Planning Global du
+  // Département »).
+  // Semestre en cours d'après ses dates : avant, le premier semestre de
+  // l'année active, donc encore le S1 en plein S2.
+  const semestreEnCours = useMemo(() => trouverSemestreEnCours(semestres), [semestres]);
+  const semestreParDefaut = semestreEnCours ? String(semestreEnCours.id) : null;
+  const semestreId = selectedSemestreId ?? semestreParDefaut;
 
   const handleSemestreChange = useCallback((value) => {
     setSelectedSemestreId(value);
@@ -118,16 +117,15 @@ export default function PlanningPage() {
   // Auto-navigate whenever the selected semester changes
   const lastJumpedSemestreId = useRef(null);
   useEffect(() => {
-    if (!selectedSemestreId || !semestres.length) return;
-    if (lastJumpedSemestreId.current === selectedSemestreId) return;
+    if (!semestreId || !semestres.length) return;
+    if (lastJumpedSemestreId.current === semestreId) return;
 
     const semestre = semestres.find(
-      (s) => String(s.id) === String(selectedSemestreId),
+      (s) => String(s.id) === String(semestreId),
     );
     if (!semestre) return;
 
-    lastJumpedSemestreId.current = selectedSemestreId;
-    const debut = semestre.date_debut ? new Date(semestre.date_debut) : null;
+    lastJumpedSemestreId.current = semestreId;
 
     const getMondayOf = (d) => {
       const date = new Date(d);
@@ -137,11 +135,29 @@ export default function PlanningPage() {
       date.setHours(0, 0, 0, 0);
       return date;
     };
+    // "AAAA-MM-JJ" lu en date locale : new Date("AAAA-MM-JJ") le lirait en
+    // UTC et pourrait décaler d'un jour selon le fuseau.
+    const parseDateLocale = (s) => {
+      if (!s) return null;
+      const [y, m, d] = s.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    };
 
-    if (debut) {
+    const debut = parseDateLocale(semestre.date_debut);
+    const fin = parseDateLocale(semestre.date_fin);
+    const aujourdhui = new Date();
+    aujourdhui.setHours(0, 0, 0, 0);
+
+    // Semestre en cours : on reste sur la semaine d'aujourd'hui. Sauter à la
+    // semaine 1 ouvrait le planning sur une semaine vide ("0 h") en plein
+    // semestre. Autre semestre (passé ou à venir) : on va à son début.
+    const semestreEnCours = debut && fin && debut <= aujourdhui && aujourdhui <= fin;
+    if (semestreEnCours) {
+      setWeekStart(getMondayOf(aujourdhui));
+    } else if (debut) {
       setWeekStart(getMondayOf(debut));
     }
-  }, [selectedSemestreId, semestres]);
+  }, [semestreId, semestres]);
 
   const {
     events,
@@ -149,26 +165,25 @@ export default function PlanningPage() {
     isError: isErrorSeances,
   } = useSeances({
     role: effectiveRole,
-    filters: { semestre_id: selectedSemestreId },
+    filters: { semestre_id: semestreId },
+    // Sans semestre, la requête partait sans filtre et téléchargeait toutes
+    // les séances du département (29 pages), en concurrence avec la vraie
+    // requête lancée un instant plus tard avec le semestre.
+    enabled: !!semestreId,
   });
 
   // Récupère toutes les classes du semestre pour les gestionnaires (pour afficher même celles sans séances)
   const { data: allClasses = [], isLoading: isLoadingClasses } = useQuery({
-    queryKey: ["classes", { semestre_id: selectedSemestreId }],
+    queryKey: ["classes", { semestre_id: semestreId }],
     queryFn: async () => {
-      if (!selectedSemestreId) return [];
+      if (!semestreId) return [];
       const response = await apiClient.get("/classes/", {
-        params: { semestre_id: selectedSemestreId },
+        params: { semestre_id: semestreId },
       });
       return response.data?.results ?? response.data;
     },
-    enabled: GESTIONNAIRE_ROLES.includes(effectiveRole) && !!selectedSemestreId,
+    enabled: GESTIONNAIRE_ROLES.includes(effectiveRole) && !!semestreId,
   });
-
-  const enseignantsDisponibles = useMemo(
-    () => getEnseignantsDisponibles(events),
-    [events],
-  );
 
   const classesDisponibles = useMemo(() => {
     if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
@@ -184,15 +199,22 @@ export default function PlanningPage() {
     return getClassesDisponibles(events);
   }, [events, allClasses, effectiveRole]);
 
-  useEffect(() => {
-    if (GESTIONNAIRE_ROLES.includes(effectiveRole) && classesDisponibles.length > 0 && !filters.classeId) {
-      setFilters((f) => ({ ...f, classeId: String(classesDisponibles[0].id) }));
-    }
-  }, [effectiveRole, classesDisponibles, filters.classeId]);
+  // Un gestionnaire regarde toujours une classe : tant qu'il n'en a pas
+  // choisi, c'est la première. Calculé pendant le rendu pour la même raison
+  // que le semestre (sinon, un instant, toutes les classes et le titre
+  // « Planning Global du Département »).
+  const classeParDefaut =
+    GESTIONNAIRE_ROLES.includes(effectiveRole) && classesDisponibles.length > 0
+      ? String(classesDisponibles[0].id)
+      : "";
+  const filtres = useMemo(
+    () => ({ ...filters, classeId: filters.classeId || classeParDefaut }),
+    [filters, classeParDefaut],
+  );
 
   const filteredEvents = useMemo(
-    () => applyPlanningFilters(events, filters),
-    [events, filters],
+    () => applyPlanningFilters(events, filtres),
+    [events, filtres],
   );
 
   const isLoading = isLoadingSemestres || isLoadingSeances || isLoadingClasses;
@@ -208,17 +230,60 @@ export default function PlanningPage() {
     return groups;
   }, [semestres]);
 
-  const actifSemestre = useMemo(() => {
-    return semestres.find((s) => s.annee?.statut === "active");
-  }, [semestres]);
+  // Lecture seule (enseignant, étudiant) : le clic ouvre le détail.
+  const handleSeanceClick = (seance) => setDetailsSeance(seance);
 
-  const handleSeanceClick = (seance) => {
-    if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
-      setGestionnaireTarget(seance);
-      return;
-    }
-    setDetailsSeance(seance);
+  // Gestionnaire : le clic ouvre un menu collé à la carte. Il remplace une
+  // fenêtre intermédiaire centrée, loin de la carte, qui assombrissait la page
+  // avant d'ouvrir une deuxième fenêtre.
+  const supprimerSeance = async (seance) => {
+    const ok = await confirmer({
+      titre: "Supprimer cette séance ?",
+      description: [
+        seance?.module?.libelle,
+        seance?.date_seance &&
+          `${formatDate(seance.date_seance)} · ${formatCreneau(seance.heure_debut, seance.heure_fin)}`,
+      ].filter(Boolean).join("\n"),
+      libelleConfirmer: "Supprimer",
+      destructif: true,
+    });
+    if (!ok) return;
+    deleteSeanceMutation.mutate(seance.id, {
+      onSuccess: () => toast({ title: "Séance supprimée" }),
+      onError: (err) =>
+        toast({
+          variant: "destructive",
+          title: "La séance n'a pas pu être supprimée",
+          description:
+            err?.response?.data?.detail ??
+            "Réessayez ; si le problème persiste, rechargez la page.",
+        }),
+    });
   };
+
+  const actionsGestionnaire = [
+    {
+      libelle: "Modifier",
+      icone: Pencil,
+      onSelect: (seance) => {
+        setSelectedSeance(seance);
+        setContextualDefaults(null);
+        setIsSeanceDrawerOpen(true);
+      },
+    },
+    {
+      libelle: "Reporter",
+      icone: CalendarClock,
+      onSelect: (seance) => {
+        setSeanceToReport(seance);
+        setIsReportDrawerOpen(true);
+      },
+    },
+    { libelle: "Supprimer", icone: Trash2, onSelect: supprimerSeance, destructif: true },
+  ];
+  const actionsSeance = GESTIONNAIRE_ROLES.includes(effectiveRole)
+    ? () => actionsGestionnaire
+    : undefined;
 
   const handleEmptyCellClick = ({ date_seance, heure_debut, heure_fin }) => {
     if (!GESTIONNAIRE_ROLES.includes(effectiveRole)) return;
@@ -227,7 +292,7 @@ export default function PlanningPage() {
     // nécessaire pour enregistrer la séance) plutôt que de la refaire choisir
     // dans le formulaire.
     const classeSelectionnee = allClasses.find(
-      (c) => String(c.id) === String(filters.classeId),
+      (c) => String(c.id) === String(filtres.classeId),
     );
     setContextualDefaults({
       date_seance,
@@ -255,7 +320,7 @@ export default function PlanningPage() {
     const html2pdf = (await import("html2pdf.js")).default;
 
     const semestre = semestres.find(
-      (s) => String(s.id) === String(selectedSemestreId),
+      (s) => String(s.id) === String(semestreId),
     );
     const rolePrefix =
       role === ROLES.ENSEIGNANT
@@ -263,12 +328,14 @@ export default function PlanningPage() {
         : GESTIONNAIRE_ROLES.includes(role)
           ? "chef"
           : "etudiant";
+    // Capture ×3 (≈ 300 dpi sur un A4) en JPEG, PDF compressé : ~600 Ko en
+    // 2 s. En PNG ×6 sans compression, le fichier pesait ~80 Mo (11 s).
     const opt = {
       margin: 10,
       filename: `emploi_du_temps_${rolePrefix}_${semestre?.libelle || "planning"}.pdf`,
-      image: { type: "png" },
-      html2canvas: { scale: 6, useCORS: true, logging: false },
-      jsPDF: { unit: "mm", format: "a4", orientation: "landscape" },
+      image: { type: "jpeg", quality: 0.95 },
+      html2canvas: { scale: 3, useCORS: true, logging: false },
+      jsPDF: { unit: "mm", format: "a4", orientation: "landscape", compress: true },
     };
 
     html2pdf().set(opt).from(element).save();
@@ -276,8 +343,8 @@ export default function PlanningPage() {
 
   const selectedClasse = useMemo(
     () =>
-      classesDisponibles.find((c) => String(c.id) === String(filters.classeId)),
-    [classesDisponibles, filters.classeId],
+      classesDisponibles.find((c) => String(c.id) === String(filtres.classeId)),
+    [classesDisponibles, filtres.classeId],
   );
 
   const pageTitle = useMemo(() => {
@@ -296,25 +363,31 @@ export default function PlanningPage() {
     return "Planning";
   }, [effectiveRole, isPersonalPlanningRoute, profilEtudiant, selectedClasse]);
 
-  return (
-    <div className="space-y-5 w-full max-w-7xl mx-auto relative">
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
-            {pageTitle}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {isPersonalPlanningRoute
-              ? "Consultez votre emploi du temps personnel pour ce semestre."
-              : selectedClasse
-                ? `Emploi du temps des cours pour la classe ${selectedClasse.libelle}.`
-                : "Consultez vos emplois du temps des cours."}
-          </p>
-        </div>
+  // Ce qui est déjà dit par le titre n'est pas répété sur chaque carte : la
+  // classe sur un planning de classe (ou d'étudiant), l'enseignant sur son
+  // propre planning.
+  const champsMasques = useMemo(() => {
+    if (effectiveRole === ROLES.ENSEIGNANT) return ["enseignant"];
+    if (effectiveRole === ROLES.ETUDIANT) return ["classe"];
+    if (GESTIONNAIRE_ROLES.includes(effectiveRole) && filtres.classeId) return ["classe"];
+    return [];
+  }, [effectiveRole, filtres.classeId]);
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+  return (
+    <div className="space-y-4 w-full max-w-7xl mx-auto relative">
+      <PageHeader
+        titre={pageTitle}
+        description={
+          isPersonalPlanningRoute
+            ? "Votre emploi du temps personnel pour ce semestre."
+            : GESTIONNAIRE_ROLES.includes(effectiveRole)
+              ? "Cliquez sur une case vide pour ajouter une séance, sur une séance pour la modifier."
+              : "Vos cours de la semaine."
+        }
+      >
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
           <Select
-            value={selectedSemestreId ? String(selectedSemestreId) : ""}
+            value={semestreId ? String(semestreId) : ""}
             onValueChange={handleSemestreChange}
             disabled={isLoadingSemestres || semestres.length === 0}
           >
@@ -328,14 +401,14 @@ export default function PlanningPage() {
                     {year}
                   </SelectLabel>
                   {sems.map((s) => {
-                    const isActif = actifSemestre && s.id === actifSemestre.id;
+                    const isActif = semestreEnCours && s.id === semestreEnCours.id;
                     return (
                       <SelectItem key={s.id} value={String(s.id)}>
                         <div className="flex items-center gap-2">
                           <span>{s.libelle}</span>
                           {isActif && (
                             <span
-                              className="flex h-2 w-2 rounded-full bg-emerald-500"
+                              className="flex size-2 rounded-full bg-primary"
                               title="Semestre en cours"
                             />
                           )}
@@ -353,153 +426,76 @@ export default function PlanningPage() {
               variant="outline"
               className="flex-1 sm:flex-none gap-2 bg-background"
               onClick={handleGeneratePDF}
+              aria-label="Générer le PDF du planning"
             >
               <Printer className="h-4 w-4 text-muted-foreground" />
               <span className="hidden sm:inline">Générer PDF</span>
             </Button>
-            <Button
-              variant="outline"
-              className="flex-1 sm:flex-none gap-2 bg-background"
-              onClick={() =>
-                alert(
-                  "Le lien d'abonnement iCal a été copié dans le presse-papier !",
-                )
-              }
-            >
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <span className="hidden sm:inline">Lier au calendrier</span>
-            </Button>
+            {/* Bouton « Lier au calendrier » retiré : il annonçait un lien iCal
+                copié alors que rien n'était copié (aucun point d'accès iCal
+                côté serveur). À remettre quand ce flux existera. */}
           </div>
         </div>
-      </header>
+      </PageHeader>
 
-      {GESTIONNAIRE_ROLES.includes(effectiveRole) &&
-        classesDisponibles.length > 0 && (
-          <div className="flex items-center gap-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar border-b border-border/40">
-            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 shrink-0 mr-1">
-              <Layers className="w-3.5 h-3.5" />
-              Classe :
-            </span>
-            {classesDisponibles.map((c) => {
-              const isSelected = String(filters.classeId) === String(c.id);
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() =>
-                    setFilters((f) => ({ ...f, classeId: String(c.id) }))
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${isSelected
-                      ? "bg-blue-600 text-white shadow-xs"
-                      : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/40"
-                    }`}
-                >
-                  {c.libelle}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
+      {/* Choix de la classe, recherche et filtres sur une seule barre : empilés,
+          ils repoussaient la grille vers 560 px de haut. Le compteur
+          « N séances affichées sur M » a été retiré : il comptait tout le
+          semestre alors qu'on regarde une semaine. */}
       <PlanningFilters
-        filters={filters}
+        filters={filtres}
         onChange={setFilters}
-        enseignants={enseignantsDisponibles}
-        showEnseignantFilter={role !== ROLES.ENSEIGNANT}
+        avant={
+          GESTIONNAIRE_ROLES.includes(effectiveRole) &&
+          classesDisponibles.length > 0 && (
+            <div
+              role="group"
+              aria-label="Classe affichée"
+              className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0"
+            >
+              <Layers className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              {classesDisponibles.map((c) => {
+                const isSelected = String(filtres.classeId) === String(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() =>
+                      setFilters((f) => ({ ...f, classeId: String(c.id) }))
+                    }
+                    className={`h-9 px-3 rounded-md text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${isSelected
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background text-muted-foreground hover:text-foreground border border-border"
+                      }`}
+                  >
+                    {c.libelle}
+                  </button>
+                );
+              })}
+            </div>
+          )
+        }
       />
-
-      {!isLoading &&
-        !isError &&
-        events.length > 0 &&
-        filteredEvents.length !== events.length && (
-          <p className="text-xs text-muted-foreground -mt-3">
-            {filteredEvents.length} séance{filteredEvents.length > 1 ? "s" : ""}{" "}
-            affichée{filteredEvents.length > 1 ? "s" : ""} sur {events.length}
-          </p>
-        )}
 
       <main ref={planningRef}>
         <PlanningTableView
           events={filteredEvents}
           isLoading={isLoading}
           isError={isError}
+          masquer={champsMasques}
           onSeanceClick={handleSeanceClick}
+          actionsSeance={actionsSeance}
           onEmptyCellClick={
             GESTIONNAIRE_ROLES.includes(effectiveRole) ? handleEmptyCellClick : null
           }
           weekStart={weekStart}
           onWeekChange={setWeekStart}
           semestre={semestres.find(
-            (s) => String(s.id) === String(selectedSemestreId),
+            (s) => String(s.id) === String(semestreId),
           )}
         />
       </main>
-
-      {/* Dialog d'actions gestionnaire */}
-      {gestionnaireTarget && (
-        <Dialog
-          key={`gestionnaire-${gestionnaireTarget.id}`}
-          open
-          onOpenChange={(o) => !o && setGestionnaireTarget(null)}
-        >
-          <DialogContent className="sm:max-w-xs p-0 overflow-hidden gap-0">
-            <DialogHeader className="px-5 pt-5 pb-4 border-b border-border">
-              <DialogTitle className="text-base">
-                {gestionnaireTarget?.module?.libelle || "Séance"}
-              </DialogTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {gestionnaireTarget?.date_seance} ·{" "}
-                {gestionnaireTarget?.heure_debut} –{" "}
-                {gestionnaireTarget?.heure_fin}
-              </p>
-            </DialogHeader>
-            <div className="flex flex-col p-2 gap-1">
-              <Button
-                variant="ghost"
-                className="justify-start gap-3 h-10 px-3 text-sm"
-                onClick={() => {
-                  setSelectedSeance(gestionnaireTarget);
-                  setContextualDefaults(null);
-                  setIsSeanceDrawerOpen(true);
-                  setGestionnaireTarget(null);
-                }}
-              >
-                <Pencil className="h-4 w-4 text-muted-foreground" />
-                Modifier
-              </Button>
-              <Button
-                variant="ghost"
-                className="justify-start gap-3 h-10 px-3 text-sm"
-                onClick={() => {
-                  setSeanceToReport(gestionnaireTarget);
-                  setIsReportDrawerOpen(true);
-                  setGestionnaireTarget(null);
-                }}
-              >
-                <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                Reporter
-              </Button>
-              <Button
-                variant="ghost"
-                className="justify-start gap-3 h-10 px-3 text-sm text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "Voulez-vous vraiment supprimer cette séance ?",
-                    )
-                  ) {
-                    deleteSeanceMutation.mutate(gestionnaireTarget.id);
-                  }
-                  setGestionnaireTarget(null);
-                }}
-              >
-                <Trash2 className="h-4 w-4" />
-                Supprimer
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
 
       {/* Détail en lecture seule — enseignant / étudiant */}
       <SeanceDetailsDialog
@@ -517,7 +513,7 @@ export default function PlanningPage() {
             setSelectedSeance(null);
             setContextualDefaults(null);
           }}
-          semestreId={selectedSemestreId}
+          semestreId={semestreId}
           seance={selectedSeance}
           contextualDefaults={contextualDefaults}
         />
@@ -542,9 +538,10 @@ export default function PlanningPage() {
             events={filteredEvents}
             weekStart={weekStart}
             semestre={semestres.find(
-              (s) => String(s.id) === String(selectedSemestreId),
+              (s) => String(s.id) === String(semestreId),
             )}
             title={pageTitle}
+            masquer={champsMasques}
           />
         </div>
       </div>

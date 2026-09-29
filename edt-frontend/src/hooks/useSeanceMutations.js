@@ -62,7 +62,7 @@ export const usePublierSeance = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id) => publierSeance(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+    onSuccess: () => invaliderCachesSeance(queryClient),
   });
 };
 
@@ -70,7 +70,7 @@ export const useDepublierSeance = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id) => depublierSeance(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+    onSuccess: () => invaliderCachesSeance(queryClient),
   });
 };
 
@@ -78,6 +78,6 @@ export const usePublierMasseSeances = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (seanceIds) => publierMasseSeances(seanceIds),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['seances'] }),
+    onSuccess: () => invaliderCachesSeance(queryClient),
   });
 };

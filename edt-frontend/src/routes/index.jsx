@@ -68,7 +68,10 @@ export const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
-          { path: "planning", element: <PlanningPage /> },
+          // Clés distinctes : /chef/planning et /enseignant/planning occupent la
+          // même place dans l'arbre, React réutilisait donc la même page et la
+          // classe choisie ici filtrait en silence « Mon planning ».
+          { path: "planning", element: <PlanningPage key="planning-gestion" /> },
           { path: "classes", element: <ClassesPage /> },
           { path: "contenu", element: <ContenuPedagogiquePage /> },
           { path: "modules", element: <ModulesPage /> },
@@ -96,7 +99,7 @@ export const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { index: true, element: <Navigate to="planning" replace /> },
-          { path: "planning", element: <PlanningPage /> },
+          { path: "planning", element: <PlanningPage key="planning-personnel" /> },
           { path: "modules", element: <MesModulesPage /> },
           { path: "classes", element: <ClassesPage readOnly /> },
           { path: "documents", element: <DocumentsPage /> },

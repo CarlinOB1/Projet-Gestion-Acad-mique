@@ -10,8 +10,8 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { SEANCE_COLORS, STATUT_COLORS } from '@/lib/constants';
-import { formatDate, formatHeure } from '@/lib/utils';
+import { SEANCE_COLORS, STATUT_COLORS, STATUT_LABELS } from '@/lib/constants';
+import { formatDate, formatCreneau, formatNombreHeures } from '@/lib/utils';
 
 /**
  * @param {{ open: boolean, onClose: Function, seance: Object|null }} props
@@ -56,10 +56,10 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                             {type_seance}
                         </span>
                         <Badge className={`${statutStyle.bg} ${statutStyle.text} border-0`}>
-                            {statut}
+                            {STATUT_LABELS[statut] ?? statut}
                         </Badge>
                         {seance.is_mutualise && (
-                            <Badge variant="outline" className="border-indigo-200 text-indigo-700 bg-indigo-50 ml-auto">
+                            <Badge variant="outline" className="ml-auto">
                                 Mutualisée
                             </Badge>
                         )}
@@ -82,7 +82,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                     {/* Date & Heure */}
                     <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/40">
                         <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                            <Clock className="h-4 w-4 text-blue-500" />
+                            <Clock className="h-4 w-4 text-primary" />
                         </div>
                         <div className="min-w-0">
                             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
@@ -91,18 +91,18 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                             {estReportee ? (
                                 <>
                                     <p className="text-sm text-muted-foreground line-through">
-                                        {formatDate(date_seance)} · {formatHeure(heure_debut)} – {formatHeure(heure_fin)}
+                                        {formatDate(date_seance)} · {formatCreneau(heure_debut, heure_fin)}
                                     </p>
                                     <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 mt-1">
                                         <CalendarClock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                                        {formatDate(date_report)} · {formatHeure(heure_debut_report)} – {formatHeure(heure_fin_report)}
+                                        {formatDate(date_report)} · {formatCreneau(heure_debut_report, heure_fin_report)}
                                     </p>
                                 </>
                             ) : (
-                                <p className="text-sm font-semibold text-foreground">
-                                    {formatDate(date_seance)} · {formatHeure(heure_debut)} – {formatHeure(heure_fin)}
-                                    {dureeMs && (
-                                        <span className="ml-2 text-xs font-normal text-muted-foreground">({dureeMs}min)</span>
+                                <p className="text-sm font-semibold text-foreground tabular-nums">
+                                    {formatDate(date_seance)} · {formatCreneau(heure_debut, heure_fin)}
+                                    {dureeMs > 0 && (
+                                        <span className="ml-2 text-xs font-normal text-muted-foreground">({formatNombreHeures(dureeMs / 60)})</span>
                                     )}
                                 </p>
                             )}
@@ -112,7 +112,7 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                     {/* Enseignant */}
                     <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                         <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                            <User className="h-4 w-4 text-blue-500" />
+                            <User className="h-4 w-4 text-primary" />
                         </div>
                         <div className="min-w-0">
                             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Enseignant</p>
@@ -125,11 +125,11 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                         </div>
                     </div>
 
-                    {/* Classe & Salle côte à côte */}
-                    <div className="grid grid-cols-2 gap-3">
+                    {/* Classe, et la salle seulement si elle est renseignée */}
+                    <div className={`grid gap-3 ${salle ? 'grid-cols-2' : 'grid-cols-1'}`}>
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                             <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                                <Users className="h-4 w-4 text-blue-500" />
+                                <Users className="h-4 w-4 text-primary" />
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Classe</p>
@@ -139,24 +139,24 @@ export default function SeanceDetailsDialog({ open, onClose, seance }) {
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
+                        {salle && (<div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                             <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                                <MapPin className="h-4 w-4 text-blue-500" />
+                                <MapPin className="h-4 w-4 text-primary" />
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Salle</p>
                                 <p className="text-sm font-semibold text-foreground">
-                                    {salle?.libelle || salle?.code || 'Non renseignée'}
+                                    {salle.libelle || salle.code}
                                 </p>
                             </div>
-                        </div>
+                        </div>)}
                     </div>
 
                     {/* Module / Matière si non affiché dans le header */}
                     {module?.code && (
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40">
                             <div className="p-2 bg-background rounded-md border border-border/60 shrink-0">
-                                <Tag className="h-4 w-4 text-blue-500" />
+                                <Tag className="h-4 w-4 text-primary" />
                             </div>
                             <div className="min-w-0">
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Code module</p>

@@ -7,8 +7,17 @@
  */
 
 import React from 'react';
-import { Pencil, Trash2, AlertCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Pencil, Trash2, AlertCircle, MoreHorizontal } from 'lucide-react';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { confirmer } from '@/lib/confirmer';
+import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Table,
   TableBody,
@@ -25,19 +34,30 @@ export default function DataTable({
   isError = false,
   onEdit,
   onDelete,
-  emptyMessage = "Aucune donnée disponible"
+  emptyMessage = "Aucune donnée disponible",
+  // Actions en plus de Modifier / Supprimer : [{ libelle, icone, onClick(row) }].
+  actionsSupplementaires = [],
+  // Regroupe toutes les actions dans un menu « ⋯ » : pour les tableaux
+  // étroits, où trois boutons côte à côte finissaient hors de l'écran.
+  actionsEnMenu = false,
+  libelleLigne = () => 'cette ligne',
 }) {
   // Calcul du nombre total de colonnes (colonnes de données + colonne Actions)
-  const hasRowActions = Boolean(onEdit || onDelete);
+  const hasRowActions = Boolean(onEdit || onDelete || actionsSupplementaires.length);
   const totalColumns = columns.length + (hasRowActions ? 1 : 0);
 
   /**
    * Gère la confirmation de suppression avant d'exécuter le callback
    */
-  const handleDeleteClick = (row) => {
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer cet élément ?")) {
-      onDelete?.(row);
-    }
+  const handleDeleteClick = async (row) => {
+    const nom = libelleLigne(row);
+    const ok = await confirmer({
+      titre: nom === 'cette ligne' ? 'Supprimer cet élément ?' : `Supprimer « ${nom} » ?`,
+      description: 'Cette action est définitive.',
+      libelleConfirmer: 'Supprimer',
+      destructif: true,
+    });
+    if (ok) onDelete?.(row);
   };
 
   return (
@@ -54,7 +74,8 @@ export default function DataTable({
               </TableHead>
             ))}
             {hasRowActions && (
-              <TableHead className="text-xs uppercase font-semibold text-muted-foreground text-right h-10 w-[100px]">
+              <TableHead className={cn('text-xs uppercase font-semibold text-muted-foreground text-right h-10', actionsEnMenu ? 'w-12' : 'w-[100px]')}>
+                <span className="sr-only">Actions</span>
               </TableHead>
             )}
           </TableRow>
@@ -112,9 +133,52 @@ export default function DataTable({
                 ))}
                 
                 
-                {/* Cellule d'actions */}
-                {hasRowActions && (
-                  <TableCell className="py-2 text-right whitespace-nowrap space-x-1 opacity-0 group-hover:opacity-100 transition-opacity focus-within:opacity-100">
+                {/* Cellule d'actions — toujours visibles : masqués jusqu'au
+                    survol, ils n'apparaissaient jamais sur écran tactile. */}
+                {hasRowActions && actionsEnMenu && (
+                  <TableCell className="py-2 text-right">
+                    <DropdownMenu>
+                      {/* Déclencheur Radix stylé en bouton : notre <Button> ne
+                          transmet pas de ref (React 18), le menu ne saurait
+                          pas où s'ouvrir. */}
+                      <DropdownMenuTrigger
+                        aria-label={`Actions pour ${libelleLigne(row)}`}
+                        className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }))}
+                      >
+                        <MoreHorizontal className="size-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="min-w-44">
+                        {actionsSupplementaires.map((action) => {
+                          const Icone = action.icone;
+                          return (
+                            <DropdownMenuItem key={action.libelle} onSelect={() => action.onClick(row)}>
+                              {Icone && <Icone className="text-muted-foreground" />}
+                              {action.libelle}
+                            </DropdownMenuItem>
+                          );
+                        })}
+                        {onEdit && (
+                          <DropdownMenuItem onSelect={() => onEdit(row)}>
+                            <Pencil className="text-muted-foreground" />
+                            Modifier
+                          </DropdownMenuItem>
+                        )}
+                        {onDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem variant="destructive" onSelect={() => handleDeleteClick(row)}>
+                              <Trash2 />
+                              Supprimer
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                )}
+
+                {hasRowActions && !actionsEnMenu && (
+                  <TableCell className="py-2 text-right whitespace-nowrap space-x-1">
                     {onEdit && (
                       <Button
                         variant="ghost"

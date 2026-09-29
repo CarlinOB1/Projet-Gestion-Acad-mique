@@ -3,10 +3,19 @@
  * @description Vue tableau semaine — disposition structurée par créneaux horaires fixes,
  * inspirée du format officiel de l'emploi du temps UCCB et de la maquette Figma.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, forwardRef, Fragment } from 'react';
 import { ChevronLeft, ChevronRight, CalendarDays, Clock, AlertCircle, CalendarX, Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { SEANCE_COLORS } from '@/lib/constants';
+import { formatNombreHeures, formatDate, formatCreneau } from '@/lib/utils';
 
 // ── Créneaux horaires du planning UCCB ─────────────────────────────────────────
 const TIME_SLOTS = [
@@ -81,25 +90,65 @@ function AlertBanner({ count }) {
   );
 }
 
-// ── Composant Cellule de Conflit ─────────────────────────────────────────────
-function ConflictCell({ seances, onClick }) {
+// ── Menu d'actions d'une séance ─────────────────────────────────────────────
+// S'ouvre collé à la carte cliquée, sans assombrir la page. Sans actions
+// (lecture seule), l'élément est rendu tel quel et garde son propre clic.
+function SeanceMenu({ seance, actions, children }) {
+  if (!actions?.length) return children;
   return (
-    <div 
-      onClick={() => onClick && onClick(seances[0])}
-      className="h-full w-full flex flex-col gap-1 p-2 bg-rose-50 border border-rose-300 rounded-lg cursor-pointer hover:bg-rose-100/80 transition-colors overflow-y-auto"
-    >
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel className="text-sm font-semibold text-foreground text-pretty">
+          {seance.module?.libelle || 'Séance'}
+          <span className="block text-xs font-normal text-muted-foreground tabular-nums">
+            {formatDate(seance.date_seance)} · {formatCreneau(seance.heure_debut, seance.heure_fin)}
+          </span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {actions.map(({ libelle, icone: Icone, onSelect, destructif }) => (
+          <Fragment key={libelle}>
+            {destructif && <DropdownMenuSeparator />}
+            <DropdownMenuItem
+              variant={destructif ? 'destructive' : 'default'}
+              onSelect={() => onSelect(seance)}
+            >
+              {Icone && <Icone className={destructif ? undefined : 'text-muted-foreground'} />}
+              {libelle}
+            </DropdownMenuItem>
+          </Fragment>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// ── Composant Cellule de Conflit ─────────────────────────────────────────────
+// Chaque séance en conflit est cliquable : avant, seule la première l'était.
+function ConflictCell({ seances, onClick, actionsSeance }) {
+  return (
+    <div className="h-full w-full flex flex-col gap-1 p-2 bg-rose-50 border border-rose-300 rounded-lg overflow-y-auto">
       <div className="flex items-center gap-1 mb-0.5">
         <AlertTriangle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
         <span className="text-[10px] font-extrabold text-rose-700 uppercase tracking-wide">Conflit ({seances.length})</span>
       </div>
-      {seances.map((s, idx) => (
-        <div key={s.id ?? idx} className="text-rose-900 leading-tight bg-white/70 p-1.5 rounded border border-rose-200 text-left">
-          <div className="text-[11px] font-bold truncate">{s.module?.libelle || 'Module'}</div>
-          <div className="text-[10px] text-rose-700 font-medium truncate">
-            {s.enseignant?.nom_complet || 'Sans prof'} · {s.classe?.libelle || s.type_seance}
-          </div>
-        </div>
-      ))}
+      {seances.map((s, idx) => {
+        const actions = actionsSeance?.(s);
+        return (
+          <SeanceMenu key={s.id ?? idx} seance={s} actions={actions}>
+            <button
+              type="button"
+              onClick={actions?.length ? undefined : () => onClick && onClick(s)}
+              className="w-full text-rose-900 leading-tight bg-white/70 p-1.5 rounded border border-rose-200 text-left cursor-pointer hover:bg-white transition-colors"
+            >
+              <span className="block text-[11px] font-bold truncate">{s.module?.libelle || 'Module'}</span>
+              <span className="block text-[10px] text-rose-700 font-medium truncate">
+                {s.enseignant?.nom_complet || 'Sans prof'} · {s.classe?.libelle || s.type_seance}
+              </span>
+            </button>
+          </SeanceMenu>
+        );
+      })}
     </div>
   );
 }
@@ -118,17 +167,19 @@ function EmptyCell({ onClick, disabled }) {
       onMouseLeave={() => setIsHovered(false)}
       className={`
         w-full h-full flex flex-col items-center justify-center gap-1 rounded-lg border transition-all duration-150 cursor-pointer
-        ${isHovered ? 'border-blue-400 bg-blue-50/70 shadow-sm' : 'border-dashed border-border/60 bg-transparent'}
+        ${isHovered ? 'border-primary/50 bg-primary/5 shadow-sm' : 'border-dashed border-border/60 bg-transparent'}
       `}
     >
-      <Plus className={`w-4 h-4 transition-colors ${isHovered ? 'text-blue-600' : 'text-muted-foreground/40'}`} />
-      {isHovered && <span className="text-[10px] text-blue-600 font-bold">Affecter</span>}
+      <Plus className={`w-4 h-4 transition-colors ${isHovered ? 'text-primary' : 'text-muted-foreground/40'}`} />
+      {isHovered && <span className="text-[10px] text-primary font-bold">Affecter</span>}
     </button>
   );
 }
 
 // ── Carte de cours ──────────────────────────────────────────────────────────────
-function CourseCard({ seance, onClick, isPrintMode }) {
+// forwardRef + props restantes : la carte sert aussi de déclencheur au menu
+// d'actions (SeanceMenu), qui a besoin de sa ref pour s'y accrocher.
+const CourseCard = forwardRef(function CourseCard({ seance, onClick, isPrintMode, masquer = [], ...rest }, ref) {
   const { type_seance, statut, module, enseignant, classe } = seance;
   const typeStyle = SEANCE_COLORS[type_seance] || {
     bg: 'bg-slate-100', text: 'text-slate-900', border: 'border-slate-400',
@@ -138,8 +189,10 @@ function CourseCard({ seance, onClick, isPrintMode }) {
 
   return (
     <button
+      ref={ref}
       type="button"
-      onClick={() => onClick && onClick(seance)}
+      onClick={onClick ? () => onClick(seance) : undefined}
+      {...rest}
       className={`
         w-full text-left ${isPrintMode ? 'px-2 py-1.5' : 'px-3 py-2.5'} border-l-[5px] flex flex-col ${isPrintMode ? 'gap-1' : 'justify-between'}
         transition-all hover:brightness-95 active:scale-[0.98] cursor-pointer rounded-r-md shadow-xs
@@ -154,7 +207,7 @@ function CourseCard({ seance, onClick, isPrintMode }) {
           <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded bg-white/70 shadow-2xs ${typeStyle.text}`}>
             {type_seance}
           </span>
-          {classe?.libelle && (
+          {classe?.libelle && !masquer.includes('classe') && (
             <span className={`${isPrintMode ? 'text-[8px]' : 'text-[9px]'} font-semibold px-1 py-0.5 rounded bg-black/5 text-foreground/80`}>
               {classe.libelle}
             </span>
@@ -166,7 +219,7 @@ function CourseCard({ seance, onClick, isPrintMode }) {
             <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700`}>Reportée</span>
           )}
           {seance.is_mutualise && (
-            <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700`}>Mutualisée</span>
+            <span className={`${isPrintMode ? 'text-[8px]' : 'text-[10px]'} font-bold px-1.5 py-0.5 rounded bg-white/70 text-foreground/80`}>Mutualisée</span>
           )}
         </div>
 
@@ -174,22 +227,40 @@ function CourseCard({ seance, onClick, isPrintMode }) {
         <p className={`${isPrintMode ? 'text-xs' : 'text-xs sm:text-sm'} font-bold leading-snug ${isPrintMode ? '' : 'line-clamp-2'} ${typeStyle.text} ${estAnnulee ? 'line-through' : ''}`}>
           {module?.libelle || '—'}
         </p>
+
+        {/* Matière du module */}
+        {module?.matiere?.libelle && (
+          <p
+            title={module.matiere.libelle}
+            className={`${isPrintMode ? 'text-[9px]' : 'text-[10px]'} mt-0.5 text-foreground/70 ${isPrintMode ? '' : 'truncate'}`}
+          >
+            {module.matiere.libelle}
+          </p>
+        )}
       </div>
 
       {/* Bottom : enseignant */}
-      <p className={`${isPrintMode ? 'text-[10px] mt-1' : 'text-[11px] mt-1'} text-muted-foreground ${isPrintMode ? '' : 'truncate'} font-semibold`}>
-        {enseignant?.nom_complet || 'Non assigné'}
-      </p>
+      {!masquer.includes('enseignant') && (
+        <p className={`${isPrintMode ? 'text-[10px] mt-1' : 'text-[11px] mt-1'} text-muted-foreground ${isPrintMode ? '' : 'truncate'} font-semibold`}>
+          {enseignant?.nom_complet || 'Non assigné'}
+        </p>
+      )}
     </button>
   );
-}
+});
 
 // ── Composant principal ─────────────────────────────────────────────────────────
+/**
+ * @param {(seance) => Array<{libelle, icone, onSelect, destructif?}>} [actionsSeance]
+ *   Actions proposées au clic sur une séance, dans un menu collé à la carte.
+ *   Sans elles, le clic appelle onSeanceClick (détail en lecture seule).
+ */
 export default function PlanningTableView({
   events = [],
   isLoading,
   isError,
   onSeanceClick = () => {},
+  actionsSeance,
   onEmptyCellClick,
   weekStart: externalWeekStart,
   onWeekChange,
@@ -197,6 +268,7 @@ export default function PlanningTableView({
   isPrintMode = false,
   readOnly = false,
   title = "Emploi du temps",
+  masquer = [],
 }) {
   const [internalWeekStart, setInternalWeekStart] = useState(() => getMondayOf(new Date()));
 
@@ -252,7 +324,13 @@ export default function PlanningTableView({
     return h % 1 === 0 ? h : parseFloat(h.toFixed(1));
   }, [events, weekStart]);
 
-  const todayKey = toDateKey(new Date());
+  // Pas de repère « aujourd'hui » dans le PDF : il n'a de sens qu'à l'écran,
+  // le jour où on le regarde.
+  const todayKey = isPrintMode ? null : toDateKey(new Date());
+
+  // Le PDF n'affiche pas la ligne de pause : aucune séance ne peut s'y trouver
+  // (refusé par le serveur), elle ne faisait qu'occuper de la place.
+  const lignes = isPrintMode ? TIME_SLOTS.filter((slot) => !slot.isPause) : TIME_SLOTS;
 
   const eventMap = useMemo(() => {
     const map = {};
@@ -281,13 +359,9 @@ export default function PlanningTableView({
     return count;
   }, [weekDays, eventMap]);
 
-  if (isLoading) {
-    return (
-      <div className="w-full h-64 bg-muted/40 animate-pulse rounded-xl border border-border/60 flex items-center justify-center">
-        <span className="text-sm text-muted-foreground font-medium">Chargement de l'emploi du temps…</span>
-      </div>
-    );
-  }
+  // Pendant le chargement (jusqu'à ~25 s sur un gros semestre), on garde la
+  // grille et la navigation à l'écran avec des blocs gris à la place des
+  // séances, plutôt qu'un simple texte « Chargement… ».
   if (isError) {
     return (
       <div className="w-full h-64 flex flex-col items-center justify-center gap-3 border border-destructive/20 bg-destructive/5 rounded-xl p-6 text-center">
@@ -314,7 +388,7 @@ export default function PlanningTableView({
     <div className={`flex flex-col gap-4 ${isPrintMode ? 'w-[1050px] bg-background p-4' : ''}`}>
 
       {/* ── État vide contextualisé ── */}
-      {hasNoEventsAtAll && !isPrintMode && (
+      {hasNoEventsAtAll && !isLoading && !isPrintMode && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border bg-muted/30 py-12 px-6 text-center">
           <CalendarX className="h-10 w-10 text-muted-foreground/60" />
           <div>
@@ -334,18 +408,18 @@ export default function PlanningTableView({
         {!isPrintMode ? (
           <div className="flex items-center gap-2">
             <Button variant="outline" size="icon" onClick={handlePrev} aria-label="Semaine précédente" className="h-9 w-9">
-              <ChevronLeft className="h-4 w-4 text-blue-600" />
+              <ChevronLeft className="h-4 w-4" />
             </Button>
             <Button variant="outline" onClick={handleToday} className="h-9 px-4 text-sm font-medium gap-2">
-              <CalendarDays className="h-4 w-4 text-blue-600" />
+              <CalendarDays className="h-4 w-4" />
               Aujourd'hui
             </Button>
             <Button variant="outline" size="icon" onClick={handleNext} aria-label="Semaine suivante" className="h-9 w-9">
-              <ChevronRight className="h-4 w-4 text-blue-600" />
+              <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         ) : (
-          <div className="text-xl font-extrabold text-foreground tracking-tight text-left flex-1 border-l-4 border-blue-500 pl-3">
+          <div className="text-xl font-extrabold text-foreground tracking-tight text-left flex-1 border-l-4 border-primary pl-3">
             {title}
           </div>
         )}
@@ -375,9 +449,9 @@ export default function PlanningTableView({
             </div>
           )}
           {!isPrintMode && (
-            <div className="flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-md text-xs font-bold ml-1">
-              <Clock className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-              <span>{totalHours}h</span>
+            <div className="flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 px-2.5 py-1 rounded-md text-xs font-bold ml-1 tabular-nums">
+              <Clock className="h-3.5 w-3.5 shrink-0" />
+              <span>{isLoading ? '… h de cours' : `${formatNombreHeures(totalHours)} de cours`}</span>
             </div>
           )}
         </div>
@@ -404,16 +478,16 @@ export default function PlanningTableView({
                 return (
                   <th
                     key={day.offset}
-                    className={`p-3 border-b border-r border-border text-center last:border-r-0 ${isToday ? 'bg-blue-50/60 dark:bg-blue-950/20' : 'bg-muted/60'}`}
+                    className={`p-3 border-b border-r border-border text-center last:border-r-0 ${isToday ? 'bg-primary/10' : 'bg-muted/60'}`}
                   >
-                    <p className={`text-xs font-bold uppercase tracking-wider ${isToday ? 'text-blue-600' : 'text-foreground'}`}>
+                    <p className={`text-xs font-bold uppercase tracking-wider ${isToday ? 'text-primary' : 'text-foreground'}`}>
                       {day.full}
                     </p>
-                    <p className={`text-xs mt-0.5 ${isToday ? 'text-blue-600 font-semibold' : 'text-muted-foreground'}`}>
+                    <p className={`text-xs mt-0.5 ${isToday ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>
                       {formatDayDate(day.date)}
                     </p>
                     {isToday && (
-                      <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-600 mx-auto" />
+                      <div className="mt-1.5 size-1.5 rounded-full bg-primary mx-auto" />
                     )}
                   </th>
                 );
@@ -422,8 +496,8 @@ export default function PlanningTableView({
           </thead>
 
           <tbody>
-            {TIME_SLOTS.map((slot, slotIdx) => {
-              const isLast = slotIdx === TIME_SLOTS.length - 1;
+            {lignes.map((slot, slotIdx) => {
+              const isLast = slotIdx === lignes.length - 1;
               return (
                 <tr
                   key={slot.id}
@@ -462,7 +536,7 @@ export default function PlanningTableView({
                         className={`
                           border-r border-b ${isLast ? 'border-b-0' : ''} last:border-r-0 border-border p-1.5
                           ${slot.isPause ? 'bg-amber-50/30 dark:bg-amber-950/10' : ''}
-                          ${isToday && !slot.isPause ? 'bg-blue-50/20 dark:bg-blue-950/10' : ''}
+                          ${isToday && !slot.isPause ? 'bg-primary/[0.03]' : ''}
                         `}
                         style={{
                           height: slot.rowH,
@@ -471,8 +545,12 @@ export default function PlanningTableView({
                         }}
                       >
                         {/* Case en conflit */}
-                        {hasConflictInCell ? (
-                          <ConflictCell seances={activeSeances} onClick={onSeanceClick} />
+                        {isLoading ? (
+                          !slot.isPause && (
+                            <div className="h-full w-full rounded-lg bg-muted animate-pulse" aria-hidden />
+                          )
+                        ) : hasConflictInCell ? (
+                          <ConflictCell seances={activeSeances} onClick={onSeanceClick} actionsSeance={isPrintMode ? undefined : actionsSeance} />
                         ) : cellSeances.length > 0 ? (
                           <div
                             style={{
@@ -482,14 +560,24 @@ export default function PlanningTableView({
                               height: '100%',
                             }}
                           >
-                            {cellSeances.map((seance, i) => (
-                              <div
-                                key={seance.id ?? i}
-                                style={{ flex: 1, minHeight: 'fit-content', display: 'flex', flexDirection: 'column' }}
-                              >
-                                <CourseCard seance={seance} onClick={onSeanceClick} isPrintMode={isPrintMode} />
-                              </div>
-                            ))}
+                            {cellSeances.map((seance, i) => {
+                              const actions = isPrintMode ? undefined : actionsSeance?.(seance);
+                              return (
+                                <div
+                                  key={seance.id ?? i}
+                                  style={{ flex: 1, minHeight: 'fit-content', display: 'flex', flexDirection: 'column' }}
+                                >
+                                  <SeanceMenu seance={seance} actions={actions}>
+                                    <CourseCard
+                                      seance={seance}
+                                      onClick={actions?.length ? undefined : onSeanceClick}
+                                      isPrintMode={isPrintMode}
+                                      masquer={masquer}
+                                    />
+                                  </SeanceMenu>
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : !slot.isPause ? (
                           <EmptyCell

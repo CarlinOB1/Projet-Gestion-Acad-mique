@@ -103,24 +103,43 @@ export const extractData = (response) => {
  * non paginée (tableau direct, ou objet sans `results`) est renvoyée telle
  * quelle, sans requête supplémentaire.
  *
+ * Les pages suivantes sont demandées en parallèle (par lots de
+ * PAGES_EN_PARALLELE) : `count` et la taille de la 1re page suffisent à
+ * connaître leur nombre. Les suivre une à une via `next` faisait attendre
+ * chaque réponse avant la suivante — ~21 s pour les 14 pages du planning
+ * d'un chef de département.
+ *
  * @param {string} url
  * @param {object} [params]
  * @returns {Promise<any>}
  */
+const PAGES_EN_PARALLELE = 6;
+
 export const fetchAllPages = async (url, params = {}) => {
-  let response = await apiClient.get(url, { params });
+  const response = await apiClient.get(url, { params });
   const data = response.data;
 
   if (!data || typeof data !== 'object' || !Array.isArray(data.results)) {
     return data;
   }
 
+  const taillePage = data.results.length;
+  if (!data.next || taillePage === 0) {
+    return data.results;
+  }
+  const nbPages = Math.ceil(data.count / taillePage);
+
+  const pagesRestantes = [];
+  for (let page = 2; page <= nbPages; page += 1) pagesRestantes.push(page);
+
   let results = data.results;
-  let next = data.next;
-  while (next) {
-    response = await apiClient.get(next);
-    results = results.concat(response.data?.results ?? []);
-    next = response.data?.next;
+  for (let i = 0; i < pagesRestantes.length; i += PAGES_EN_PARALLELE) {
+    const lot = pagesRestantes.slice(i, i + PAGES_EN_PARALLELE);
+    const reponses = await Promise.all(
+      lot.map((page) => apiClient.get(url, { params: { ...params, page } }))
+    );
+    // Promise.all conserve l'ordre du lot : les résultats restent triés.
+    for (const r of reponses) results = results.concat(r.data?.results ?? []);
   }
   return results;
 };

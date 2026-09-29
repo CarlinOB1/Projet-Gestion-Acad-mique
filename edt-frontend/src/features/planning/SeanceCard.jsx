@@ -68,7 +68,7 @@ export default function SeanceCard({ eventInfo }) {
             </span>
           )}
           {event.extendedProps.is_mutualise && (
-            <span className="inline-flex items-center px-1 py-0.5 rounded-sm text-[10px] font-medium border border-indigo-200 text-indigo-700 bg-indigo-50">
+            <span className="inline-flex items-center px-1 py-0.5 rounded-sm text-[10px] font-medium border border-border text-foreground/80 bg-white/70">
               Mutualisée
             </span>
           )}

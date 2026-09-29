@@ -72,15 +72,15 @@ export const AVANCEMENT_STYLES = {
         barColor: "bg-slate-300 dark:bg-slate-600",
         badge: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
     },
+    // Couleur de l'application (vert UCCB) : clair en cours, plein une fois terminé.
     en_cours: {
         label: "En cours",
-        barColor: "bg-blue-500",
-        badge: "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
+        barColor: "bg-primary/70",
+        badge: "bg-primary/10 text-primary",
     },
     termine: {
         label: "Terminé",
-        barColor: "bg-emerald-500",
-        badge:
-            "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+        barColor: "bg-primary",
+        badge: "bg-primary text-primary-foreground",
     },
 };

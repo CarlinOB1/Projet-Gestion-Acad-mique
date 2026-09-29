@@ -68,7 +68,7 @@ export default function ClasseGroupSection({
                         <Button
                             size="sm"
                             variant="default"
-                            className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                            className="h-7 text-xs shadow-sm"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 onPublierMasse(classeId, brouillons.map(s => s.id));

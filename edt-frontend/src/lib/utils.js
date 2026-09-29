@@ -11,6 +11,28 @@ export function formatHeure(timeString) {
   return `${heures}h${minutes}`;
 }
 
+/** "09:00" → "9h", "11:15" → "11h15" (écriture courte des créneaux du planning). */
+export function formatHeureCourte(timeString) {
+  if (!timeString) return '';
+  const [heures, minutes = '00'] = timeString.split(':');
+  const h = Number(heures);
+  return minutes.slice(0, 2) === '00' ? `${h}h` : `${h}h${minutes.slice(0, 2)}`;
+}
+
+/** "09:00", "11:00" → "9h – 11h". */
+export function formatCreneau(heureDebut, heureFin) {
+  if (!heureDebut) return '';
+  return heureFin
+    ? `${formatHeureCourte(heureDebut)} – ${formatHeureCourte(heureFin)}`
+    : formatHeureCourte(heureDebut);
+}
+
+/** 292.0 → "292 h", 18.5 → "18,5 h" (virgule française, pas de ".0"). */
+export function formatNombreHeures(valeur) {
+  const n = Number(valeur) || 0;
+  return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(n)} h`;
+}
+
 export function formatDate(dateString) {
   if (!dateString) return '';
   const date = new Date(dateString + 'T00:00:00');
