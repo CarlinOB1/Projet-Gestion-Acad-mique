@@ -5,18 +5,16 @@
  * (Parcours + Filière/Code + Année) les modules organisés par semestre.
  *
  * Navigation :
- *   - Sélecteur de groupe de classe (ex: "L1 MIP · 2025-2026")
- *   - Deux colonnes côte à côte : Semestre 1 | Semestre 2
+ *   - Liste des classes (ex: "L1 MIP · 2025-2026")
+ *   - Les modules de la classe choisie, tous ses semestres sur la même page
+ *     (le semestre en cours est signalé)
  *   - CRUD complet sur les modules (ajout / modification / suppression)
  *   - Panel d'affectation des enseignants (Sheet latérale)
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  BookMarked, Plus, Layers, Users, BookOpen,
-  GraduationCap, AlertCircle, Inbox,
-} from 'lucide-react';
+import { Plus, Users, BookOpen, AlertCircle, Inbox } from 'lucide-react';
 
 // UI primitives
 import { Button } from '@/components/ui/button';
@@ -37,6 +35,8 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import FormModal from '@/components/shared/FormModal';
 import PageHeader from '@/components/shared/PageHeader';
+import { Badge } from '@/components/ui/badge';
+import { trouverSemestreEnCours } from '@/lib/semestres';
 import { formatNombreHeures } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 
@@ -82,22 +82,11 @@ function groupLabel(classe) {
   return `${parcours} ${identifiant} · ${annee}`;
 }
 
-/**
- * Retourne le numéro de semestre extrait depuis le libellé.
- * "Semestre 1" => 1, "Semestre 2" => 2
- */
-function getSemestreNum(semestre) {
-  const match = semestre?.libelle?.match(/(\d)/);
-  return match ? parseInt(match[1], 10) : 0;
-}
-
 // -----------------------------------------------------------------
 // COMPOSANT : Carte d'un semestre
 // -----------------------------------------------------------------
 
-function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAffecterModule }) {
-  const semestreId = classe?.semestre?.id;
-
+function SemestreCard({ classe, enCours = false, onAddModule, onEditModule, onDeleteModule, onAffecterModule }) {
   const { data: modules = [], isLoading, isError } = useQuery({
     queryKey: ['modules', classe?.id ? `classe-${classe.id}` : 'none'],
     queryFn: () => getModules({ classe_id: classe?.id }),
@@ -117,7 +106,7 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
     },
     {
       key: 'credits',
-      label: 'ECTS',
+      label: 'Crédit(s)',
       render: (row) => (
         <span className="text-sm font-semibold tabular-nums">{row.credits}</span>
       ),
@@ -155,18 +144,21 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
   }
 
   return (
-    <div className="flex-1 flex flex-col">
+    <section aria-label={semestreLabel} className="flex-1 flex flex-col">
       {/* En-tête */}
       <div className="py-3 flex items-center justify-between gap-3">
-        <div className="flex items-baseline gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
           <h2 className="text-base font-semibold text-foreground">{semestreLabel}</h2>
+          {enCours && (
+            <Badge className="bg-primary/10 text-primary border-transparent hover:bg-primary/10">En cours</Badge>
+          )}
           <span className="text-xs text-muted-foreground tabular-nums">
             {isLoading ? '…' : `${modules.length} module${modules.length > 1 ? 's' : ''}`}
             {' · '}
             {totalCredits} ECTS
           </span>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onAddModule(classe)}>
+        <Button size="sm" className="gap-1.5 rounded-md" onClick={() => onAddModule(classe)}>
           <Plus className="size-3.5" />
           Ajouter un module
         </Button>
@@ -215,7 +207,7 @@ function SemestreCard({ classe, onAddModule, onEditModule, onDeleteModule, onAff
           />
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -261,12 +253,17 @@ export default function ContenuPedagogiquePage() {
 
   const { data: semestres = [] } = useQuery({
     queryKey: ['semestres'],
-    queryFn: getSemestres,
-    enabled: isModalOpen,
+    queryFn: () => getSemestres(),
   });
+
+  // Sert seulement à signaler le semestre en cours : tous les semestres de la
+  // classe sont affichés l'un sous l'autre.
+  const semestreEnCours = trouverSemestreEnCours(semestres);
 
   // ── Groupement des classes ─────────────────────────────────
 
+  // Un groupe = même parcours, filière et année : il réunit les classes de
+  // chaque semestre (L2 S1 Informatique, L2 S2 Informatique…).
   const groupedClasses = useMemo(() => {
     const map = new Map();
     classes.forEach((c) => {
@@ -277,25 +274,15 @@ export default function ContenuPedagogiquePage() {
       map.get(key).classes.push(c);
     });
     map.forEach((group) => {
-      group.classes.sort((a, b) => getSemestreNum(a.semestre) - getSemestreNum(b.semestre));
+      group.classes.sort((a, b) =>
+        (a.semestre?.libelle ?? '').localeCompare(b.semestre?.libelle ?? '', 'fr', { numeric: true }));
     });
     return Array.from(map.values());
   }, [classes]);
 
-  // Sélection automatique du premier groupe au chargement
-  useEffect(() => {
-    if (groupedClasses.length > 0 && !selectedGroupKey) {
-      setSelectedGroupKey(groupedClasses[0].key);
-    }
-  }, [groupedClasses, selectedGroupKey]);
-
-  const selectedGroup = useMemo(
-    () => groupedClasses.find((g) => g.key === selectedGroupKey) ?? null,
-    [groupedClasses, selectedGroupKey]
-  );
-
-  const classeS1 = selectedGroup?.classes.find((c) => getSemestreNum(c.semestre) === 1) ?? null;
-  const classeS2 = selectedGroup?.classes.find((c) => getSemestreNum(c.semestre) === 2) ?? null;
+  // Premier groupe par défaut, calculé pendant le rendu (pas d'effet).
+  const selectedGroup =
+    groupedClasses.find((g) => g.key === selectedGroupKey) ?? groupedClasses[0] ?? null;
 
   // ── Mutations ──────────────────────────────────────────────
 
@@ -422,10 +409,10 @@ export default function ContenuPedagogiquePage() {
                   <button
                       key={group.key}
                       type="button"
-                      aria-current={selectedGroupKey === group.key ? 'true' : undefined}
+                      aria-current={selectedGroup?.key === group.key ? 'true' : undefined}
                       onClick={() => setSelectedGroupKey(group.key)}
                       className={`shrink-0 text-left px-3 py-2 rounded-md text-sm whitespace-nowrap md:whitespace-normal transition-colors ${
-                          selectedGroupKey === group.key
+                          selectedGroup?.key === group.key
                               ? 'bg-primary/10 text-primary font-semibold'
                               : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
                       }`}
@@ -441,26 +428,23 @@ export default function ContenuPedagogiquePage() {
           {!selectedGroup ? (
             <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground border rounded-xl border-dashed">
               <BookOpen className="h-10 w-10 opacity-30" />
-              <p className="text-sm">Sélectionnez une classe pour voir ses modules.</p>
+              <p className="text-sm">
+                {classesLoading ? 'Chargement…' : 'Aucune classe disponible.'}
+              </p>
             </div>
           ) : (
-            <div className="space-y-6">
-                <div className="flex flex-col gap-6">
-                  <SemestreCard
-                    classe={classeS1}
-                    onAddModule={handleAddModule}
-                    onEditModule={handleEditModule}
-                    onDeleteModule={handleDeleteModule}
-                    onAffecterModule={setModuleAffectation}
-                  />
-                  <SemestreCard
-                    classe={classeS2}
-                    onAddModule={handleAddModule}
-                    onEditModule={handleEditModule}
-                    onDeleteModule={handleDeleteModule}
-                    onAffecterModule={setModuleAffectation}
-                  />
-                </div>
+            <div className="space-y-8">
+              {selectedGroup.classes.map((classe) => (
+                <SemestreCard
+                  key={classe.id}
+                  classe={classe}
+                  enCours={!!semestreEnCours && classe.semestre?.id === semestreEnCours.id}
+                  onAddModule={handleAddModule}
+                  onEditModule={handleEditModule}
+                  onDeleteModule={handleDeleteModule}
+                  onAffecterModule={setModuleAffectation}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -495,7 +479,7 @@ export default function ContenuPedagogiquePage() {
           <div className="space-y-2">
             <Label htmlFor="cp-matiere">Matière rattachée</Label>
             <Select value={matiereId} onValueChange={setMatiereId}>
-              <SelectTrigger id="cp-matiere">
+              <SelectTrigger id="cp-matiere" className="w-full">
                 <SelectValue placeholder="Choisir une matière" />
               </SelectTrigger>
               <SelectContent>
@@ -511,7 +495,7 @@ export default function ContenuPedagogiquePage() {
           <div className="space-y-2">
             <Label htmlFor="cp-semestre">Semestre</Label>
             <Select value={semestreId} onValueChange={setSemestreId}>
-              <SelectTrigger id="cp-semestre">
+              <SelectTrigger id="cp-semestre" className="w-full">
                 <SelectValue placeholder="Attribuer un semestre" />
               </SelectTrigger>
               <SelectContent>
@@ -554,18 +538,12 @@ export default function ContenuPedagogiquePage() {
         open={!!moduleAffectation}
         onOpenChange={(open) => !open && setModuleAffectation(null)}
       >
-        <DialogContent className="w-full sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader className="mb-4">
-            <DialogTitle>Répartition — {moduleAffectation?.libelle}</DialogTitle>
+        <DialogContent className="sm:max-w-2xl">
+          {/* Un seul titre ; le volume est affiché une fois, par le panneau. */}
+          <DialogHeader>
+            <DialogTitle>Enseignants — {moduleAffectation?.libelle}</DialogTitle>
             <DialogDescription>
-              Gérez les affectations des enseignants sur ce module.
-              {moduleAffectation && (
-                <span className="block mt-1 text-xs">
-                  Volume du module : {formatNombreHeures(moduleAffectation.heures_max)}
-                  {' · '}
-                  Déjà planifié : {formatNombreHeures(moduleAffectation.heures_consommees)}
-                </span>
-              )}
+              Qui enseigne ce module, et combien d'heures chacun.
             </DialogDescription>
           </DialogHeader>
           <AffectationsPanel module={moduleAffectation} />

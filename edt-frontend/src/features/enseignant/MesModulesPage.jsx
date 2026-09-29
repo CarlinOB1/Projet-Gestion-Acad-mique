@@ -24,7 +24,7 @@ const columns = [
   },
   {
     key: 'credits',
-    label: 'ECTS',
+    label: 'Crédit(s)',
     render: (row) => <span className="font-semibold tabular-nums">{row.credits}</span>,
   },
   {

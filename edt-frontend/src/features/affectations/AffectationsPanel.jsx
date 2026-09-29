@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Plus, AlertTriangle, CheckCircle2, Pencil } from 'lucide-react';
+import { Trash2, Plus, AlertTriangle, CheckCircle2, Pencil, ArrowLeft } from 'lucide-react';
 import {
   getAffectations,
   createAffectation,
@@ -20,15 +20,12 @@ import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel,
-  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
-  AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import ErreurFormulaire from '@/components/shared/ErreurFormulaire';
+import { confirmer } from '@/lib/confirmer';
+import { toast } from '@/hooks/use-toast';
+import { formatNombreHeures } from '@/lib/utils';
 
 const TYPE_LABELS = { CM: 'CM', TD: 'TD', TP: 'TP', null: 'Générique' };
 
@@ -40,21 +37,21 @@ function HeuresBadge({ consommees, prevues }) {
   else if (ratio >= 0.8) cls = 'text-orange-700 bg-orange-100';
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
-      {consommees}h / {prevues}h
+      {formatNombreHeures(Number(consommees) || 0)} / {formatNombreHeures(Number(prevues) || 0)}
     </span>
   );
 }
 
 /** Indicateur global de dépassement de volume du module */
 function VolumeWarning({ affectations, module }) {
-  const totalPrevues = affectations.reduce((s, a) => s + a.heures_prevues, 0);
+  const totalPrevues = affectations.reduce((s, a) => s + Number(a.heures_prevues || 0), 0);
   const max = module?.heures_max ?? 0;
   if (totalPrevues <= max) return null;
   return (
     <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
       <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
       <span>
-        Le total des heures prévues ({totalPrevues}h) dépasse le volume max du module ({max}h).
+        Le total des heures prévues ({formatNombreHeures(totalPrevues)}) dépasse le volume du module ({formatNombreHeures(max)}).
         <br />
         <span className="text-xs text-amber-600">L'enregistrement reste possible (avertissement non bloquant).</span>
       </span>
@@ -122,7 +119,7 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 pt-2">
+    <form onSubmit={handleSubmit} className="space-y-5">
       {/* Intervention inter-départements */}
       <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3">
         <input
@@ -139,13 +136,13 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
 
       {/* Enseignant */}
       <div className="space-y-2">
-        <Label className="text-sm font-semibold">Enseignant <span className="text-destructive">*</span></Label>
+        <Label htmlFor="aff-enseignant" className="text-sm font-semibold">Enseignant <span className="text-destructive">*</span></Label>
         <Select
           disabled={loadingEns}
           value={enseignantId}
           onValueChange={setEnseignantId}
         >
-          <SelectTrigger className="h-11">
+          <SelectTrigger id="aff-enseignant" className="w-full">
             <SelectValue placeholder={loadingEns ? 'Chargement...' : 'Sélectionnez un enseignant'} />
           </SelectTrigger>
           <SelectContent>
@@ -164,9 +161,9 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
 
       {/* Type de séance */}
       <div className="space-y-2">
-        <Label className="text-sm font-semibold">Type de séance</Label>
+        <Label htmlFor="aff-type" className="text-sm font-semibold">Type de séance</Label>
         <Select value={typeSeance} onValueChange={setTypeSeance}>
-          <SelectTrigger className="h-11">
+          <SelectTrigger id="aff-type" className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -186,13 +183,13 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
 
       {/* Heures prévues */}
       <div className="space-y-2">
-        <Label className="text-sm font-semibold">Heures prévues <span className="text-destructive">*</span></Label>
+        <Label htmlFor="aff-heures" className="text-sm font-semibold">Heures prévues <span className="text-destructive">*</span></Label>
         <Input
+          id="aff-heures"
           type="number"
           min="0"
           step="0.5"
           placeholder="Ex : 16"
-          className="h-11"
           value={heuresPrevues}
           onChange={(e) => setHeuresPrevues(e.target.value)}
         />
@@ -202,14 +199,9 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
       </div>
 
       {/* Erreur serveur */}
-      {serverError && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-          {serverError}
-        </div>
-      )}
+      <ErreurFormulaire message={serverError} />
 
-      <DialogFooter className="pt-2 gap-2">
+      <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel} className="flex-1 sm:flex-none">Annuler</Button>
         <Button type="submit" disabled={mutation.isPending} className="flex-1 sm:flex-none">
           {mutation.isPending ? 'Enregistrement...' : affectation ? 'Enregistrer les modifications' : 'Ajouter l\'affectation'}
@@ -219,15 +211,19 @@ function AffectationForm({ moduleId, departementId, affectation = null, onSucces
   );
 }
 
-/** Composant principal : panneau d'affectations d'un module */
+/**
+ * Composant principal : panneau d'affectations d'un module.
+ * Liste et formulaire s'affichent tour à tour dans la même fenêtre : avant,
+ * « Affecter » ouvrait une deuxième fenêtre par-dessus la première, et la
+ * suppression une troisième.
+ */
 export default function AffectationsPanel({ module }) {
   const moduleId = module?.id;
   const departementId = module?.matiere?.departement?.id;
   const queryClient = useQueryClient();
 
-  const [showForm, setShowForm] = useState(false);
-  const [editTarget, setEditTarget] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  // null = liste ; { affectation: null } = nouvelle ; { affectation } = modification
+  const [formulaire, setFormulaire] = useState(null);
 
   const { data: affectations = [], isLoading } = useQuery({
     queryKey: ['affectations', moduleId],
@@ -240,28 +236,70 @@ export default function AffectationsPanel({ module }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['affectations', moduleId] });
       queryClient.invalidateQueries({ queryKey: ['modules'] });
-      setDeleteTarget(null);
+      toast({ title: 'Affectation supprimée' });
     },
+    onError: (err) =>
+      toast({
+        variant: 'destructive',
+        title: "L'affectation n'a pas pu être supprimée",
+        description: err?.response?.data?.detail ?? 'Réessayez ; si le problème persiste, rechargez la page.',
+      }),
   });
 
-  const totalPrevues = affectations.reduce((s, a) => s + a.heures_prevues, 0);
+  const supprimer = async (aff) => {
+    const ok = await confirmer({
+      titre: `Supprimer l'affectation de ${aff.enseignant?.nom_complet ?? 'cet enseignant'} ?`,
+      description: `${aff.type_seance ?? 'Générique'} · ${formatNombreHeures(aff.heures_prevues)} prévues. Les séances déjà planifiées ne sont pas supprimées.`,
+      libelleConfirmer: 'Supprimer',
+      destructif: true,
+    });
+    if (ok) deleteMutation.mutate(aff.id);
+  };
+
+  const totalPrevues = affectations.reduce((s, a) => s + Number(a.heures_prevues || 0), 0);
   const heuresMax = module?.heures_max ?? 0;
 
   if (!moduleId) return null;
 
+  if (formulaire) {
+    const { affectation } = formulaire;
+    const fermer = () => setFormulaire(null);
+    return (
+      <div className="space-y-4">
+        <div>
+          <Button type="button" variant="link" className="h-auto p-0 text-muted-foreground" onClick={fermer}>
+            <ArrowLeft className="size-4" aria-hidden /> Retour à la liste
+          </Button>
+          <h3 className="mt-2 text-base font-semibold text-balance">
+            {affectation
+              ? `Modifier l'affectation de ${affectation.enseignant?.nom_complet ?? 'cet enseignant'}`
+              : 'Nouvelle affectation'}
+          </h3>
+        </div>
+        <AffectationForm
+          moduleId={moduleId}
+          departementId={departementId}
+          affectation={affectation}
+          onSuccess={fermer}
+          onCancel={fermer}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {/* En-tête */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold">Affectations des enseignants</h3>
-          <p className="text-xs text-muted-foreground">
-            Volume total prévu : <span className="font-medium">{totalPrevues}h</span>
-            {' / '}{heuresMax}h max
-          </p>
-        </div>
-        <Button size="sm" onClick={() => { setEditTarget(null); setShowForm(true); }}>
-          <Plus className="h-4 w-4 mr-1" /> Affecter
+      {/* Volume et action principale */}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground tabular-nums">
+          <span className="font-semibold text-foreground">{isLoading ? '… h' : formatNombreHeures(totalPrevues)}</span> affectées
+          sur {formatNombreHeures(heuresMax)}
+          {module?.heures_consommees != null && (
+            <> · {formatNombreHeures(Number(module.heures_consommees))} planifiées</>
+          )}
+        </p>
+        <Button size="sm" onClick={() => setFormulaire({ affectation: null })}>
+          <Plus className="size-4" aria-hidden /> Affecter
         </Button>
       </div>
 
@@ -270,105 +308,65 @@ export default function AffectationsPanel({ module }) {
 
       {/* Liste */}
       {isLoading ? (
-        <p className="text-sm text-muted-foreground py-4 text-center">Chargement…</p>
+        <div className="space-y-2" aria-hidden>
+          <div className="h-16 rounded-lg bg-muted animate-pulse" />
+          <div className="h-16 rounded-lg bg-muted animate-pulse" />
+        </div>
       ) : affectations.length === 0 ? (
-        <div className="flex flex-col items-center gap-1 py-8 text-muted-foreground">
-          <CheckCircle2 className="h-8 w-8 opacity-30" />
-          <p className="text-sm">Aucune affectation pour ce module.</p>
-          <p className="text-xs">Les séances seront acceptées sans restriction d'enseignant.</p>
+        <div className="flex flex-col items-center gap-2 py-8 text-center text-muted-foreground">
+          <CheckCircle2 className="size-8 opacity-30" aria-hidden />
+          <p className="text-sm">Aucun enseignant affecté à ce module.</p>
+          <p className="text-xs text-pretty">Les séances sont acceptées sans restriction d'enseignant.</p>
+          <Button size="sm" variant="outline" className="mt-1" onClick={() => setFormulaire({ affectation: null })}>
+            <Plus className="size-4" aria-hidden /> Affecter un enseignant
+          </Button>
         </div>
       ) : (
-        <div className="space-y-2">
+        <ul className="space-y-2">
           {affectations.map((aff) => (
-            <div key={aff.id} className="flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-muted/20 transition-colors">
+            <li key={aff.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border bg-card">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-sm font-semibold text-card-foreground">
                     {aff.enseignant?.nom_complet ?? '—'}
                   </p>
                   {aff.enseignant?.grade && (
-                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{aff.enseignant.grade}</span>
+                    <span className="text-xs text-muted-foreground">{aff.enseignant.grade}</span>
                   )}
                   {aff.hors_departement && (
                     <Badge variant="outline" className="text-xs">Inter-département</Badge>
                   )}
                 </div>
-                <div className="flex items-center gap-3 mt-1.5">
-                  <span className="text-xs font-medium text-muted-foreground bg-muted/60 px-2 py-0.5 rounded">
-                    {aff.type_seance ? aff.type_seance : 'Générique'}
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                    {aff.type_seance ?? 'Générique'}
                   </span>
                   <HeuresBadge consommees={aff.heures_consommees} prevues={aff.heures_prevues} />
                 </div>
               </div>
-              <div className="flex gap-2 ml-3 shrink-0">
+              <div className="flex gap-1 shrink-0">
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => { setEditTarget(aff); setShowForm(true); }}
+                  onClick={() => setFormulaire({ affectation: aff })}
                 >
-                  <Pencil className="h-3 w-3 mr-1" /> Modifier
+                  <Pencil className="size-3.5" aria-hidden /> Modifier
                 </Button>
                 <Button
-                  size="sm"
+                  size="icon-sm"
                   variant="ghost"
-                  className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => setDeleteTarget(aff)}
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  aria-label={`Supprimer l'affectation de ${aff.enseignant?.nom_complet ?? 'cet enseignant'}`}
+                  onClick={() => supprimer(aff)}
+                  disabled={deleteMutation.isPending}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="size-3.5" aria-hidden />
                 </Button>
               </div>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
-
-      {/* Dialog création/édition */}
-      <Dialog open={showForm} onOpenChange={(open) => { if (!open) { setShowForm(false); setEditTarget(null); } }}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader className="pb-2 border-b border-border">
-            <DialogTitle className="text-lg">
-              {editTarget ? 'Modifier une affectation' : 'Nouvelle affectation'}
-            </DialogTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              {editTarget
-                ? `Modifiez les détails de l'affectation de ${editTarget.enseignant?.nom_complet}.`
-                : `Affectez un enseignant à ce module pour le semestre en cours.`}
-            </p>
-          </DialogHeader>
-          <AffectationForm
-            moduleId={moduleId}
-            departementId={departementId}
-            affectation={editTarget}
-            onSuccess={() => { setShowForm(false); setEditTarget(null); }}
-            onCancel={() => { setShowForm(false); setEditTarget(null); }}
-          />
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog confirmation suppression */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer cette affectation ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              L'affectation de <strong>{deleteTarget?.enseignant?.nom_complet}</strong>
-              {deleteTarget?.type_seance ? ` (${deleteTarget.type_seance})` : ' (Générique)'}
-              {' '}sera définitivement supprimée. Les séances déjà planifiées ne seront pas affectées.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => deleteMutation.mutate(deleteTarget.id)}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? 'Suppression...' : 'Supprimer'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

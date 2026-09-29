@@ -17,7 +17,12 @@ function Info({ label, children }) {
   );
 }
 
-export default function EnseignantRow({ enseignant }) {
+/**
+ * horsDepartement : l'enseignant appartient à un département que le chef ne
+ * dirige pas. Ses coordonnées restent consultables, mais la liste des modules
+ * se limite à ceux qu'il assure chez ce chef (le serveur ne renvoie que ceux-là).
+ */
+export default function EnseignantRow({ enseignant, horsDepartement = false }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Les affectations sont historisees par annee academique : sans ce filtre,
@@ -63,21 +68,23 @@ export default function EnseignantRow({ enseignant }) {
   const panneauId = `enseignant-${enseignant.profil_id}`;
 
   return (
-    <div className="border border-border rounded-lg bg-card overflow-hidden">
+    // Pas de cadre propre : la ligne s'inscrit dans le bloc de son département.
+    <div className="bg-card">
       {/* Ligne résumé : un vrai bouton, avec une flèche qui montre qu'il s'ouvre */}
       <button
         type="button"
         aria-expanded={isExpanded}
         aria-controls={panneauId}
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-muted/30 transition-colors"
+        className="w-full flex items-center justify-between gap-4 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
       >
         <div className="flex flex-col min-w-0">
           <span className="font-semibold text-base text-card-foreground truncate">
             {enseignant.nom_complet}
           </span>
+          {/* Le département est dans l'intitulé du groupe, au-dessus. */}
           <span className="text-sm text-muted-foreground truncate">
-            {enseignant.grade || "Aucun grade"} · {enseignant.departement?.libelle || "Aucun département"}
+            {enseignant.grade || "Aucun grade"}
           </span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
@@ -97,9 +104,9 @@ export default function EnseignantRow({ enseignant }) {
       {isExpanded && (
         <div
           id={panneauId}
-          className="border-t border-border p-5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-8"
+          className="border-t border-border p-5 grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"
         >
-          {/* Colonne gauche : coordonnées */}
+          {/* Colonne gauche : coordonnées, visibles pour tous les départements */}
           <section className="space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Coordonnées</h3>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
@@ -117,7 +124,9 @@ export default function EnseignantRow({ enseignant }) {
 
           {/* Colonne droite : charge et avancement */}
           <section className="space-y-4 min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">Modules de l'année</h3>
+            <h3 className="text-sm font-semibold text-foreground">
+              {horsDepartement ? "Modules dans votre département" : "Modules de l'année"}
+            </h3>
 
             {loadingAffectations ? (
               <div className="animate-pulse space-y-2">
@@ -127,26 +136,31 @@ export default function EnseignantRow({ enseignant }) {
               </div>
             ) : (
               <>
-                <dl className="grid grid-cols-3 gap-3">
-                  <div className="p-3 border border-border rounded-lg">
-                    <dt className="text-xs text-muted-foreground">Heures prévues</dt>
-                    <dd className="text-xl font-bold text-foreground tabular-nums">{formatNombreHeures(totalHeuresPrevues)}</dd>
-                  </div>
-                  <div className="p-3 border border-border rounded-lg">
-                    <dt className="text-xs text-muted-foreground">Heures faites</dt>
-                    <dd className="text-xl font-bold text-foreground tabular-nums">{formatNombreHeures(totalHeuresEffectuees)}</dd>
-                  </div>
-                  <div className="p-3 border border-border rounded-lg">
-                    <dt className="text-xs text-muted-foreground">Crédits · modules</dt>
-                    <dd className="text-xl font-bold text-foreground tabular-nums">
-                      {totalCredits} <span className="text-sm font-medium text-muted-foreground">· {affectations.length}</span>
-                    </dd>
-                  </div>
-                </dl>
+                {/* Trois compteurs à zéro n'apprennent rien de plus que le message ci-dessous. */}
+                {affectations.length > 0 && (
+                  <dl className="grid grid-cols-3 gap-3">
+                    <div className="p-3 border border-border rounded-lg">
+                      <dt className="text-xs text-muted-foreground">Heures prévues</dt>
+                      <dd className="text-xl font-bold text-foreground tabular-nums">{formatNombreHeures(totalHeuresPrevues)}</dd>
+                    </div>
+                    <div className="p-3 border border-border rounded-lg">
+                      <dt className="text-xs text-muted-foreground">Heures faites</dt>
+                      <dd className="text-xl font-bold text-foreground tabular-nums">{formatNombreHeures(totalHeuresEffectuees)}</dd>
+                    </div>
+                    <div className="p-3 border border-border rounded-lg">
+                      <dt className="text-xs text-muted-foreground">Crédits · modules</dt>
+                      <dd className="text-xl font-bold text-foreground tabular-nums">
+                        {totalCredits} <span className="text-sm font-medium text-muted-foreground">· {affectations.length}</span>
+                      </dd>
+                    </div>
+                  </dl>
+                )}
 
                 {affectations.length === 0 ? (
-                  <p className="text-sm text-muted-foreground p-4 text-center border border-dashed rounded-lg">
-                    Aucun module affecté cette année. Les affectations se font depuis « Contenu Pédagogique ».
+                  <p className="text-sm text-muted-foreground p-4 text-center border border-dashed rounded-lg text-pretty">
+                    {horsDepartement
+                      ? "Aucun module dans votre département cette année. Pour lui en confier un, passez par « Contenu Pédagogique » en cochant « Intervention inter-départements »."
+                      : "Aucun module affecté cette année. Les affectations se font depuis « Contenu Pédagogique »."}
                   </p>
                 ) : (
                   // Tableau compact : 13 modules en grandes cartes obligeaient

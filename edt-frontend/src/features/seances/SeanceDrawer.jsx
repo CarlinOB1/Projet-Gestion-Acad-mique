@@ -75,9 +75,9 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-3xl w-[90vw] max-h-[90vh] overflow-y-auto p-8">
+      <DialogContent className="sm:max-w-3xl p-5 sm:p-8">
         <DialogHeader>
-          <DialogTitle className="text-xl">
+          <DialogTitle>
             {isEditMode ? 'Modifier la séance' : 'Nouvelle séance'}
           </DialogTitle>
           <DialogDescription>
@@ -86,7 +86,7 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
               : 'Renseignez les champs pour planifier ce cours.'}
           </DialogDescription>
         </DialogHeader>
-        <div className="mt-4">
+        <div className="mt-2">
           <SeanceForm
             semestreId={semestreId}
             classe={classeContext}

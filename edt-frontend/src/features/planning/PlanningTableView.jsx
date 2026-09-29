@@ -3,11 +3,19 @@
  * @description Vue tableau semaine — disposition structurée par créneaux horaires fixes,
  * inspirée du format officiel de l'emploi du temps UCCB et de la maquette Figma.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, forwardRef, Fragment } from 'react';
 import { ChevronLeft, ChevronRight, CalendarDays, Clock, AlertCircle, CalendarX, Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { SEANCE_COLORS } from '@/lib/constants';
-import { formatNombreHeures } from '@/lib/utils';
+import { formatNombreHeures, formatDate, formatCreneau } from '@/lib/utils';
 
 // ── Créneaux horaires du planning UCCB ─────────────────────────────────────────
 const TIME_SLOTS = [
@@ -82,25 +90,65 @@ function AlertBanner({ count }) {
   );
 }
 
-// ── Composant Cellule de Conflit ─────────────────────────────────────────────
-function ConflictCell({ seances, onClick }) {
+// ── Menu d'actions d'une séance ─────────────────────────────────────────────
+// S'ouvre collé à la carte cliquée, sans assombrir la page. Sans actions
+// (lecture seule), l'élément est rendu tel quel et garde son propre clic.
+function SeanceMenu({ seance, actions, children }) {
+  if (!actions?.length) return children;
   return (
-    <div 
-      onClick={() => onClick && onClick(seances[0])}
-      className="h-full w-full flex flex-col gap-1 p-2 bg-rose-50 border border-rose-300 rounded-lg cursor-pointer hover:bg-rose-100/80 transition-colors overflow-y-auto"
-    >
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel className="text-sm font-semibold text-foreground text-pretty">
+          {seance.module?.libelle || 'Séance'}
+          <span className="block text-xs font-normal text-muted-foreground tabular-nums">
+            {formatDate(seance.date_seance)} · {formatCreneau(seance.heure_debut, seance.heure_fin)}
+          </span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {actions.map(({ libelle, icone: Icone, onSelect, destructif }) => (
+          <Fragment key={libelle}>
+            {destructif && <DropdownMenuSeparator />}
+            <DropdownMenuItem
+              variant={destructif ? 'destructive' : 'default'}
+              onSelect={() => onSelect(seance)}
+            >
+              {Icone && <Icone className={destructif ? undefined : 'text-muted-foreground'} />}
+              {libelle}
+            </DropdownMenuItem>
+          </Fragment>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// ── Composant Cellule de Conflit ─────────────────────────────────────────────
+// Chaque séance en conflit est cliquable : avant, seule la première l'était.
+function ConflictCell({ seances, onClick, actionsSeance }) {
+  return (
+    <div className="h-full w-full flex flex-col gap-1 p-2 bg-rose-50 border border-rose-300 rounded-lg overflow-y-auto">
       <div className="flex items-center gap-1 mb-0.5">
         <AlertTriangle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
         <span className="text-[10px] font-extrabold text-rose-700 uppercase tracking-wide">Conflit ({seances.length})</span>
       </div>
-      {seances.map((s, idx) => (
-        <div key={s.id ?? idx} className="text-rose-900 leading-tight bg-white/70 p-1.5 rounded border border-rose-200 text-left">
-          <div className="text-[11px] font-bold truncate">{s.module?.libelle || 'Module'}</div>
-          <div className="text-[10px] text-rose-700 font-medium truncate">
-            {s.enseignant?.nom_complet || 'Sans prof'} · {s.classe?.libelle || s.type_seance}
-          </div>
-        </div>
-      ))}
+      {seances.map((s, idx) => {
+        const actions = actionsSeance?.(s);
+        return (
+          <SeanceMenu key={s.id ?? idx} seance={s} actions={actions}>
+            <button
+              type="button"
+              onClick={actions?.length ? undefined : () => onClick && onClick(s)}
+              className="w-full text-rose-900 leading-tight bg-white/70 p-1.5 rounded border border-rose-200 text-left cursor-pointer hover:bg-white transition-colors"
+            >
+              <span className="block text-[11px] font-bold truncate">{s.module?.libelle || 'Module'}</span>
+              <span className="block text-[10px] text-rose-700 font-medium truncate">
+                {s.enseignant?.nom_complet || 'Sans prof'} · {s.classe?.libelle || s.type_seance}
+              </span>
+            </button>
+          </SeanceMenu>
+        );
+      })}
     </div>
   );
 }
@@ -129,7 +177,9 @@ function EmptyCell({ onClick, disabled }) {
 }
 
 // ── Carte de cours ──────────────────────────────────────────────────────────────
-function CourseCard({ seance, onClick, isPrintMode, masquer = [] }) {
+// forwardRef + props restantes : la carte sert aussi de déclencheur au menu
+// d'actions (SeanceMenu), qui a besoin de sa ref pour s'y accrocher.
+const CourseCard = forwardRef(function CourseCard({ seance, onClick, isPrintMode, masquer = [], ...rest }, ref) {
   const { type_seance, statut, module, enseignant, classe } = seance;
   const typeStyle = SEANCE_COLORS[type_seance] || {
     bg: 'bg-slate-100', text: 'text-slate-900', border: 'border-slate-400',
@@ -139,8 +189,10 @@ function CourseCard({ seance, onClick, isPrintMode, masquer = [] }) {
 
   return (
     <button
+      ref={ref}
       type="button"
-      onClick={() => onClick && onClick(seance)}
+      onClick={onClick ? () => onClick(seance) : undefined}
+      {...rest}
       className={`
         w-full text-left ${isPrintMode ? 'px-2 py-1.5' : 'px-3 py-2.5'} border-l-[5px] flex flex-col ${isPrintMode ? 'gap-1' : 'justify-between'}
         transition-all hover:brightness-95 active:scale-[0.98] cursor-pointer rounded-r-md shadow-xs
@@ -195,14 +247,20 @@ function CourseCard({ seance, onClick, isPrintMode, masquer = [] }) {
       )}
     </button>
   );
-}
+});
 
 // ── Composant principal ─────────────────────────────────────────────────────────
+/**
+ * @param {(seance) => Array<{libelle, icone, onSelect, destructif?}>} [actionsSeance]
+ *   Actions proposées au clic sur une séance, dans un menu collé à la carte.
+ *   Sans elles, le clic appelle onSeanceClick (détail en lecture seule).
+ */
 export default function PlanningTableView({
   events = [],
   isLoading,
   isError,
   onSeanceClick = () => {},
+  actionsSeance,
   onEmptyCellClick,
   weekStart: externalWeekStart,
   onWeekChange,
@@ -266,7 +324,13 @@ export default function PlanningTableView({
     return h % 1 === 0 ? h : parseFloat(h.toFixed(1));
   }, [events, weekStart]);
 
-  const todayKey = toDateKey(new Date());
+  // Pas de repère « aujourd'hui » dans le PDF : il n'a de sens qu'à l'écran,
+  // le jour où on le regarde.
+  const todayKey = isPrintMode ? null : toDateKey(new Date());
+
+  // Le PDF n'affiche pas la ligne de pause : aucune séance ne peut s'y trouver
+  // (refusé par le serveur), elle ne faisait qu'occuper de la place.
+  const lignes = isPrintMode ? TIME_SLOTS.filter((slot) => !slot.isPause) : TIME_SLOTS;
 
   const eventMap = useMemo(() => {
     const map = {};
@@ -432,8 +496,8 @@ export default function PlanningTableView({
           </thead>
 
           <tbody>
-            {TIME_SLOTS.map((slot, slotIdx) => {
-              const isLast = slotIdx === TIME_SLOTS.length - 1;
+            {lignes.map((slot, slotIdx) => {
+              const isLast = slotIdx === lignes.length - 1;
               return (
                 <tr
                   key={slot.id}
@@ -486,7 +550,7 @@ export default function PlanningTableView({
                             <div className="h-full w-full rounded-lg bg-muted animate-pulse" aria-hidden />
                           )
                         ) : hasConflictInCell ? (
-                          <ConflictCell seances={activeSeances} onClick={onSeanceClick} />
+                          <ConflictCell seances={activeSeances} onClick={onSeanceClick} actionsSeance={isPrintMode ? undefined : actionsSeance} />
                         ) : cellSeances.length > 0 ? (
                           <div
                             style={{
@@ -496,14 +560,24 @@ export default function PlanningTableView({
                               height: '100%',
                             }}
                           >
-                            {cellSeances.map((seance, i) => (
-                              <div
-                                key={seance.id ?? i}
-                                style={{ flex: 1, minHeight: 'fit-content', display: 'flex', flexDirection: 'column' }}
-                              >
-                                <CourseCard seance={seance} onClick={onSeanceClick} isPrintMode={isPrintMode} masquer={masquer} />
-                              </div>
-                            ))}
+                            {cellSeances.map((seance, i) => {
+                              const actions = isPrintMode ? undefined : actionsSeance?.(seance);
+                              return (
+                                <div
+                                  key={seance.id ?? i}
+                                  style={{ flex: 1, minHeight: 'fit-content', display: 'flex', flexDirection: 'column' }}
+                                >
+                                  <SeanceMenu seance={seance} actions={actions}>
+                                    <CourseCard
+                                      seance={seance}
+                                      onClick={actions?.length ? undefined : onSeanceClick}
+                                      isPrintMode={isPrintMode}
+                                      masquer={masquer}
+                                    />
+                                  </SeanceMenu>
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : !slot.isPause ? (
                           <EmptyCell

@@ -18,7 +18,6 @@ import apiClient from "@/api/client";
 import { ROLES, GESTIONNAIRE_ROLES } from "@/lib/constants";
 import {
   applyPlanningFilters,
-  getEnseignantsDisponibles,
   getClassesDisponibles,
   FILTRES_VIDES,
 } from "@/lib/planningFilters";
@@ -33,6 +32,7 @@ import { confirmer } from "@/lib/confirmer";
 import { toast } from "@/hooks/use-toast";
 import { formatDate, formatCreneau } from "@/lib/utils";
 import PageHeader from "@/components/shared/PageHeader";
+import { trouverSemestreEnCours } from "@/lib/semestres";
 import {
   Select,
   SelectContent,
@@ -42,12 +42,6 @@ import {
   SelectGroup,
   SelectLabel,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 export default function PlanningPage() {
   const role = useAuthStore((state) => state.user?.role);
@@ -81,7 +75,6 @@ export default function PlanningPage() {
   const [seanceToReport, setSeanceToReport] = useState(null);
   const [filters, setFilters] = useState(FILTRES_VIDES);
   const [detailsSeance, setDetailsSeance] = useState(null);
-  const [gestionnaireTarget, setGestionnaireTarget] = useState(null); // dialog actions gestionnaire
 
   const planningRef = useRef(null);
   const printRef = useRef(null);
@@ -110,11 +103,10 @@ export default function PlanningPage() {
   // au retour sur la page (semestres déjà en cache), l'effet laissait passer
   // un premier affichage sans semestre ni classe (« Planning Global du
   // Département »).
-  const semestreParDefaut = useMemo(() => {
-    const actif = semestres.find((s) => s.annee?.statut === "active");
-    const s = actif ?? semestres[0];
-    return s ? String(s.id) : null;
-  }, [semestres]);
+  // Semestre en cours d'après ses dates : avant, le premier semestre de
+  // l'année active, donc encore le S1 en plein S2.
+  const semestreEnCours = useMemo(() => trouverSemestreEnCours(semestres), [semestres]);
+  const semestreParDefaut = semestreEnCours ? String(semestreEnCours.id) : null;
   const semestreId = selectedSemestreId ?? semestreParDefaut;
 
   const handleSemestreChange = useCallback((value) => {
@@ -193,11 +185,6 @@ export default function PlanningPage() {
     enabled: GESTIONNAIRE_ROLES.includes(effectiveRole) && !!semestreId,
   });
 
-  const enseignantsDisponibles = useMemo(
-    () => getEnseignantsDisponibles(events),
-    [events],
-  );
-
   const classesDisponibles = useMemo(() => {
     if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
       return allClasses
@@ -243,17 +230,60 @@ export default function PlanningPage() {
     return groups;
   }, [semestres]);
 
-  const actifSemestre = useMemo(() => {
-    return semestres.find((s) => s.annee?.statut === "active");
-  }, [semestres]);
+  // Lecture seule (enseignant, étudiant) : le clic ouvre le détail.
+  const handleSeanceClick = (seance) => setDetailsSeance(seance);
 
-  const handleSeanceClick = (seance) => {
-    if (GESTIONNAIRE_ROLES.includes(effectiveRole)) {
-      setGestionnaireTarget(seance);
-      return;
-    }
-    setDetailsSeance(seance);
+  // Gestionnaire : le clic ouvre un menu collé à la carte. Il remplace une
+  // fenêtre intermédiaire centrée, loin de la carte, qui assombrissait la page
+  // avant d'ouvrir une deuxième fenêtre.
+  const supprimerSeance = async (seance) => {
+    const ok = await confirmer({
+      titre: "Supprimer cette séance ?",
+      description: [
+        seance?.module?.libelle,
+        seance?.date_seance &&
+          `${formatDate(seance.date_seance)} · ${formatCreneau(seance.heure_debut, seance.heure_fin)}`,
+      ].filter(Boolean).join("\n"),
+      libelleConfirmer: "Supprimer",
+      destructif: true,
+    });
+    if (!ok) return;
+    deleteSeanceMutation.mutate(seance.id, {
+      onSuccess: () => toast({ title: "Séance supprimée" }),
+      onError: (err) =>
+        toast({
+          variant: "destructive",
+          title: "La séance n'a pas pu être supprimée",
+          description:
+            err?.response?.data?.detail ??
+            "Réessayez ; si le problème persiste, rechargez la page.",
+        }),
+    });
   };
+
+  const actionsGestionnaire = [
+    {
+      libelle: "Modifier",
+      icone: Pencil,
+      onSelect: (seance) => {
+        setSelectedSeance(seance);
+        setContextualDefaults(null);
+        setIsSeanceDrawerOpen(true);
+      },
+    },
+    {
+      libelle: "Reporter",
+      icone: CalendarClock,
+      onSelect: (seance) => {
+        setSeanceToReport(seance);
+        setIsReportDrawerOpen(true);
+      },
+    },
+    { libelle: "Supprimer", icone: Trash2, onSelect: supprimerSeance, destructif: true },
+  ];
+  const actionsSeance = GESTIONNAIRE_ROLES.includes(effectiveRole)
+    ? () => actionsGestionnaire
+    : undefined;
 
   const handleEmptyCellClick = ({ date_seance, heure_debut, heure_fin }) => {
     if (!GESTIONNAIRE_ROLES.includes(effectiveRole)) return;
@@ -298,12 +328,14 @@ export default function PlanningPage() {
         : GESTIONNAIRE_ROLES.includes(role)
           ? "chef"
           : "etudiant";
+    // Capture ×3 (≈ 300 dpi sur un A4) en JPEG, PDF compressé : ~600 Ko en
+    // 2 s. En PNG ×6 sans compression, le fichier pesait ~80 Mo (11 s).
     const opt = {
       margin: 10,
       filename: `emploi_du_temps_${rolePrefix}_${semestre?.libelle || "planning"}.pdf`,
-      image: { type: "png" },
-      html2canvas: { scale: 6, useCORS: true, logging: false },
-      jsPDF: { unit: "mm", format: "a4", orientation: "landscape" },
+      image: { type: "jpeg", quality: 0.95 },
+      html2canvas: { scale: 3, useCORS: true, logging: false },
+      jsPDF: { unit: "mm", format: "a4", orientation: "landscape", compress: true },
     };
 
     html2pdf().set(opt).from(element).save();
@@ -369,7 +401,7 @@ export default function PlanningPage() {
                     {year}
                   </SelectLabel>
                   {sems.map((s) => {
-                    const isActif = actifSemestre && s.id === actifSemestre.id;
+                    const isActif = semestreEnCours && s.id === semestreEnCours.id;
                     return (
                       <SelectItem key={s.id} value={String(s.id)}>
                         <div className="flex items-center gap-2">
@@ -413,8 +445,6 @@ export default function PlanningPage() {
       <PlanningFilters
         filters={filtres}
         onChange={setFilters}
-        enseignants={enseignantsDisponibles}
-        showEnseignantFilter={role !== ROLES.ENSEIGNANT}
         avant={
           GESTIONNAIRE_ROLES.includes(effectiveRole) &&
           classesDisponibles.length > 0 && (
@@ -455,6 +485,7 @@ export default function PlanningPage() {
           isError={isError}
           masquer={champsMasques}
           onSeanceClick={handleSeanceClick}
+          actionsSeance={actionsSeance}
           onEmptyCellClick={
             GESTIONNAIRE_ROLES.includes(effectiveRole) ? handleEmptyCellClick : null
           }
@@ -465,88 +496,6 @@ export default function PlanningPage() {
           )}
         />
       </main>
-
-      {/* Dialog d'actions gestionnaire */}
-      {gestionnaireTarget && (
-        <Dialog
-          key={`gestionnaire-${gestionnaireTarget.id}`}
-          open
-          onOpenChange={(o) => !o && setGestionnaireTarget(null)}
-        >
-          <DialogContent className="sm:max-w-xs p-0 overflow-hidden gap-0">
-            <DialogHeader className="px-5 pt-5 pb-4 border-b border-border">
-              <DialogTitle className="text-base">
-                {gestionnaireTarget?.module?.libelle || "Séance"}
-              </DialogTitle>
-              <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">
-                {formatDate(gestionnaireTarget?.date_seance)} ·{" "}
-                {formatCreneau(gestionnaireTarget?.heure_debut, gestionnaireTarget?.heure_fin)}
-              </p>
-            </DialogHeader>
-            <div className="flex flex-col p-2 gap-1">
-              <Button
-                variant="ghost"
-                className="justify-start gap-3 h-10 px-3 text-sm"
-                onClick={() => {
-                  setSelectedSeance(gestionnaireTarget);
-                  setContextualDefaults(null);
-                  setIsSeanceDrawerOpen(true);
-                  setGestionnaireTarget(null);
-                }}
-              >
-                <Pencil className="h-4 w-4 text-muted-foreground" />
-                Modifier
-              </Button>
-              <Button
-                variant="ghost"
-                className="justify-start gap-3 h-10 px-3 text-sm"
-                onClick={() => {
-                  setSeanceToReport(gestionnaireTarget);
-                  setIsReportDrawerOpen(true);
-                  setGestionnaireTarget(null);
-                }}
-              >
-                <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                Reporter
-              </Button>
-              <Button
-                variant="ghost"
-                className="justify-start gap-3 h-10 px-3 text-sm text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={async () => {
-                  const seance = gestionnaireTarget;
-                  // Ferme le menu d'actions avant d'ouvrir la confirmation.
-                  setGestionnaireTarget(null);
-                  const ok = await confirmer({
-                    titre: "Supprimer cette séance ?",
-                    description: [
-                      seance?.module?.libelle,
-                      seance?.date_seance &&
-                        `${formatDate(seance.date_seance)} · ${formatCreneau(seance.heure_debut, seance.heure_fin)}`,
-                    ].filter(Boolean).join("\n"),
-                    libelleConfirmer: "Supprimer",
-                    destructif: true,
-                  });
-                  if (!ok) return;
-                  deleteSeanceMutation.mutate(seance.id, {
-                    onSuccess: () => toast({ title: "Séance supprimée" }),
-                    onError: (err) =>
-                      toast({
-                        variant: "destructive",
-                        title: "La séance n'a pas pu être supprimée",
-                        description:
-                          err?.response?.data?.detail ??
-                          "Réessayez ; si le problème persiste, rechargez la page.",
-                      }),
-                  });
-                }}
-              >
-                <Trash2 className="h-4 w-4" />
-                Supprimer
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
 
       {/* Détail en lecture seule — enseignant / étudiant */}
       <SeanceDetailsDialog

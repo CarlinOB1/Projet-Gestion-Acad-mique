@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   GraduationCap, ChevronDown, ChevronUp, Users, ArrowRightCircle,
-  CheckCircle2, Plus, UserX, UserCheck, School, Search,
+  CheckCircle2, Plus, UserX, UserCheck, School,
 } from 'lucide-react';
 import PageHeader from '@/components/shared/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import {
 import { getEtudiants } from '@/api/acteurs';
 import { STATUT_COLORS, STATUT_LABELS } from '@/lib/constants';
 import useAuthStore from '@/store/authStore';
+import { trouverSemestreEnCours, libelleSemestre, periodeSemestre } from '@/lib/semestres';
 
 // ── Sous-composant : ligne étudiant ──────────────────────────────────────────
 function EtudiantRow({ etudiant, onStatut, readOnly = false }) {
@@ -75,7 +76,6 @@ function EtudiantRow({ etudiant, onStatut, readOnly = false }) {
 // ── Sous-composant : carte classe accordéon ───────────────────────────────────
 function ClasseCard({ classe, onPasserSemestre, readOnly = false }) {
   const [open, setOpen] = useState(false);
-  const [recherche, setRecherche] = useState('');
   const [isStatutDrawerOpen, setIsStatutDrawerOpen] = useState(false);
   const [etudiantForStatut, setEtudiantForStatut] = useState(null);
 
@@ -86,13 +86,6 @@ function ClasseCard({ classe, onPasserSemestre, readOnly = false }) {
     staleTime: 1000 * 30,
   });
 
-  const terme = recherche.trim().toLowerCase();
-  const etudiantsAffiches = terme
-    ? etudiants.filter((et) =>
-        [et.profil?.user?.last_name, et.profil?.user?.first_name, et.matricule]
-          .filter(Boolean)
-          .some((v) => v.toLowerCase().includes(terme)))
-    : etudiants;
   const nb = classe.nombre_etudiants ?? 0;
   const panneauId = `classe-${classe.id}-etudiants`;
 
@@ -127,31 +120,9 @@ function ClasseCard({ classe, onPasserSemestre, readOnly = false }) {
           {!isLoading && etudiants.length === 0 && (
             <div className="py-6 text-center text-sm text-muted-foreground">Aucun étudiant dans cette classe.</div>
           )}
-          {!isLoading && etudiants.length > 8 && (
-            <div className="px-4 pt-3">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" aria-hidden />
-                <Input
-                  value={recherche}
-                  onChange={(e) => setRecherche(e.target.value)}
-                  placeholder="Rechercher un étudiant (nom ou matricule)…"
-                  aria-label={`Rechercher un étudiant de ${classe.libelle}`}
-                  className="pl-8"
-                />
-              </div>
-            </div>
-          )}
-          {!isLoading && etudiants.length > 0 && etudiantsAffiches.length === 0 && (
-            <div className="py-6 text-center text-sm text-muted-foreground">
-              Aucun étudiant ne correspond à « {recherche} ».{' '}
-              <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setRecherche('')}>
-                Effacer la recherche
-              </button>
-            </div>
-          )}
-          {!isLoading && etudiantsAffiches.length > 0 && (
+          {!isLoading && etudiants.length > 0 && (
             <div className="divide-y divide-border/40 px-2 py-1">
-              {etudiantsAffiches.map((et) => (
+              {etudiants.map((et) => (
                 <EtudiantRow
                   key={et.profil?.user?.id ?? et.matricule}
                   etudiant={et}
@@ -177,7 +148,6 @@ function ClasseCard({ classe, onPasserSemestre, readOnly = false }) {
 export default function ClassesPage({ readOnly = false }) {
   const queryClient = useQueryClient();
 
-  const [selectedSemestreId,        setSelectedSemestreId]        = useState('all');
   const [isCrudModalOpen,           setIsCrudModalOpen]           = useState(false);
   const [isPasserSemestreOpen,      setIsPasserSemestreOpen]      = useState(false);
   const [editingClasse,             setEditingClasse]             = useState(null);
@@ -192,10 +162,14 @@ export default function ClassesPage({ readOnly = false }) {
   const [anneeId,         setAnneeId]         = useState('');
   const [targetSemestreId, setTargetSemestreId] = useState('');
 
-  const { data: semestres = [] } = useQuery({
+  const { data: semestres = [], isLoading: semestresLoading } = useQuery({
     queryKey: ['semestres'],
-    queryFn: getSemestres,
+    queryFn: () => getSemestres(),
   });
+
+  // Seulement les classes du semestre en cours : les classes des autres
+  // semestres (S2 vides en septembre…) s'affichaient en double à côté.
+  const semestreEnCours = trouverSemestreEnCours(semestres);
 
   const { data: parcours = [] } = useQuery({
     queryKey: ['parcours'],
@@ -216,13 +190,12 @@ export default function ClassesPage({ readOnly = false }) {
     enabled: isCrudModalOpen,
   });
 
-  const { data: classes = [], isLoading, isError } = useQuery({
-    queryKey: ['classes', selectedSemestreId],
-    queryFn: () => {
-      const params = selectedSemestreId !== 'all' ? { semestre_id: selectedSemestreId } : {};
-      return getClasses(params);
-    },
+  const { data: classes = [], isLoading: classesLoading, isError } = useQuery({
+    queryKey: ['classes', { semestre_id: semestreEnCours ? String(semestreEnCours.id) : null }],
+    queryFn: () => getClasses({ semestre_id: semestreEnCours.id }),
+    enabled: !!semestreEnCours,
   });
+  const isLoading = semestresLoading || (!!semestreEnCours && classesLoading);
 
   const createMutation = useMutation({
     mutationFn: createClasse,
@@ -262,11 +235,11 @@ export default function ClassesPage({ readOnly = false }) {
         setParcoursId('');
         setFiliereId('none');
         setCode('');
-        setSemestreId(selectedSemestreId !== 'all' ? selectedSemestreId : '');
+        setSemestreId(semestreEnCours ? String(semestreEnCours.id) : '');
         setAnneeId('');
       }
     }
-  }, [isCrudModalOpen, editingClasse, selectedSemestreId]);
+  }, [isCrudModalOpen, editingClasse, semestreEnCours]);
 
   const handleCloseCrudModal = () => {
     setIsCrudModalOpen(false);
@@ -313,20 +286,12 @@ export default function ClassesPage({ readOnly = false }) {
 
       <PageHeader
         titre="Classes & Étudiants"
-        description="Les classes de votre département ; ouvrez-en une pour voir ses étudiants."
-      >
-        <Select value={selectedSemestreId} onValueChange={setSelectedSemestreId}>
-          <SelectTrigger className="w-[200px] bg-background" aria-label="Filtrer par semestre">
-            <SelectValue placeholder="Filtrer par semestre" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Tous les semestres</SelectItem>
-            {semestres.map((s) => (
-              <SelectItem key={s.id} value={s.id.toString()}>{s.libelle}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </PageHeader>
+        description={
+          semestreEnCours
+            ? `Classes du ${libelleSemestre(semestreEnCours)} (${periodeSemestre(semestreEnCours)}) ; ouvrez-en une pour voir ses étudiants.`
+            : "Les classes de votre département ; ouvrez-en une pour voir ses étudiants."
+        }
+      />
 
       {/* Liste accordéon */}
       {isLoading && (
@@ -344,7 +309,9 @@ export default function ClassesPage({ readOnly = false }) {
       {!isLoading && !isError && classes.length === 0 && (
         <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground">
           <School className="h-10 w-10 opacity-30" />
-          <p className="text-sm">Aucune classe trouvée pour ce filtre.</p>
+          <p className="text-sm">
+            {semestreEnCours ? 'Aucune classe pour le semestre en cours.' : 'Aucun semestre n\'est encore défini.'}
+          </p>
         </div>
       )}
       {!isLoading && !isError && classes.length > 0 && (

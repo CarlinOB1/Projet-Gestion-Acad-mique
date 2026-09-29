@@ -1,7 +1,7 @@
 /**
  * @file PlanningFilters.jsx
- * @description Barre de filtres du planning — recherche texte, type de séance,
- * enseignant (masqué pour le rôle enseignant) et statut.
+ * @description Barre de filtres du planning — recherche texte et type de séance.
+ * Les filtres enseignant et statut ont été retirés à la demande de l'utilisateur.
  */
 import { useState } from 'react';
 import { Search, X, SlidersHorizontal } from 'lucide-react';
@@ -11,7 +11,7 @@ import {
     Select, SelectContent, SelectItem,
     SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { TYPE_SEANCE, STATUT_SEANCE, STATUT_LABELS } from '@/lib/constants';
+import { TYPE_SEANCE } from '@/lib/constants';
 import { aDesFiltresActifs } from '@/lib/planningFilters';
 
 const SENTINEL_TOUS = '__tous__';
@@ -20,7 +20,6 @@ const SENTINEL_TOUS = '__tous__';
  * @param {{
  *   filters: Object,
  *   onChange: (filters: Object) => void,
- *   showEnseignantFilter?: boolean,
  *   avant?: React.ReactNode,
  * }} props
  * `avant` s'affiche au début de la barre (choix de la classe côté gestionnaire),
@@ -29,8 +28,6 @@ const SENTINEL_TOUS = '__tous__';
 export default function PlanningFilters({
     filters,
     onChange,
-    enseignants = [],
-    showEnseignantFilter = true,
     avant = null,
 }) {
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -44,7 +41,7 @@ export default function PlanningFilters({
     };
 
     const filtresActifs = aDesFiltresActifs(filters);
-    const hasAdvancedFiltersActive = filters.typeSeance || filters.enseignantId || filters.statut;
+    const hasAdvancedFiltersActive = !!filters.typeSeance;
 
     return (
         <div className="flex flex-col gap-3">
@@ -96,37 +93,6 @@ export default function PlanningFilters({
                         </SelectContent>
                     </Select>
 
-                    {showEnseignantFilter && (
-                        <Select
-                            value={filters.enseignantId || SENTINEL_TOUS}
-                            onValueChange={(v) => updateField('enseignantId', v)}
-                        >
-                            <SelectTrigger className="w-full sm:w-[200px] bg-background">
-                                <SelectValue placeholder="Enseignant" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value={SENTINEL_TOUS}>Tous les enseignants</SelectItem>
-                                {enseignants.map((e) => (
-                                    <SelectItem key={e.id} value={String(e.id)}>{e.nom_complet}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    )}
-
-                    <Select
-                        value={filters.statut || SENTINEL_TOUS}
-                        onValueChange={(v) => updateField('statut', v)}
-                    >
-                        <SelectTrigger className="w-full sm:w-[150px] bg-background">
-                            <SelectValue placeholder="Statut" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value={SENTINEL_TOUS}>Tous statuts</SelectItem>
-                            {Object.values(STATUT_SEANCE).map((statut) => (
-                                <SelectItem key={statut} value={statut}>{STATUT_LABELS[statut] ?? statut}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
                 </div>
             )}
         </div>

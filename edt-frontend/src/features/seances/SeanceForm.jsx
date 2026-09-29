@@ -15,14 +15,12 @@ import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import {
-  Popover, PopoverContent, PopoverTrigger,
-} from '@/components/ui/popover';
 import { AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { formatNombreHeures } from '@/lib/utils';
+import ErreurFormulaire from '@/components/shared/ErreurFormulaire';
 
 const seanceSchema = z.object({
   semestre_id: z.string().min(1, 'Le semestre est requis'),
@@ -170,21 +168,31 @@ export default function SeanceForm({
     return 'text-red-600 dark:text-red-400';
   };
 
+  const soldeAffectation = selectedEnseignantId ? getSoldeAffectation(typeSeance) : null;
+  const classeSolde = !soldeAffectation ? ''
+    : soldeAffectation.restantes > 2 ? 'text-green-600 dark:text-green-400'
+    : soldeAffectation.restantes > 0 ? 'text-orange-600 dark:text-orange-400'
+    : 'text-red-600 dark:text-red-400';
+
+  // Chaque étiquette est reliée à son champ (htmlFor / id) : un clic sur
+  // l'étiquette place le curseur dans le champ, et le lecteur d'écran lit le
+  // nom du champ. Listes déroulantes en pleine largeur, comme les autres champs.
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+    <form
+      noValidate
+      onSubmit={handleSubmit(onFormSubmit)}
+      className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5"
+    >
 
       {/* Classe — déjà fixée par l'onglet actif du planning, ou par la séance modifiée */}
-      <div className="space-y-2 md:col-span-2">
-        <Label>Classe</Label>
-        <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-          {classe?.libelle || '—'}
-        </div>
-        {errors.classe_id && <p className="text-xs text-destructive">{errors.classe_id.message}</p>}
-      </div>
+      <p className="md:col-span-2 text-sm text-muted-foreground">
+        Classe : <span className="font-medium text-foreground">{classe?.libelle || '—'}</span>
+        {errors.classe_id && <span className="block text-xs text-destructive">{errors.classe_id.message}</span>}
+      </p>
 
-      {/* 1. Module */}
+      {/* Module */}
       <div className="space-y-2">
-        <Label>Module</Label>
+        <Label htmlFor="seance-module">Module</Label>
         <Controller name="module_id" control={control} render={({ field }) => (
           <Select disabled={isLoadingModules} value={field.value}
             onValueChange={(v) => {
@@ -192,7 +200,7 @@ export default function SeanceForm({
               setSelectedModuleId(v);
               setValue('enseignant_id', '');
             }}>
-            <SelectTrigger><SelectValue placeholder="Sélectionnez un module" /></SelectTrigger>
+            <SelectTrigger id="seance-module" className="w-full"><SelectValue placeholder="Sélectionnez un module" /></SelectTrigger>
             <SelectContent>
               {modules.map((m) => (
                 <SelectItem key={m.id} value={String(m.id)}>{m.libelle}</SelectItem>
@@ -208,16 +216,16 @@ export default function SeanceForm({
         )}
       </div>
 
-      {/* 2. Enseignant */}
+      {/* Enseignant */}
       <div className="space-y-2">
-        <Label>Enseignant</Label>
+        <Label htmlFor="seance-enseignant">Enseignant</Label>
         <Controller name="enseignant_id" control={control} render={({ field }) => (
           <Select disabled={isLoadingEnseignants} value={field.value}
             onValueChange={(v) => {
               field.onChange(v);
               setSelectedEnseignantId(v);
             }}>
-            <SelectTrigger>
+            <SelectTrigger id="seance-enseignant" className="w-full">
               <SelectValue placeholder={moduleSelectionne ? "Sélectionnez un enseignant" : "Choisissez d'abord un module"} />
             </SelectTrigger>
             <SelectContent>
@@ -231,55 +239,23 @@ export default function SeanceForm({
         )} />
         {errors.enseignant_id && <p className="text-xs text-destructive">{errors.enseignant_id.message}</p>}
         {/* Solde d'affectation de l'enseignant sélectionné */}
-        {selectedEnseignantId && (() => {
-          const solde = getSoldeAffectation(typeSeance);
-          if (!solde) return null;
-          const cls = solde.restantes > 2 ? 'text-green-600 dark:text-green-400'
-            : solde.restantes > 0 ? 'text-orange-600 dark:text-orange-400'
-            : 'text-red-600 dark:text-red-400';
-          return (
-            <p className={`text-xs font-medium flex items-center gap-1 tabular-nums ${cls}`}>
-              {solde.restantes <= 0 && <AlertTriangle className="size-3 shrink-0" aria-hidden />}
-              {solde.restantes < 0
-                ? `Dépassement de ${formatNombreHeures(-solde.restantes)} sur ses ${formatNombreHeures(solde.prevues)} de ${solde.type ?? 'cours'} prévues`
-                : `Il lui reste ${formatNombreHeures(solde.restantes)} de ${solde.type ?? 'cours'} sur ${formatNombreHeures(solde.prevues)} prévues`}
-            </p>
-          );
-        })()}
+        {soldeAffectation && (
+          <p className={`text-xs font-medium flex items-center gap-1 tabular-nums ${classeSolde}`}>
+            {soldeAffectation.restantes <= 0 && <AlertTriangle className="size-3 shrink-0" aria-hidden />}
+            {soldeAffectation.restantes < 0
+              ? `Dépassement de ${formatNombreHeures(-soldeAffectation.restantes)} sur ses ${formatNombreHeures(soldeAffectation.prevues)} de ${soldeAffectation.type ?? 'cours'} prévues`
+              : `Il lui reste ${formatNombreHeures(soldeAffectation.restantes)} de ${soldeAffectation.type ?? 'cours'} sur ${formatNombreHeures(soldeAffectation.prevues)} prévues`}
+          </p>
+        )}
       </div>
 
-      {/* 3. Date */}
+      {/* Type de séance */}
       <div className="space-y-2">
-        <Label>Date de la séance</Label>
-        {/* CORRECTION : min utilise la date du jour, pas HEURE_MIN */}
-        <Input type="date"
-          min={new Date().toISOString().split('T')[0]}
-          {...register('date_seance')} />
-        {errors.date_seance && <p className="text-xs text-destructive">{errors.date_seance.message}</p>}
-      </div>
-
-      {/* 4. Heure début */}
-      <div className="space-y-2">
-        <Label>Heure de début</Label>
-        <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_debut')} />
-        {errors.heure_debut && <p className="text-xs text-destructive">{errors.heure_debut.message}</p>}
-      </div>
-
-      {/* 5. Heure fin */}
-      <div className="space-y-2">
-        <Label>Heure de fin</Label>
-        <Input type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_fin')} />
-        {errors.heure_fin && <p className="text-xs text-destructive">{errors.heure_fin.message}</p>}
-      </div>
-
-      {/* 6. Type séance */}
-      <div className="space-y-2">
-        <Label>Type de séance</Label>
+        <Label htmlFor="seance-type">Type de séance</Label>
         <Controller name="type_seance" control={control} render={({ field }) => (
           <Select value={field.value} onValueChange={field.onChange}>
-            <SelectTrigger><SelectValue placeholder="Sélectionnez un type" /></SelectTrigger>
+            <SelectTrigger id="seance-type" className="w-full"><SelectValue placeholder="Sélectionnez un type" /></SelectTrigger>
             <SelectContent>
-              {/* CORRECTION : Object.values() sur l'objet TYPE_SEANCE */}
               {Object.values(TYPE_SEANCE).map((type) => (
                 <SelectItem key={type} value={type}>{type}</SelectItem>
               ))}
@@ -289,35 +265,43 @@ export default function SeanceForm({
         {errors.type_seance && <p className="text-xs text-destructive">{errors.type_seance.message}</p>}
       </div>
 
-      {/* 7. Erreur serveur / Conflit Popover */}
-      <div className="md:col-span-2 pt-2 flex flex-col-reverse sm:flex-row gap-2">
+      {/* Date */}
+      <div className="space-y-2">
+        <Label htmlFor="seance-date">Date de la séance</Label>
+        <Input id="seance-date" type="date"
+          min={new Date().toISOString().split('T')[0]}
+          {...register('date_seance')} />
+        {errors.date_seance && <p className="text-xs text-destructive">{errors.date_seance.message}</p>}
+      </div>
+
+      {/* Heures de début et de fin, côte à côte */}
+      <div className="space-y-2">
+        <Label htmlFor="seance-debut">Heure de début</Label>
+        <Input id="seance-debut" type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_debut')} />
+        {errors.heure_debut && <p className="text-xs text-destructive">{errors.heure_debut.message}</p>}
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="seance-fin">Heure de fin</Label>
+        <Input id="seance-fin" type="time" min={HEURE_MIN} max={HEURE_MAX} {...register('heure_fin')} />
+        {errors.heure_fin && <p className="text-xs text-destructive">{errors.heure_fin.message}</p>}
+      </div>
+
+      {/* Erreur serveur (conflit, dépassement…), juste au-dessus des boutons */}
+      <div className="md:col-span-2 empty:hidden">
+        <ErreurFormulaire message={serverError} />
+      </div>
+
+      <div className="md:col-span-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
         {onCancel && (
-          <Button type="button" variant="outline" className="sm:w-40" onClick={onCancel} disabled={isPending}>
+          <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>
             Annuler
           </Button>
         )}
-        <Popover open={!!serverError}>
-          <PopoverTrigger asChild>
-            <div className="flex-1">
-              <Button className="w-full" onClick={handleSubmit(onFormSubmit)} disabled={isPending}>
-                {isPending ? 'Enregistrement...' : 'Enregistrer la séance'}
-              </Button>
-            </div>
-          </PopoverTrigger>
-          <PopoverContent className="w-80 p-3 border-amber-200 bg-amber-50" side="top" align="center" onOpenAutoFocus={(e) => e.preventDefault()}>
-            <div className="flex flex-col gap-1">
-              <p className="text-sm font-semibold text-amber-800 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                Erreur / Conflit détecté
-              </p>
-              <p className="text-xs text-amber-700">
-                {serverError}
-              </p>
-            </div>
-          </PopoverContent>
-        </Popover>
+        <Button type="submit" disabled={isPending}>
+          {isPending ? 'Enregistrement…' : 'Enregistrer la séance'}
+        </Button>
       </div>
 
-    </div>
+    </form>
   );
 }
