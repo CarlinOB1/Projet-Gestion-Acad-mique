@@ -4,16 +4,30 @@ import { BookOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import DataTable from '@/components/shared/DataTable';
 import apiClient from '@/api/client';
+import { getAnnees } from '@/api/academique';
 
-const getMesModules = async () => {
-  const response = await apiClient.get('/modules/mes_modules/');
+const getMesModules = async (anneeId) => {
+  const response = await apiClient.get('/modules/mes_modules/', {
+    params: anneeId ? { annee_id: anneeId } : {},
+  });
   return response.data?.results ?? response.data;
 };
 
 export default function MesModulesPage() {
+  // Un module est rattaché à une année académique via son semestre : sans ce
+  // filtre, un enseignant qui a dispensé plusieurs années cumule les modules
+  // de toutes ces années dans la même liste (même correctif que EnseignantRow.jsx).
+  const { data: annees = [] } = useQuery({
+    queryKey: ['annees', 'active'],
+    queryFn: () => getAnnees({ statut: 'active' }),
+    staleTime: 5 * 60 * 1000,
+  });
+  const anneeActiveId = annees[0]?.id;
+
   const { data: modules = [], isLoading, isError } = useQuery({
-    queryKey: ['mes-modules'],
-    queryFn: getMesModules,
+    queryKey: ['mes-modules', anneeActiveId],
+    queryFn: () => getMesModules(anneeActiveId),
+    enabled: !!anneeActiveId,
   });
 
   const columns = [

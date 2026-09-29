@@ -5,7 +5,7 @@ import { getAnnees } from "@/api/academique";
 import { Badge } from "@/components/ui/badge";
 import { STATUT_COLORS } from "@/lib/constants";
 
-export default function EnseignantRow({ enseignant }) {
+export default function EnseignantRow({ enseignant, affectationsVisibles = true }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Les affectations sont historisees par annee academique : sans ce filtre,
@@ -24,7 +24,7 @@ export default function EnseignantRow({ enseignant }) {
       enseignant_id: enseignant.profil_id,
       annee_id: anneeActiveId,
     }),
-    enabled: isExpanded && !!anneeActiveId,
+    enabled: isExpanded && affectationsVisibles && !!anneeActiveId,
   });
 
   // Calculs statistiques
@@ -157,7 +157,12 @@ export default function EnseignantRow({ enseignant }) {
               </p>
             </div>
 
-            {loadingAffectations ? (
+            {!affectationsVisibles ? (
+              <p className="text-sm text-muted-foreground italic p-4 text-center border border-dashed rounded-lg">
+                Les modules et heures affectés ne sont consultables que pour
+                les enseignants de votre département.
+              </p>
+            ) : loadingAffectations ? (
               <div className="animate-pulse space-y-3">
                 <div className="h-20 bg-muted/40 rounded-lg w-full"></div>
                 <div className="h-20 bg-muted/40 rounded-lg w-full"></div>

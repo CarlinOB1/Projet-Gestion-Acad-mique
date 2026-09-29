@@ -32,6 +32,25 @@ import unicodedata
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'Gestion_edt.settings')
 django.setup()
 
+import secrets
+from django.conf import settings
+
+# Ce script EFFACE tous les utilisateurs non superusers et les donnees
+# academiques avant de tout recreer, et donne le meme mot de passe a tous les
+# comptes generes : il ne doit jamais tourner sur une base reelle.
+if not settings.DEBUG:
+    sys.exit(
+        "Refus : seed.py n'est autorise qu'avec DJANGO_DEBUG=True (base de "
+        "developpement jetable). Il efface les utilisateurs existants."
+    )
+
+# Mot de passe commun des comptes generes : celui de SEED_PASSWORD (.env) s'il
+# est defini, sinon un mot de passe aleatoire affiche une seule fois ci-dessous.
+SEED_PASSWORD = os.environ.get('SEED_PASSWORD')
+if not SEED_PASSWORD:
+    SEED_PASSWORD = secrets.token_urlsafe(12)
+    print(f"Mot de passe des comptes generes (a noter, non reaffiche) : {SEED_PASSWORD}\n")
+
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Count
@@ -297,7 +316,7 @@ def creer_utilisateur(username, first_name, last_name, email=None):
     User.objects.filter(username=username).delete()
     user = User.objects.create_user(
         username=username,
-        password="Password123!",
+        password=SEED_PASSWORD,
         first_name=first_name,
         last_name=last_name,
         email=email if email else (username + "@uccb.cg"),

@@ -715,11 +715,15 @@ class TestDocumentDepotLienModule(TestCase):
         self.module = ModuleFactory(matiere=matiere, semestre=self.sem)
 
     def _payload(self):
+        # Contenu réel d'un PDF minimal : depuis l'ajout du contrôle de
+        # signature de fichier (EDT_app/fichiers.py), un texte brut renommé
+        # en .pdf est rejeté avant même d'atteindre la validation du module.
+        pdf_minimal = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
         return {
             "titre": "Support",
             "module_id": self.module.id,
             "type_doc": "cours",
-            "fichier": SimpleUploadedFile("s.pdf", b"contenu"),
+            "fichier": SimpleUploadedFile("s.pdf", pdf_minimal),
         }
 
     def test_enseignant_sans_lien_est_refuse(self):

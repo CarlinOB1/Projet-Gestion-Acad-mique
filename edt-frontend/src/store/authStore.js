@@ -16,7 +16,13 @@ const useAuthStore = create(
         isAuthenticated: true,
       }),
 
-      setAccessToken: (token) => set({ accessToken: token }),
+      // Le serveur fait tourner le refresh token à chaque rafraîchissement et
+      // blackliste l'ancien : il faut donc conserver le nouveau, sans quoi le
+      // rafraîchissement suivant échoue et l'utilisateur est déconnecté.
+      setTokens: ({ accessToken, refreshToken }) => set((state) => ({
+        accessToken,
+        refreshToken: refreshToken ?? state.refreshToken,
+      })),
 
       clearAuth: () => set({
         accessToken: null,

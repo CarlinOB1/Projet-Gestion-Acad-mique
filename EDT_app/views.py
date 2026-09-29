@@ -1,6 +1,10 @@
+import os
+
+from django.conf import settings
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import render
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Case, IntegerField, Prefetch, Q, Value, When
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -14,7 +18,10 @@ from .models import (
     Matiere, Module, AffectationModule, Seance, ReferentClasse,
     DocumentPedagogique, Inscription,
 )
-from EDT_app.perimetre import modules_autorises
+from EDT_app.perimetre import (
+    classes_autorisees, modules_autorises,
+    restreindre_enseignants, restreindre_etudiants,
+)
 from EDT_app.serializers import (
     FaculteSerializer, DepartementSerializer, FiliereSerializer,
     ParcoursSerializer, AnneeAcademiqueSerializer, SemestreSerializer,
@@ -376,16 +383,39 @@ class EnseignantViewSet(BaseViewSet):
         qs      = super().get_queryset()
         user    = self.request.user
 
+        # Étudiant : aucun enseignant ; enseignant simple : son département.
+        # (Ce cadrage vaut aussi pour retrieve : fiche hors périmètre = 404.)
+        qs = restreindre_enseignants(user, qs)
+
         # Filtre pour Chef de Département — sauf demande explicite de la liste
         # complète (ex: formulaire d'affectation inter-départements, où le
         # chef doit pouvoir choisir un enseignant en dehors de son propre
         # département).
         tous_departements = self.request.query_params.get('tous_departements') in ('1', 'true', 'True')
-        if not tous_departements and hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
+        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
-            if departements_diriges.exists() and not (user.is_superuser or user.groups.filter(name='responsable').exists()):
+            est_chef_simple = (
+                departements_diriges.exists()
+                and not (user.is_superuser or user.groups.filter(name='responsable').exists())
+            )
+            if est_chef_simple and not tous_departements:
                 qs = qs.filter(departement__in=departements_diriges)
+            elif est_chef_simple:
+                # Consultation de tous les départements : celui du chef d'abord,
+                # puis les autres par ordre alphabétique, enseignants triés par nom.
+                qs = qs.annotate(
+                    hors_mon_departement=Case(
+                        When(departement__in=departements_diriges, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
+                    )
+                ).order_by(
+                    'hors_mon_departement',
+                    'departement__libelle',
+                    'profil__user__last_name',
+                    'profil__user__first_name',
+                )
 
         dept_id = self.request.query_params.get('departement_id')
         if dept_id:
@@ -457,22 +487,10 @@ class EtudiantViewSet(BaseViewSet):
         qs          = super().get_queryset()
         user        = self.request.user
 
-        # Filtre pour Chef de Département / Référent de classe(s)
-        if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant') and \
-                not (user.is_superuser or user.groups.filter(name='responsable').exists()):
-            enseignant = user.profil.enseignant
-            departements_diriges = enseignant.departements_diriges.all()
-            est_referent = hasattr(enseignant, 'referent_classes')
-            if departements_diriges.exists() or est_referent:
-                # Union des deux périmètres, pas un choix exclusif : une personne
-                # cumulant chef de département et référent (ex: L1) doit voir les
-                # étudiants des deux périmètres, pas seulement de l'un des deux.
-                perimetre = Q()
-                if departements_diriges.exists():
-                    perimetre |= Q(classe__filiere__departement__in=departements_diriges)
-                if est_referent:
-                    perimetre |= Q(classe__in=enseignant.referent_classes.classes.all())
-                qs = qs.filter(perimetre)
+        # Étudiant : sa propre fiche ; enseignant simple : son département ;
+        # chef / référent : union de leurs périmètres ; responsable : tout.
+        # Vaut aussi pour retrieve : fiche hors périmètre = 404.
+        qs = restreindre_etudiants(user, qs)
 
         classe_id   = self.request.query_params.get('classe_id')
         filiere_id  = self.request.query_params.get('filiere_id')
@@ -559,6 +577,12 @@ class InscriptionViewSet(viewsets.ReadOnlyModelViewSet):
         profil = getattr(user, 'profil', None)
         if profil and hasattr(profil, 'etudiant') and not user.is_superuser:
             return qs.filter(etudiant=profil.etudiant)
+
+        # Les autres ne voient que les inscriptions des classes de leur périmètre
+        # (None = accès illimité : responsable / admin).
+        perimetre = classes_autorisees(user)
+        if perimetre is not None:
+            qs = qs.filter(classe__in=perimetre)
 
         etudiant_id = self.request.query_params.get('etudiant_id')
         annee_id    = self.request.query_params.get('annee_id')
@@ -665,14 +689,22 @@ class ModuleViewSet(BaseViewSet):
         from rest_framework.exceptions import PermissionDenied
         if not hasattr(request.user.profil, 'enseignant'):
             raise PermissionDenied("Seuls les enseignants peuvent voir leurs modules.")
-            
+
         enseignant = request.user.profil.enseignant
         # Un module affecte mais pas encore planifie doit apparaitre : on part
         # des affectations, completees par les seances effectivement assurees.
         modules = Module.objects.filter(
             Q(affectations__enseignant=enseignant) | Q(seance__enseignant=enseignant)
         ).distinct()
-        
+
+        # Sans ce filtre, un enseignant qui a dispensé plusieurs années
+        # cumule les modules de toutes ces années dans la même liste (cf.
+        # EnseignantRow.jsx / affectations, même correctif côté fiche
+        # enseignant). Le frontend passe l'année active par défaut.
+        annee_id = request.query_params.get('annee_id')
+        if annee_id:
+            modules = modules.filter(semestre__annee_id=annee_id)
+
         # On utilise le serializer de module
         serializer = self.get_serializer(modules, many=True)
         return Response(serializer.data)
@@ -1310,6 +1342,38 @@ class DocumentViewSet(BaseViewSet):
     def perform_create(self, serializer):
         enseignant = self.request.user.profil.enseignant
         serializer.save(enseignant=enseignant)
+
+    @action(detail=True, methods=['get'], url_path='telecharger')
+    def telecharger(self, request, pk=None):
+        """
+        Téléchargement authentifié et périmétré du fichier.
+
+        `self.get_object()` applique le même filtrage que toute autre
+        lecture (get_queryset() ci-dessus) : un utilisateur hors périmètre
+        du module reçoit un 404, pas le fichier. C'est le seul point d'entrée
+        qui expose le contenu — DocumentPedagogiqueSerializer.get_fichier_url()
+        renvoie désormais cette URL plutôt que l'adresse /media/ directe, qui
+        ne demandait aucune authentification.
+
+        En production, PROTECTED_MEDIA_INTERNAL_PREFIX est renseigné : nginx
+        sert alors lui-même le fichier via X-Accel-Redirect, Django ne lit
+        jamais son contenu. En développement (valeur vide par défaut),
+        Django le diffuse directement.
+        """
+        doc = self.get_object()
+        nom_affiche = os.path.basename(doc.fichier.name)
+
+        if settings.PROTECTED_MEDIA_INTERNAL_PREFIX:
+            response = HttpResponse()
+            response['X-Accel-Redirect'] = (
+                settings.PROTECTED_MEDIA_INTERNAL_PREFIX + doc.fichier.name
+            )
+            response['Content-Disposition'] = f'attachment; filename="{nom_affiche}"'
+            return response
+
+        return FileResponse(
+            doc.fichier.open('rb'), as_attachment=True, filename=nom_affiche,
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

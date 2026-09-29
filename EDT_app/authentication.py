@@ -9,6 +9,8 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework import serializers
 
+from EDT_app.throttles import LoginCompteRateThrottle, LoginIPRateThrottle
+
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
@@ -132,3 +134,5 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     }
     """
     serializer_class = CustomTokenObtainPairSerializer
+    # Remplace les limites globales : voir EDT_app/throttles.py.
+    throttle_classes = [LoginCompteRateThrottle, LoginIPRateThrottle]
