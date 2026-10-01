@@ -64,6 +64,42 @@ def _acces_illimite(user):
     return user.is_superuser or user.groups.filter(name='responsable').exists()
 
 
+acces_illimite = _acces_illimite
+
+
+def departements_diriges_ids(user):
+    """
+    Identifiants des départements que l'utilisateur dirige, ou None si son
+    accès est illimité (superuser / responsable). Liste vide pour quelqu'un
+    qui ne dirige rien.
+    """
+    if _acces_illimite(user):
+        return None
+    enseignant = _enseignant_courant(user)
+    if enseignant is None:
+        return []
+    return list(enseignant.departements_diriges.values_list('pk', flat=True))
+
+
+def profils_autorises(user):
+    """
+    Queryset des Profil qu'un utilisateur peut consulter ou gérer, ou None si
+    son accès est illimité : son propre profil, plus, pour un chef, les
+    enseignants de ses départements et les étudiants de ses classes
+    (CORRECTIONS_A_FAIRE.md point 20).
+    """
+    from EDT_app.models import Profil
+
+    if _acces_illimite(user):
+        return None
+    perimetre = Q(pk=user.pk)
+    departements = departements_diriges_ids(user)
+    if departements:
+        perimetre |= Q(enseignant__departement__in=departements)
+        perimetre |= Q(etudiant__classe__in=classes_autorisees(user))
+    return Profil.objects.filter(perimetre)
+
+
 def restreindre_etudiants(user, qs):
     """
     Restreint un queryset d'Etudiant à ce que l'utilisateur a le droit de voir :

@@ -306,7 +306,6 @@ class ReglagesCommunsTest(UniversDeuxDepartements, TestCase):
             with self.subTest(route=route):
                 self.assertEqual(self.client_chef.get(f"/api/{route}/").status_code, 200)
 
-    @faille_connue(18)
     def test_chef_ne_gere_pas_les_facultes(self):
         c = self.client_chef
         self._verifier_refus([
@@ -315,7 +314,6 @@ class ReglagesCommunsTest(UniversDeuxDepartements, TestCase):
             ("supprimer", lambda: c.delete(f"/api/facultes/{self.fac_vide.pk}/")),
         ])
 
-    @faille_connue(18)
     def test_chef_ne_gere_pas_les_departements(self):
         c = self.client_chef
         self._verifier_refus([
@@ -329,7 +327,6 @@ class ReglagesCommunsTest(UniversDeuxDepartements, TestCase):
             ("supprimer", lambda: c.delete(f"/api/departements/{self.dept_vide_b.pk}/")),
         ])
 
-    @faille_connue(18)
     def test_chef_ne_gere_pas_les_annees(self):
         c = self.client_chef
         self._verifier_refus([
@@ -343,7 +340,6 @@ class ReglagesCommunsTest(UniversDeuxDepartements, TestCase):
             ("supprimer", lambda: c.delete(f"/api/annees/{self.annee_vide.pk}/")),
         ])
 
-    @faille_connue(18)
     def test_chef_ne_gere_pas_les_semestres(self):
         c = self.client_chef
         self._verifier_refus([
@@ -352,7 +348,6 @@ class ReglagesCommunsTest(UniversDeuxDepartements, TestCase):
             ("supprimer", lambda: c.delete(f"/api/semestres/{self.sem_vide.pk}/")),
         ])
 
-    @faille_connue(18)
     def test_chef_ne_gere_pas_les_parcours(self):
         c = self.client_chef
         self._verifier_refus([
@@ -384,7 +379,6 @@ class OrganisationAutreDepartementTest(UniversDeuxDepartements, TestCase):
         )
         self.assertEqual(resp.status_code, 404)
 
-    @faille_connue(19)
     def test_filiere_autre_departement_via_parametre_departement_id(self):
         c = self.client_chef
         dept = f"?departement_id={self.dept_b.pk}"
@@ -394,7 +388,6 @@ class OrganisationAutreDepartementTest(UniversDeuxDepartements, TestCase):
             ("supprimer", lambda: c.delete(f"/api/filieres/{self.filiere_vide_b.pk}/{dept}")),
         ])
 
-    @faille_connue(19)
     def test_matiere_autre_departement(self):
         c = self.client_chef
         self.assertTousRefuses([
@@ -403,7 +396,6 @@ class OrganisationAutreDepartementTest(UniversDeuxDepartements, TestCase):
             ("supprimer", lambda: c.delete(f"/api/matieres/{self.matiere_vide_b.pk}/")),
         ])
 
-    @faille_connue(19)
     def test_creer_une_classe_dans_un_autre_departement(self):
         parcours = ParcoursFactory(type_parcours="Licence", niveau=2)
         resp = self.client_chef.post("/api/classes/", {
@@ -420,7 +412,6 @@ class OrganisationAutreDepartementTest(UniversDeuxDepartements, TestCase):
         resp = self.client_chef.patch(f"/api/modules/{self.module_b.pk}/", {"libelle": "Pirate"}, format="json")
         self.assertIn(resp.status_code, (400,) + REFUS)
 
-    @faille_connue(19)
     def test_lire_une_affectation_d_un_autre_departement_par_son_numero(self):
         # La liste est filtrée ; la lecture par numéro doit l'être aussi.
         self.assertRefuse(self.client_chef.get(f"/api/affectations/{self.aff_b.pk}/"))
@@ -445,21 +436,17 @@ class PersonnesTest(UniversDeuxDepartements, TestCase):
     def test_controle_chef_suspend_un_enseignant_de_son_departement(self):
         self.assertEqual(self._suspendre(self.ens_a).status_code, 200)
 
-    @faille_connue(20)
     def test_chef_ne_suspend_pas_un_enseignant_d_un_autre_departement(self):
         self.assertRefuse(self._suspendre(self.ens_b))
         self.assertEqual(Profil.objects.get(pk=user_de(self.ens_b).pk).statut, "actif")
 
-    @faille_connue(20)
     def test_chef_ne_suspend_pas_un_autre_chef(self):
         self.assertRefuse(self._suspendre(self.chef_b))
         self.assertEqual(Profil.objects.get(pk=user_de(self.chef_b).pk).statut, "actif")
 
-    @faille_connue(20)
     def test_chef_ne_lit_pas_le_profil_complet_d_un_autre_departement(self):
         self.assertRefuse(self.client_chef.get(f"/api/profils/{user_de(self.ens_b).pk}/"))
 
-    @faille_connue(20)
     def test_un_profil_ne_change_pas_de_compte(self):
         autre = make_user("compte_sans_profil")
         resp = self.client_chef.patch(
@@ -472,7 +459,6 @@ class PersonnesTest(UniversDeuxDepartements, TestCase):
         resp = self.client_chef.patch(f"/api/enseignants/{self.ens_b.pk}/", {"grade": "Professeur"}, format="json")
         self.assertEqual(resp.status_code, 404)
 
-    @faille_connue(20)
     def test_chef_ne_modifie_pas_un_enseignant_d_un_autre_departement(self):
         c, tous = self.client_chef, "?tous_departements=1"
         self.assertTousRefuses([
@@ -481,7 +467,6 @@ class PersonnesTest(UniversDeuxDepartements, TestCase):
             ("supprimer", lambda: c.delete(f"/api/enseignants/{self.ens_vide_b.pk}/{tous}")),
         ])
 
-    @faille_connue(21)
     def test_fiche_reduite_pour_les_enseignants_d_un_autre_departement(self):
         resp = self.client_chef.get("/api/enseignants/?tous_departements=1")
         self.assertEqual(resp.status_code, 200)
@@ -490,7 +475,6 @@ class PersonnesTest(UniversDeuxDepartements, TestCase):
         self.assertNotIn(self.email_b, contenu, "email visible hors département")
         self.assertNotIn(self.tel_b, contenu, "téléphone visible hors département")
 
-    @faille_connue(20)
     def test_chef_n_inscrit_pas_un_etudiant_dans_une_classe_d_un_autre_departement(self):
         profil = ProfilFactory(user=make_user("nouvel_etudiant"))
         resp = self.client_chef.post("/api/etudiants/", {
@@ -498,7 +482,6 @@ class PersonnesTest(UniversDeuxDepartements, TestCase):
         }, format="json")
         self.assertRefuse(resp)
 
-    @faille_connue(20)
     def test_chef_ne_deplace_pas_un_etudiant_vers_un_autre_departement(self):
         resp = self.client_chef.patch(
             f"/api/etudiants/{self.etu_a.pk}/", {"classe_id": self.classe_b.pk}, format="json",
@@ -527,11 +510,9 @@ class CoordonneesPersonnellesTest(UniversDeuxDepartements, TestCase):
         # Règle validée : un étudiant peut consulter la séance d'une autre classe.
         self.assertEqual(self.client_etu.get(f"/api/seances/{self.seance_b.pk}/").status_code, 200)
 
-    @faille_connue(21)
     def test_etudiant_ne_recoit_pas_les_coordonnees_via_les_seances(self):
         self._sans_coordonnees(self.client_etu.get(f"/api/seances/?classe_id={self.classe_a.pk}"))
 
-    @faille_connue(21)
     def test_etudiant_ne_recoit_pas_les_coordonnees_via_son_planning(self):
         self._sans_coordonnees(
             self.client_etu.get(f"/api/etudiants/mon_planning/?semaine={self.sem1.date_debut}")
@@ -557,12 +538,10 @@ class ActionsSeancesTest(UniversDeuxDepartements, TestCase):
 
     # ── Chef d'un autre département ─────────────────────────────────────────
 
-    @faille_connue(22)
     def test_chef_ne_publie_pas_dans_un_autre_departement(self):
         self.assertRefuse(self.client_chef_b.post(f"/api/seances/{self.brouillon_a.pk}/publier/"))
         self.assertEqual(Seance.objects.get(pk=self.brouillon_a.pk).statut, "brouillon")
 
-    @faille_connue(22)
     def test_chef_ne_depublie_pas_dans_un_autre_departement(self):
         self.assertRefuse(self.client_chef_b.post(f"/api/seances/{self.seance_a.pk}/depublier/"))
         self.assertEqual(Seance.objects.get(pk=self.seance_a.pk).statut, "Confirmée")
@@ -571,7 +550,6 @@ class ActionsSeancesTest(UniversDeuxDepartements, TestCase):
         self.assertRefuse(self.client_chef_b.patch(
             f"/api/seances/{self.seance_a.pk}/reporter/", self.REPORT, format="json"))
 
-    @faille_connue(22)
     def test_chef_ne_publie_pas_en_masse_dans_un_autre_departement(self):
         resp = self.client_chef_b.post(
             "/api/seances/publier_masse/", {"seance_ids": [self.brouillon_a.pk]}, format="json",
@@ -593,7 +571,6 @@ class ActionsSeancesTest(UniversDeuxDepartements, TestCase):
         resp = self.client_ref.patch(f"/api/seances/{self.seance_a.pk}/reporter/", self.REPORT, format="json")
         self.assertEqual(resp.status_code, 200)
 
-    @faille_connue(22)
     def test_referent_ne_publie_ni_ne_depublie_hors_de_ses_classes(self):
         c = self.client_ref
         self.assertTousRefuses([

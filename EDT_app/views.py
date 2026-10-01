@@ -4,11 +4,14 @@ from django.conf import settings
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import render
 from django.db import transaction
-from django.db.models import Case, IntegerField, Prefetch, Q, Value, When
+from django.db.models import (
+    Case, Count, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When,
+)
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 
 from .models import (
@@ -19,7 +22,8 @@ from .models import (
     DocumentPedagogique, Inscription,
 )
 from EDT_app.perimetre import (
-    classes_autorisees, modules_autorises,
+    acces_illimite, classes_autorisees, departements_diriges_ids,
+    modules_autorises, profils_autorises,
     restreindre_enseignants, restreindre_etudiants,
 )
 from EDT_app.serializers import (
@@ -28,13 +32,16 @@ from EDT_app.serializers import (
     ClasseSerializer, ProfilSerializer, EnseignantSerializer,
     EtudiantSerializer, MatiereSerializer, ModuleSerializer,
     AffectationModuleSerializer,
-    SeanceSerializer, SeanceReportSerializer, ProfilSuspensionSerializer,
+    SeanceSerializer, SeanceListeSerializer, SEANCE_RELATIONS,
+    SeanceReportSerializer, ProfilSuspensionSerializer,
     DocumentPedagogiqueSerializer, InscriptionSerializer,
+    precharger_volumes_modules,
 )
 from .permissions import (
     ProfilActifPermission,
     IsChefDepartement,
     IsChefDepartementOrReadOnly,
+    IsResponsableOrReadOnly,
     IsEnseignant,
     IsEtudiant,
     IsOwnerOrChefDepartement,
@@ -42,6 +49,100 @@ from .permissions import (
     IsChefOrReferentOrReadOnly,
     IsDocumentOwnerOrReadOnly,
 )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PARAMÈTRES DE REQUÊTE (CORRECTIONS_A_FAIRE.md point 27)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_ID_MAX = 2_147_483_647  # plus grand identifiant possible en base
+
+
+def lire_id(valeur, nom):
+    """
+    Convertit un identifiant reçu (paramètre d'adresse ou corps de requête)
+    en entier, ou refuse proprement (400) : `?classe_id=abc` faisait planter
+    le serveur au lieu d'être refusé. None si la valeur est absente.
+    """
+    if valeur is None or valeur == '':
+        return None
+    texte = str(valeur).strip()
+    if isinstance(valeur, bool) or not texte.isdigit() or int(texte) > _ID_MAX:
+        from rest_framework.exceptions import ValidationError
+        raise ValidationError({nom: "Identifiant invalide : un nombre entier positif est attendu."})
+    return int(texte)
+
+
+def _id_param(request, nom):
+    return lire_id(request.query_params.get(nom), nom)
+
+
+def _lire_semaine(semaine):
+    """
+    Lundi et dimanche de la semaine contenant `semaine` (AAAA-MM-JJ), ou
+    None si le format ou la date est impossible (an 9999, an 1...).
+    """
+    from datetime import date, timedelta
+    try:
+        jour = date.fromisoformat(semaine)
+        lundi = jour - timedelta(days=jour.weekday())
+        return lundi, lundi + timedelta(days=6)
+    except (ValueError, OverflowError):
+        return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PRÉCHARGEMENTS COMMUNS (CORRECTIONS_A_FAIRE.md point 33)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Fiche département complète (faculté et chef) imbriquée dans une filière,
+# une matière ou un enseignant : à précharger depuis le préfixe donné.
+def _relations_departement(prefixe):
+    return (f'{prefixe}__faculte', f'{prefixe}__chef__profil__user')
+
+
+def _relations_classe(prefixe):
+    """Relations lues par le ClasseSerializer complet."""
+    return (
+        f'{prefixe}__parcours',
+        f'{prefixe}__semestre__annee',
+        f'{prefixe}__annee',
+        f'{prefixe}__filiere__responsable__profil__user',
+        *_relations_departement(f'{prefixe}__filiere__departement'),
+    )
+
+
+def _compte(modele, champ):
+    """Nombre de lignes de `modele` liées au module, calculé par la base."""
+    sous_requete = (
+        modele.objects.filter(**{champ: OuterRef('pk')})
+        .order_by().values(champ).annotate(n=Count('pk')).values('n')
+    )
+    return Coalesce(Subquery(sous_requete, output_field=IntegerField()), 0)
+
+
+def modules_optimises(qs):
+    """
+    Tout ce que ModuleSerializer lit, chargé en un nombre fixe de requêtes
+    quel que soit le nombre de modules : fiches liées, séances du volume
+    horaire, nombre d'étudiants de la classe, nombres de séances et
+    d'affectations (V3).
+    """
+    return qs.select_related(
+        'semestre__annee',
+        *_relations_departement('matiere__departement'),
+        *_relations_classe('classe'),
+    ).prefetch_related(
+        Prefetch(
+            'seance_set',
+            queryset=Seance.objects.filter(statut__in=['Confirmée', 'Reportée']),
+            to_attr='_seances_volume',
+        ),
+        'classe__etudiant_set',
+    ).annotate(
+        nb_seances_annote=_compte(Seance, 'module'),
+        nb_affectations_annote=_compte(AffectationModule, 'module'),
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -66,21 +167,23 @@ class FaculteViewSet(BaseViewSet):
     list   GET  /api/facultes/
     create POST /api/facultes/
     retrieve/update/delete sur /api/facultes/{id}/
-    Écriture réservée au responsable.
+    Écriture réservée à l'admin et à la scolarité, comme les autres réglages
+    communs (départements, années, semestres, parcours) : un chef les lit
+    seulement (CORRECTIONS_A_FAIRE.md point 18).
     """
     queryset           = Faculte.objects.all()
     serializer_class   = FaculteSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
 
 
 class DepartementViewSet(BaseViewSet):
     queryset           = Departement.objects.select_related('faculte').all()
     serializer_class   = DepartementSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        faculte_id = self.request.query_params.get('faculte_id')
+        faculte_id = _id_param(self.request, 'faculte_id')
         if faculte_id:
             qs = qs.filter(faculte_id=faculte_id)
         return qs
@@ -94,30 +197,26 @@ class FiliereViewSet(BaseViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         user = self.request.user
+        dept_id = _id_param(self.request, 'departement_id')
 
-        # Filtre explicite prioritaire (admin/responsable peuvent filtrer manuellement)
-        dept_id = self.request.query_params.get('departement_id')
+        # Cloisonnement : le chef ne voit et ne gère que les filières de ses
+        # départements. `?departement_id=` filtre à l'intérieur de ce
+        # périmètre ; il servait à en sortir, écriture comprise
+        # (CORRECTIONS_A_FAIRE.md point 19). La lecture d'un autre
+        # département reste possible pour les formulaires, jamais l'écriture.
+        departements = departements_diriges_ids(user)
+        if departements and not (dept_id and self.request.method in SAFE_METHODS):
+            qs = qs.filter(departement_id__in=departements)
+
         if dept_id:
-            return qs.filter(departement_id=dept_id)
-
-        # Cloisonnement automatique : le chef de département ne voit que ses filières
-        if (
-            not user.is_superuser
-            and not user.groups.filter(name='responsable').exists()
-            and hasattr(user, 'profil')
-            and hasattr(user.profil, 'enseignant')
-        ):
-            dept_dirige = user.profil.enseignant.departements_diriges.first()
-            if dept_dirige:
-                return qs.filter(departement_id=dept_dirige.pk)
-
+            qs = qs.filter(departement_id=dept_id)
         return qs
 
 
 class ParcoursViewSet(BaseViewSet):
     queryset           = Parcours.objects.all()
     serializer_class   = ParcoursSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
 
 
 class AnneeAcademiqueViewSet(BaseViewSet):
@@ -127,7 +226,7 @@ class AnneeAcademiqueViewSet(BaseViewSet):
     """
     queryset           = AnneeAcademique.objects.all()
     serializer_class   = AnneeAcademiqueSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -136,7 +235,7 @@ class AnneeAcademiqueViewSet(BaseViewSet):
             qs = qs.filter(statut=statut)
         return qs
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, ProfilActifPermission, IsChefDepartement])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly])
     def archiver(self, request, pk=None):
         annee = self.get_object()
 
@@ -175,11 +274,11 @@ class AnneeAcademiqueViewSet(BaseViewSet):
 class SemestreViewSet(BaseViewSet):
     queryset           = Semestre.objects.select_related('annee').all()
     serializer_class   = SemestreSerializer
-    permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
+    permission_classes = [IsAuthenticated, ProfilActifPermission, IsResponsableOrReadOnly]
 
     def get_queryset(self):
         qs       = super().get_queryset()
-        annee_id = self.request.query_params.get('annee_id')
+        annee_id = _id_param(self.request, 'annee_id')
         if annee_id:
             qs = qs.filter(annee_id=annee_id)
         return qs
@@ -192,7 +291,9 @@ class ClasseViewSet(BaseViewSet):
     Paramètre attendu : { "semestre_cible_id": <int> }
     """
     queryset = Classe.objects.select_related(
-        'parcours', 'filiere', 'semestre__annee', 'annee'
+        'parcours', 'semestre__annee', 'annee',
+        'filiere__responsable__profil__user',
+        *_relations_departement('filiere__departement'),
     ).prefetch_related('etudiant_set').all()
     serializer_class   = ClasseSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
@@ -220,9 +321,9 @@ class ClasseViewSet(BaseViewSet):
                 # Enseignant simple : classes de son propre département uniquement
                 qs = qs.filter(filiere__departement=enseignant.departement)
 
-        annee_id    = self.request.query_params.get('annee_id')
-        semestre_id = self.request.query_params.get('semestre_id')
-        filiere_id  = self.request.query_params.get('filiere_id')
+        annee_id    = _id_param(self.request, 'annee_id')
+        semestre_id = _id_param(self.request, 'semestre_id')
+        filiere_id  = _id_param(self.request, 'filiere_id')
         if annee_id:
             qs = qs.filter(annee_id=annee_id)
         if semestre_id:
@@ -246,7 +347,7 @@ class ClasseViewSet(BaseViewSet):
           4. Retourne un résumé.
         """
         classe_source = self.get_object()
-        semestre_cible_id = request.data.get('semestre_cible_id')
+        semestre_cible_id = lire_id(request.data.get('semestre_cible_id'), 'semestre_cible_id')
 
         if not semestre_cible_id:
             return Response(
@@ -316,26 +417,65 @@ class ProfilViewSet(BaseViewSet):
 
     def get_permissions(self):
         """
-        - list et create : responsable uniquement
-        - retrieve       : propriétaire ou responsable
-        - update/destroy : responsable uniquement
+        - list, create, update, destroy, changer_statut : chef ou scolarité
+        - retrieve : propriétaire, chef ou scolarité
+        Le chef reste limité aux personnes de son département (get_queryset).
         """
-        if self.action in ('list', 'create', 'update', 'partial_update', 'destroy'):
+        if self.action == 'me':
+            return [IsAuthenticated(), ProfilActifPermission()]
+        if self.action in ('list', 'create', 'update', 'partial_update', 'destroy', 'changer_statut'):
             return [IsAuthenticated(), ProfilActifPermission(), IsChefDepartement()]
         return [IsAuthenticated(), ProfilActifPermission(), IsOwnerOrChefDepartement()]
+
+    def get_queryset(self):
+        """
+        Chacun voit son propre profil ; un chef voit en plus les enseignants
+        de ses départements et les étudiants de ses classes ; la scolarité
+        voit tout. Une fiche hors périmètre répond 404 (CORRECTIONS_A_FAIRE.md
+        point 20).
+        """
+        qs = super().get_queryset()
+        perimetre = profils_autorises(self.request.user)
+        if perimetre is not None:
+            qs = qs.filter(pk__in=perimetre.values_list('pk', flat=True))
+        return qs
+
+    def _verifier_droit_sur_statut(self, profil):
+        """
+        Suspendre ou réactiver un chef de département (soi-même compris) est
+        réservé à l'admin et à la scolarité (CORRECTIONS_A_FAIRE.md point 20).
+        """
+        if acces_illimite(self.request.user):
+            return
+        if hasattr(profil, 'enseignant') and profil.enseignant.departements_diriges.exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                "Seule la scolarité peut suspendre ou réactiver un chef de département."
+            )
+
+    def perform_update(self, serializer):
+        # La fiche permet aussi de changer le statut : même règle que
+        # changer_statut, pour ne pas la contourner.
+        nouveau = serializer.validated_data.get('statut', serializer.instance.statut)
+        if nouveau != serializer.instance.statut:
+            self._verifier_droit_sur_statut(serializer.instance)
+        serializer.save()
 
     @action(
         detail=True,
         methods=['patch'],
-        permission_classes=[IsAuthenticated, IsChefDepartement],
+        permission_classes=[IsAuthenticated, ProfilActifPermission, IsChefDepartement],
         url_path='changer_statut',
     )
     def changer_statut(self, request, pk=None):
         """
         Suspend ou réactive un profil.
         Utilise ProfilSuspensionSerializer pour forcer le motif si suspendu.
+        Suspendre ou réactiver un chef de département est réservé à l'admin
+        et à la scolarité (CORRECTIONS_A_FAIRE.md point 20).
         """
         profil     = self.get_object()
+        self._verifier_droit_sur_statut(profil)
         serializer = ProfilSuspensionSerializer(
             data=request.data,
             context={'profil': profil},
@@ -355,7 +495,13 @@ class ProfilViewSet(BaseViewSet):
     )
     def me(self, request):
         """Retourne le profil complet de l'utilisateur connecté."""
-        profil = request.user.profil
+        profil = getattr(request.user, 'profil', None)
+        if profil is None:
+            # Compte d'administration sans fiche (CORRECTIONS_A_FAIRE.md point 28).
+            return Response(
+                {'detail': "Ce compte n'a pas de profil."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         data = ProfilSerializer(profil, context={'request': request}).data
         
         # Enrichissement avec les données spécifiques au rôle
@@ -374,7 +520,7 @@ class EnseignantViewSet(BaseViewSet):
       Retourne les séances de la semaine en cours pour l'enseignant connecté.
     """
     queryset = Enseignant.objects.select_related(
-        'profil__user', 'departement__faculte'
+        'profil__user', *_relations_departement('departement'),
     ).all()
     serializer_class   = EnseignantSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
@@ -391,7 +537,12 @@ class EnseignantViewSet(BaseViewSet):
         # complète (ex: formulaire d'affectation inter-départements, où le
         # chef doit pouvoir choisir un enseignant en dehors de son propre
         # département).
-        tous_departements = self.request.query_params.get('tous_departements') in ('1', 'true', 'True')
+        # Lecture seulement : en écriture, le chef reste dans ses départements
+        # (CORRECTIONS_A_FAIRE.md point 20).
+        tous_departements = (
+            self.request.method in SAFE_METHODS
+            and self.request.query_params.get('tous_departements') in ('1', 'true', 'True')
+        )
         if hasattr(user, 'profil') and hasattr(user.profil, 'enseignant'):
             enseignant = user.profil.enseignant
             departements_diriges = enseignant.departements_diriges.all()
@@ -417,7 +568,7 @@ class EnseignantViewSet(BaseViewSet):
                     'profil__user__first_name',
                 )
 
-        dept_id = self.request.query_params.get('departement_id')
+        dept_id = _id_param(self.request, 'departement_id')
         if dept_id:
             qs = qs.filter(departement_id=dept_id)
         return qs
@@ -456,31 +607,25 @@ class EnseignantViewSet(BaseViewSet):
         enseignant = request.user.profil.enseignant
         seances    = Seance.objects.filter(
             enseignant=enseignant
-        ).select_related(
-            'module__matiere', 'classe__semestre', 'annee'
-        ).order_by('date_seance', 'heure_debut')
+        ).select_related(*SEANCE_RELATIONS).order_by('date_seance', 'heure_debut')
 
-        semestre_id = request.query_params.get('semestre_id')
+        semestre_id = _id_param(request, 'semestre_id')
         if semestre_id:
             seances = seances.filter(classe__semestre_id=semestre_id)
 
         # Filtre optionnel par semaine (lundi de la semaine au format YYYY-MM-DD)
         semaine = request.query_params.get('semaine')
         if semaine:
-            try:
-                from datetime import date, timedelta
-                lundi = date.fromisoformat(semaine)
-                # Recale sur le lundi au cas où la date donnée n'en est pas un
-                lundi = lundi - timedelta(days=lundi.weekday())
-                dimanche = lundi + timedelta(days=6)
-                seances = seances.filter(date_seance__range=(lundi, dimanche))
-            except ValueError:
+            # Recale sur le lundi au cas où la date donnée n'en est pas un
+            bornes = _lire_semaine(semaine)
+            if bornes is None:
                 return Response(
                     {'detail': "Format de date invalide. Utilisez YYYY-MM-DD."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            seances = seances.filter(date_seance__range=bornes)
 
-        serializer = SeanceSerializer(seances, many=True)
+        serializer = SeanceListeSerializer(seances, many=True, context={'request': request})
         return Response(serializer.data)
 
 
@@ -511,9 +656,9 @@ class EtudiantViewSet(BaseViewSet):
         # Vaut aussi pour retrieve : fiche hors périmètre = 404.
         qs = restreindre_etudiants(user, qs)
 
-        classe_id   = self.request.query_params.get('classe_id')
-        filiere_id  = self.request.query_params.get('filiere_id')
-        parcours_id = self.request.query_params.get('parcours_id')
+        classe_id   = _id_param(self.request, 'classe_id')
+        filiere_id  = _id_param(self.request, 'filiere_id')
+        parcours_id = _id_param(self.request, 'parcours_id')
         if classe_id:
             qs = qs.filter(classe_id=classe_id)
         # parcours et filiere sont derives de la classe depuis la migration 0012 :
@@ -546,9 +691,7 @@ class EtudiantViewSet(BaseViewSet):
 
         seances  = Seance.objects.filter(
             classe=etudiant.classe
-        ).select_related(
-            'module__matiere', 'enseignant__profil__user', 'annee'
-        ).order_by('date_seance', 'heure_debut')
+        ).select_related(*SEANCE_RELATIONS).order_by('date_seance', 'heure_debut')
 
         statut = request.query_params.get('statut')
         if statut:
@@ -556,19 +699,15 @@ class EtudiantViewSet(BaseViewSet):
 
         semaine = request.query_params.get('semaine')
         if semaine:
-            try:
-                from datetime import date, timedelta
-                lundi    = date.fromisoformat(semaine)
-                lundi    = lundi - timedelta(days=lundi.weekday())
-                dimanche = lundi + timedelta(days=6)
-                seances  = seances.filter(date_seance__range=(lundi, dimanche))
-            except ValueError:
+            bornes = _lire_semaine(semaine)
+            if bornes is None:
                 return Response(
                     {'detail': "Format de date invalide. Utilisez YYYY-MM-DD."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            seances = seances.filter(date_seance__range=bornes)
 
-        serializer = SeanceSerializer(seances, many=True)
+        serializer = SeanceListeSerializer(seances, many=True, context={'request': request})
         return Response(serializer.data)
 
 
@@ -603,9 +742,9 @@ class InscriptionViewSet(viewsets.ReadOnlyModelViewSet):
         if perimetre is not None:
             qs = qs.filter(classe__in=perimetre)
 
-        etudiant_id = self.request.query_params.get('etudiant_id')
-        annee_id    = self.request.query_params.get('annee_id')
-        classe_id   = self.request.query_params.get('classe_id')
+        etudiant_id = _id_param(self.request, 'etudiant_id')
+        annee_id    = _id_param(self.request, 'annee_id')
+        classe_id   = _id_param(self.request, 'classe_id')
         statut      = self.request.query_params.get('statut')
 
         if etudiant_id:
@@ -630,7 +769,14 @@ class MatiereViewSet(BaseViewSet):
 
     def get_queryset(self):
         qs      = super().get_queryset()
-        dept_id = self.request.query_params.get('departement_id')
+        # Lecture libre (formulaires) ; modification et suppression limitées
+        # aux matières des départements du chef, comme les modules
+        # (CORRECTIONS_A_FAIRE.md point 19).
+        if self.request.method not in SAFE_METHODS:
+            departements = departements_diriges_ids(self.request.user)
+            if departements is not None:
+                qs = qs.filter(departement_id__in=departements)
+        dept_id = _id_param(self.request, 'departement_id')
         if dept_id:
             qs = qs.filter(departement_id=dept_id)
         return qs
@@ -642,15 +788,10 @@ class ModuleViewSet(BaseViewSet):
     # heures_effectuees() — sans ce Prefetch, ModuleSerializer déclenchait
     # une requête par module et par champ heures_* (jusqu'à ~100 requêtes
     # pour une page de 20 modules).
-    queryset = Module.objects.select_related(
-        'matiere__departement', 'semestre__annee'
-    ).prefetch_related(
-        Prefetch(
-            'seance_set',
-            queryset=Seance.objects.filter(statut__in=['Confirmée', 'Reportée']),
-            to_attr='_seances_volume',
-        ),
-    ).all()
+    #
+    # modules_optimises() y ajoute les fiches imbriquées et les comptes de
+    # séances et d'affectations calculés par la base (V3).
+    queryset = modules_optimises(Module.objects.all())
     serializer_class   = ModuleSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
 
@@ -667,9 +808,9 @@ class ModuleViewSet(BaseViewSet):
             if perimetre is not None:
                 qs = qs.filter(pk__in=perimetre.values_list('pk', flat=True))
 
-        semestre_id = self.request.query_params.get('semestre_id')
-        matiere_id  = self.request.query_params.get('matiere_id')
-        classe_id   = self.request.query_params.get('classe_id')
+        semestre_id = _id_param(self.request, 'semestre_id')
+        matiere_id  = _id_param(self.request, 'matiere_id')
+        classe_id   = _id_param(self.request, 'classe_id')
 
         if classe_id:
             qs = qs.filter(classe_id=classe_id)
@@ -712,15 +853,15 @@ class ModuleViewSet(BaseViewSet):
         enseignant = request.user.profil.enseignant
         # Un module affecte mais pas encore planifie doit apparaitre : on part
         # des affectations, completees par les seances effectivement assurees.
-        modules = Module.objects.filter(
+        modules = modules_optimises(Module.objects.filter(
             Q(affectations__enseignant=enseignant) | Q(seance__enseignant=enseignant)
-        ).distinct()
+        ).distinct())
 
         # Sans ce filtre, un enseignant qui a dispensé plusieurs années
         # cumule les modules de toutes ces années dans la même liste (cf.
         # EnseignantRow.jsx / affectations, même correctif côté fiche
         # enseignant). Le frontend passe l'année active par défaut.
-        annee_id = request.query_params.get('annee_id')
+        annee_id = _id_param(request, 'annee_id')
         if annee_id:
             modules = modules.filter(semestre__annee_id=annee_id)
 
@@ -765,7 +906,10 @@ def _precharger_seances_volume(affectations):
 class AffectationModuleViewSet(BaseViewSet):
     queryset = AffectationModule.objects.select_related(
         'module__matiere__departement',
-        'enseignant__profil__user'
+        'module__semestre',
+        'module__classe',
+        'enseignant__profil__user',
+        'enseignant__departement',
     ).all()
     serializer_class = AffectationModuleSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefDepartementOrReadOnly]
@@ -778,17 +922,19 @@ class AffectationModuleViewSet(BaseViewSet):
         # get_queryset — filtrer aussi les routes de détail masquerait l'objet
         # AVANT perform_update()/perform_destroy(), produisant un 404 au lieu
         # du 403 explicite que ces méthodes lèvent désormais
-        # (CORRECTIONS_A_FAIRE.md, point 3).
-        if self.action == 'list':
+        # (CORRECTIONS_A_FAIRE.md, point 3). La lecture par numéro suit la
+        # liste : sans cela, une affectation masquée dans la liste se lisait
+        # en tapant son numéro (point 19).
+        if self.action in ('list', 'retrieve'):
             perimetre = modules_autorises(user)
             if perimetre is not None:
                 qs = qs.filter(module_id__in=perimetre.values_list('pk', flat=True))
 
-        module_id = self.request.query_params.get('module_id')
-        enseignant_id = self.request.query_params.get('enseignant_id')
+        module_id = _id_param(self.request, 'module_id')
+        enseignant_id = _id_param(self.request, 'enseignant_id')
 
-        annee_id = self.request.query_params.get('annee_id')
-        semestre_id = self.request.query_params.get('semestre_id')
+        annee_id = _id_param(self.request, 'annee_id')
+        semestre_id = _id_param(self.request, 'semestre_id')
 
         if module_id:
             qs = qs.filter(module_id=module_id)
@@ -816,6 +962,7 @@ class AffectationModuleViewSet(BaseViewSet):
         page = self.paginate_queryset(queryset)
         objets = page if page is not None else list(queryset)
         _precharger_seances_volume(objets)
+        precharger_volumes_modules([a.module for a in objets])
         serializer = self.get_serializer(objets, many=True)
         if page is not None:
             return self.get_paginated_response(serializer.data)
@@ -858,14 +1005,7 @@ class SeanceViewSet(BaseViewSet):
         Retourne la séance jumelle (cours mutualisé) si elle existe.
     """
     queryset = Seance.objects.select_related(
-        'module__matiere__departement',
-        'enseignant__profil__user',
-        'enseignant__departement',
-        'classe__semestre__annee',
-        'classe__filiere',
-        'classe__parcours',
-        'annee',
-        'seance_liee',
+        *SEANCE_RELATIONS, 'seance_liee',
     ).all()
     serializer_class   = SeanceSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsChefOrReferentOrReadOnly]
@@ -886,6 +1026,27 @@ class SeanceViewSet(BaseViewSet):
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [IsAuthenticated(), ProfilActifPermission()]
         return [IsAuthenticated(), ProfilActifPermission(), IsChefOrReferentOrReadOnly()]
+
+    def get_serializer_class(self):
+        # Listes : version allégée, quelques requêtes pour toute la page au
+        # lieu d'une vingtaine par séance (CORRECTIONS_A_FAIRE.md point 33).
+        if self.action == 'list':
+            return SeanceListeSerializer
+        return SeanceSerializer
+
+    def _verifier_classe(self, seance, verbe):
+        """
+        Refuse d'agir sur une séance d'une classe hors du périmètre (chef :
+        son département ; référent : ses classes). Les actions de détail
+        récupèrent la séance sans ce filtre (planning public en lecture)
+        : CORRECTIONS_A_FAIRE.md point 22.
+        """
+        classes_autorisees = self._get_classes_autorisees()
+        if classes_autorisees is not None and seance.classe_id not in classes_autorisees:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                f"Vous n'avez pas les droits pour {verbe} des séances dans cette classe."
+            )
 
     def _get_classes_autorisees(self):
         """
@@ -1077,14 +1238,14 @@ class SeanceViewSet(BaseViewSet):
                 if classes_autorisees is not None:
                     qs = qs.filter(classe_id__in=classes_autorisees)
 
-        classe_id     = self.request.query_params.get('classe_id')
-        enseignant_id = self.request.query_params.get('enseignant_id')
-        semestre_id   = self.request.query_params.get('semestre_id')
+        classe_id     = _id_param(self.request, 'classe_id')
+        enseignant_id = _id_param(self.request, 'enseignant_id')
+        semestre_id   = _id_param(self.request, 'semestre_id')
         statut        = self.request.query_params.get('statut')
         type_seance   = self.request.query_params.get('type_seance')
         date_debut    = self.request.query_params.get('date_debut')
         date_fin      = self.request.query_params.get('date_fin')
-        annee_id      = self.request.query_params.get('annee_id')
+        annee_id      = _id_param(self.request, 'annee_id')
 
         if classe_id:
             qs = qs.filter(classe_id=classe_id)
@@ -1122,8 +1283,8 @@ class SeanceViewSet(BaseViewSet):
         liees  = []
         if seance.seance_liee:
             liees.append(seance.seance_liee)
-        liees.extend(seance.seances_associees.all())
-        serializer = SeanceSerializer(liees, many=True)
+        liees.extend(seance.seances_associees.select_related(*SEANCE_RELATIONS))
+        serializer = SeanceListeSerializer(liees, many=True, context={'request': request})
         return Response({'count': len(liees), 'results': serializer.data})
 
     # ── Action : reporter ────────────────────────────────────────────────────
@@ -1140,12 +1301,7 @@ class SeanceViewSet(BaseViewSet):
         Toutes les validations du modèle sont réappliquées sur le nouveau créneau.
         """
         seance = self.get_object()
-        classes_autorisees = self._get_classes_autorisees()
-        if classes_autorisees is not None and seance.classe_id not in classes_autorisees:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(
-                "Vous n'avez pas les droits pour reporter des séances dans cette classe."
-            )
+        self._verifier_classe(seance, "reporter")
         with transaction.atomic():
             self._locker_pour_validation(
                 enseignants=[seance.enseignant], classes=[seance.classe],
@@ -1172,6 +1328,7 @@ class SeanceViewSet(BaseViewSet):
     def publier(self, request, pk=None):
         """Publie une séance brouillon → statut 'Confirmée'. Rejoue toutes les validations."""
         seance = self.get_object()
+        self._verifier_classe(seance, "publier")
         if seance.statut != 'brouillon':
             from rest_framework.exceptions import ValidationError
             raise ValidationError("Seules les séances en brouillon peuvent être publiées.")
@@ -1194,6 +1351,7 @@ class SeanceViewSet(BaseViewSet):
     def depublier(self, request, pk=None):
         """Remet une séance confirmée en brouillon."""
         seance = self.get_object()
+        self._verifier_classe(seance, "dépublier")
         if seance.statut not in ['Confirmée']:
             from rest_framework.exceptions import ValidationError
             raise ValidationError("Seules les séances confirmées peuvent être dépubliées.")
@@ -1210,11 +1368,21 @@ class SeanceViewSet(BaseViewSet):
     )
     def publier_masse(self, request):
         """Publie une liste de séances brouillons de manière transactionnelle (tout ou rien)."""
-        seance_ids = request.data.get('seance_ids', [])
+        # Corps attendu : {"seance_ids": [1, 2, ...]}. Toute autre forme est
+        # refusée proprement au lieu de planter (CORRECTIONS_A_FAIRE.md point 27).
+        seance_ids = request.data.get('seance_ids', []) if isinstance(request.data, dict) else None
+        if not isinstance(seance_ids, list):
+            return Response(
+                {'detail': "Format attendu : {\"seance_ids\": [identifiants]}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if not seance_ids:
             return Response({'detail': 'Aucune séance fournie.'}, status=status.HTTP_400_BAD_REQUEST)
+        seance_ids = list({lire_id(i, 'seance_ids') for i in seance_ids})
 
         seances = list(self.get_queryset().filter(id__in=seance_ids, statut='brouillon'))
+        for seance in seances:
+            self._verifier_classe(seance, "publier")
         if len(seances) != len(seance_ids):
             return Response({'detail': 'Certaines séances sont introuvables ou ne sont pas en brouillon.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1261,7 +1429,7 @@ class SeanceViewSet(BaseViewSet):
         Un conflit est détecté quand deux séances confirmées partagent
         le même créneau et le même enseignant OU la même classe.
         """
-        semestre_id = request.query_params.get('semestre_id')
+        semestre_id = _id_param(request, 'semestre_id')
         if not semestre_id:
             return Response(
                 {'detail': "Le paramètre 'semestre_id' est obligatoire."},
@@ -1288,11 +1456,7 @@ class SeanceViewSet(BaseViewSet):
         seances = list(Seance.objects.filter(
             classe__semestre_id=semestre_id,
             statut='Confirmée',
-        ).select_related(
-            'enseignant__profil__user',
-            'classe__filiere',
-            'module__matiere',
-        ).order_by('date_seance', 'heure_debut'))
+        ).select_related(*SEANCE_RELATIONS).order_by('date_seance', 'heure_debut'))
 
         conflits_ids = set()
 
@@ -1309,7 +1473,7 @@ class SeanceViewSet(BaseViewSet):
                     conflits_ids.add(autre.pk)
 
         seances_en_conflit = [s for s in seances if s.pk in conflits_ids]
-        serializer = SeanceSerializer(seances_en_conflit, many=True)
+        serializer = SeanceListeSerializer(seances_en_conflit, many=True, context={'request': request})
         return Response(
             {
                 'count':   len(conflits_ids),
@@ -1326,7 +1490,10 @@ class DocumentViewSet(BaseViewSet):
     """
     Gestion des documents pédagogiques.
     """
-    queryset = DocumentPedagogique.objects.select_related('module', 'enseignant').all()
+    queryset = DocumentPedagogique.objects.select_related(
+        'module__matiere__departement', 'module__semestre', 'module__classe',
+        'enseignant__profil__user', 'enseignant__departement',
+    ).all()
     serializer_class = DocumentPedagogiqueSerializer
     permission_classes = [IsAuthenticated, ProfilActifPermission, IsDocumentOwnerOrReadOnly]
 
@@ -1334,7 +1501,7 @@ class DocumentViewSet(BaseViewSet):
         qs = super().get_queryset()
         user = self.request.user
         
-        module_id = self.request.query_params.get('module_id')
+        module_id = _id_param(self.request, 'module_id')
         if module_id:
             qs = qs.filter(module_id=module_id)
 
@@ -1370,8 +1537,24 @@ class DocumentViewSet(BaseViewSet):
 
         return qs
 
+    def list(self, request, *args, **kwargs):
+        # Heures des modules : une requête pour toute la page (point 33).
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        objets = page if page is not None else list(queryset)
+        precharger_volumes_modules([d.module for d in objets])
+        serializer = self.get_serializer(objets, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
     def perform_create(self, serializer):
-        enseignant = self.request.user.profil.enseignant
+        # Un document appartient toujours à un enseignant : un admin sans
+        # fiche enseignant ne peut pas en déposer (point 28).
+        enseignant = getattr(getattr(self.request.user, 'profil', None), 'enseignant', None)
+        if enseignant is None:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Seul un enseignant peut déposer un document.")
         serializer.save(enseignant=enseignant)
 
     @action(detail=True, methods=['get'], url_path='telecharger')
@@ -1402,9 +1585,14 @@ class DocumentViewSet(BaseViewSet):
             response['Content-Disposition'] = f'attachment; filename="{nom_affiche}"'
             return response
 
-        return FileResponse(
-            doc.fichier.open('rb'), as_attachment=True, filename=nom_affiche,
-        )
+        try:
+            contenu = doc.fichier.open('rb')
+        except FileNotFoundError:
+            # Fichier absent du disque : introuvable plutôt qu'erreur
+            # serveur (CORRECTIONS_A_FAIRE.md point 28).
+            from django.http import Http404
+            raise Http404("Le fichier de ce document est introuvable.")
+        return FileResponse(contenu, as_attachment=True, filename=nom_affiche)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

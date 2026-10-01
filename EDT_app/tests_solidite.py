@@ -150,7 +150,6 @@ class SaisiesMalformeesTest(UniversSimple, TestCase):
         resp = self.client_admin.get("/api/seances/?date_debut=pas-une-date")
         self.assertEqual(resp.status_code, 400)
 
-    @faille_connue(27)
     def test_aucun_filtre_de_liste_ne_fait_planter_le_serveur(self):
         plantages = []
         for route, parametres in self.FILTRES.items():
@@ -161,11 +160,9 @@ class SaisiesMalformeesTest(UniversSimple, TestCase):
                         plantages.append(f"/api/{route}/?{parametre}={valeur}")
         self.assertEqual(plantages, [], f"{len(plantages)} combinaisons font planter le serveur")
 
-    @faille_connue(27)
     def test_conflits_avec_un_semestre_non_numerique(self):
         self.assertPasDePlantage(self.client_admin.get("/api/seances/conflits/?semestre_id=abc"))
 
-    @faille_connue(27)
     def test_planning_etudiant_avec_une_semaine_extreme(self):
         client = client_de(self.etu.profil.user)
         self.assertAucunPlantage([
@@ -173,19 +170,16 @@ class SaisiesMalformeesTest(UniversSimple, TestCase):
             for semaine in ("9999-12-31", "0001-01-01")
         ])
 
-    @faille_connue(27)
     def test_planning_enseignant_avec_une_semaine_extreme(self):
         client = client_de(self.ens.profil.user)
         self.assertPasDePlantage(client.get("/api/enseignants/mon_planning/?semaine=9999-12-31"))
 
-    @faille_connue(27)
     def test_planning_avec_un_semestre_non_numerique(self):
         self.assertAucunPlantage([
             (route, lambda user=user, route=route: client_de(user).get(f"/api/{route}/mon_planning/?semestre_id=x"))
             for user, route in ((self.etu.profil.user, "etudiants"), (self.ens.profil.user, "enseignants"))
         ])
 
-    @faille_connue(27)
     def test_publier_en_masse_avec_un_corps_malforme(self):
         brouillon = self.seance(self.sem1.date_debut, *BLOCS[0], statut="brouillon")
         corps = {
@@ -206,7 +200,6 @@ class SaisiesMalformeesTest(UniversSimple, TestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
-    @faille_connue(27)
     def test_passer_au_semestre_suivant_avec_un_semestre_non_numerique(self):
         resp = self.client_admin.post(
             f"/api/classes/{self.classe.pk}/passer_semestre/", {"semestre_cible_id": "abc"}, format="json",
@@ -233,23 +226,19 @@ class SuppressionsEtCasLimitesTest(UniversSimple, TestCase):
         self.construire_univers()
         self.client_admin = client_de(self.admin)
 
-    @faille_connue(28)
     def test_supprimer_un_departement_qui_a_des_enseignants(self):
         resp = self.client_admin.delete(f"/api/departements/{self.dept.pk}/")
         self.assertPasDePlantage(resp)
         self.assertIn(resp.status_code, (400, 409))
 
-    @faille_connue(28)
     def test_supprimer_une_classe_qui_a_des_etudiants(self):
         resp = self.client_admin.delete(f"/api/classes/{self.classe.pk}/")
         self.assertPasDePlantage(resp)
         self.assertIn(resp.status_code, (400, 409))
 
-    @faille_connue(28)
     def test_admin_sans_profil_consulte_son_profil(self):
         self.assertPasDePlantage(self.client_admin.get("/api/profils/me/"))
 
-    @faille_connue(28)
     def test_admin_sans_profil_depose_un_document(self):
         resp = self.client_admin.post("/api/documents/", {
             "titre": "Cours", "module_id": self.module.pk,
@@ -257,7 +246,6 @@ class SuppressionsEtCasLimitesTest(UniversSimple, TestCase):
         }, format="multipart")
         self.assertPasDePlantage(resp)
 
-    @faille_connue(28)
     def test_telecharger_un_document_dont_le_fichier_a_disparu(self):
         media = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, media, ignore_errors=True)
@@ -271,7 +259,6 @@ class SuppressionsEtCasLimitesTest(UniversSimple, TestCase):
         self.assertPasDePlantage(resp)
         self.assertEqual(resp.status_code, 404)
 
-    @faille_connue(28)
     def test_supprimer_un_module_efface_aussi_ses_fichiers(self):
         media = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, media, ignore_errors=True)
@@ -284,7 +271,6 @@ class SuppressionsEtCasLimitesTest(UniversSimple, TestCase):
             self.assertEqual(self.client_admin.delete(f"/api/modules/{self.module.pk}/").status_code, 204)
             self.assertFalse(os.path.exists(chemin), "fichier orphelin resté sur le disque")
 
-    @faille_connue(28)
     def test_supprimer_une_annee_qui_a_des_etudiants(self):
         resp = self.client_admin.delete(f"/api/annees/{self.annee.pk}/")
         self.assertPasDePlantage(resp)
@@ -594,22 +580,18 @@ class NombreDeRequetesTest(UniversSimple, TestCase):
             f"{url} : {avant} requêtes pour 5 lignes, {apres} pour 15",
         )
 
-    @faille_connue(33)
     def test_liste_des_seances(self):
         self._mesurer(client_de(self.admin), f"/api/seances/?classe_id={self.classe.pk}")
 
-    @faille_connue(33)
     def test_planning_etudiant(self):
         self._mesurer(client_de(self.etu.profil.user), "/api/etudiants/mon_planning/")
 
-    @faille_connue(33)
     def test_planning_enseignant(self):
         self._mesurer(client_de(self.ens.profil.user), "/api/enseignants/mon_planning/")
 
     def test_controle_detection_des_conflits(self):
         self._mesurer(client_de(self.admin), f"/api/seances/conflits/?semestre_id={self.sem1.pk}")
 
-    @faille_connue(33)
     def test_liste_des_modules(self):
         client = client_de(self.admin)
         url = f"/api/modules/?semestre_id={self.sem1.pk}"
@@ -625,7 +607,6 @@ class NombreDeRequetesTest(UniversSimple, TestCase):
         apres = self._compter(client, url)
         self.assertLessEqual(apres - avant, self.TOLERANCE, f"{avant} requêtes pour 5 modules, {apres} pour 15")
 
-    @faille_connue(33)
     def test_liste_des_affectations(self):
         client = client_de(self.admin)
         url = f"/api/affectations/?enseignant_id={self.ens.pk}"

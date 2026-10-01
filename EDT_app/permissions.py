@@ -37,6 +37,21 @@ class IsChefDepartementOrReadOnly(BasePermission):
         )
 
 
+class IsResponsableOrReadOnly(BasePermission):
+    """
+    Réglages communs à tout l'établissement (facultés, départements et leur
+    chef, années, semestres, parcours) : lecture pour tout utilisateur actif,
+    écriture réservée à l'admin et à la scolarité (groupe `responsable`).
+    Un chef de département ne les modifie pas (CORRECTIONS_A_FAIRE.md point 18).
+    """
+    message = "Modification réservée à la scolarité."
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        return request.user.is_superuser or request.user.groups.filter(name='responsable').exists()
+
+
 class IsEnseignant(BasePermission):
     """
     Vérifie que l'utilisateur authentifié est bien un enseignant.

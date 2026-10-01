@@ -521,7 +521,10 @@ modifiable.
 **Piste de correction :** une permission « admin ou scolarité en écriture,
 lecture pour tous » sur ces cinq ViewSets et sur `archiver`.
 
-**Statut :** reproduit (5 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 2) : `IsResponsableOrReadOnly`
+sur les cinq ViewSets et sur `archiver` ; un chef lit ces réglages sans
+pouvoir les modifier. L'interface n'affichait déjà aucun bouton d'écriture
+sur ces écrans.
 
 ---
 
@@ -548,8 +551,13 @@ l'intérieur du périmètre ; cloisonner les matières comme les modules ;
 contrôler le département de la filière à la création d'une classe ; appliquer
 `modules_autorises()` à `retrieve` des affectations.
 
-**Statut :** reproduit (4 tests), non corrigé. Contrôles : classe, filière
-sans paramètre et module d'un autre département sont bien refusés.
+**Statut :** corrigé le 2026-10-01 (lot 2) :
+- `?departement_id=` ne filtre plus qu'à l'intérieur du périmètre du chef
+  pour l'écriture (la lecture reste possible pour les formulaires) ;
+- matières : modification et suppression limitées aux départements du chef,
+  création contrôlée (`MatiereSerializer.validate`) ;
+- filières et classes : le département choisi doit être celui du chef ;
+- affectations : la lecture par numéro suit la liste (`retrieve` cloisonné).
 
 À noter au passage : l'API exige le champ `code` à la création de toute
 classe, même avec une filière (règle d'unicité qui le rend obligatoire).
@@ -581,7 +589,19 @@ profil à un autre compte utilisateur.
 lecture ; contrôler `classe_id` contre `classes_autorisees()` ; rendre
 `user_id` non modifiable après création.
 
-**Statut :** reproduit (7 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 2) :
+- `ProfilViewSet.get_queryset` : son profil, plus les enseignants des
+  départements dirigés et les étudiants de ses classes
+  (`perimetre.profils_autorises`) ; une fiche hors périmètre répond 404 ;
+- suspendre ou réactiver un chef (soi-même compris) : admin et scolarité
+  seulement, par `changer_statut` comme par la fiche ; `changer_statut`
+  exige de plus un rôle de chef (la permission déclarée était ignorée) ;
+- `?tous_departements=1` vaut pour la lecture seulement ;
+- `classe_id` d'un étudiant et `departement_id` d'un enseignant contrôlés ;
+- `user_id` d'un profil non modifiable après création.
+
+Au passage : modifier une fiche profil sans envoyer le statut effaçait le
+motif d'un profil suspendu ; le statut non envoyé garde maintenant sa valeur.
 
 ---
 
@@ -602,7 +622,11 @@ serveur les envoie toujours.
 **Piste de correction :** un sérialiseur réduit (nom, grade, département)
 pour toutes les imbrications et pour les fiches hors périmètre.
 
-**Statut :** reproduit (3 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 3) :
+- `EnseignantResumeSerializer` (nom, grade, département, identifiant du
+  compte) pour les séances, affectations et documents ;
+- la liste des enseignants ne montre email, téléphone et motif qu'à
+  l'intéressé, au chef de son département et à la scolarité.
 
 ---
 
@@ -623,9 +647,9 @@ actions ne vérifie `_get_classes_autorisees()`, contrairement à
 **Piste de correction :** appliquer dans les quatre actions le même contrôle
 de classe que `perform_update` et `perform_destroy`.
 
-**Statut :** reproduit (5 tests), corrigé pour `reporter` seulement le
-2026-10-01 (contrôle de classe ajouté avec le point 23) ; publier,
-dépublier et publier en masse restent à faire (lot 2).
+**Statut :** corrigé le 2026-10-01 : `reporter` avec le point 23, puis
+publier, dépublier et publier en masse (lot 2) par un contrôle commun
+`SeanceViewSet._verifier_classe`.
 
 ---
 
@@ -728,7 +752,11 @@ quand :
 une `ValidationError` (400), utilisé dans tous les `get_queryset` ; valider
 le corps de `publier_masse` avec `serializers.ListField(child=IntegerField())`.
 
-**Statut :** reproduit (7 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 4) :
+- `lire_id` / `_id_param` (`views.py`) : tout identifiant reçu (adresse ou
+  corps) doit être un entier positif, sinon refus 400 ;
+- `_lire_semaine` : une semaine impossible (an 9999) répond 400 ;
+- `publier_masse` refuse tout corps qui n'est pas `{"seance_ids": [...]}`.
 
 ---
 
@@ -756,8 +784,16 @@ gestionnaire global ; protéger l'accès au profil ; renvoyer 404 si le fichier
 manque ; supprimer le fichier à la suppression du document (signal
 `post_delete`).
 
-**Statut :** reproduit (7 tests, dont l'année ajoutée le 2026-10-01 lors de
-l'étape C2), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 4) :
+- suppression bloquée : réponse 409 avec la liste de ce qui l'empêche
+  (`exception_handlers.py`), rien n'est effacé ;
+- « mon profil » sans profil : 404 ; dépôt de document sans fiche
+  enseignant : 403 ;
+- fichier disparu : 404 ;
+- le fichier d'un document est effacé avec lui, y compris par cascade
+  (signal `post_delete` dans `models.py`). Limite connue : si la
+  suppression était annulée ensuite, le fichier serait déjà parti ; le
+  document répondrait alors 404 au téléchargement.
 
 ---
 
@@ -866,8 +902,18 @@ le même fichier).
 **Piste de correction :** sérialiseurs allégés pour les listes, préchargement
 des relations, calcul des heures en une requête groupée.
 
-**Statut :** mesuré (5 tests ; seuil : au plus 3 requêtes de plus pour
-10 lignes de plus), non corrigé.
+**Statut :** corrigé le 2026-10-01 (V2 à V4) :
+- `SeanceListeSerializer` pour la liste des séances, les deux plannings
+  personnels, `conflits` et `seances_liees` : module, enseignant et classe
+  réduits, heures des modules calculées une fois par module, séances
+  mutualisées repérées en une requête. Sur `edt_charge`, 20 séances
+  coûtaient 610 requêtes, elles en coûtent 3 ;
+- relations préchargées (`SEANCE_RELATIONS`) dans les plannings ;
+- modules : fiches liées préchargées, nombres de séances et d'affectations
+  calculés par la base (`modules_optimises`) ; affectations et documents :
+  module et enseignant réduits, heures préchargées.
+Le SeanceSerializer complet reste pour l'ouverture et la modification
+d'une séance.
 
 **Test de charge du 2026-10-01** (`charge/locustfile.py`, base `edt_charge`
 remplie par `seed.py` : 183 étudiants, 31 enseignants, 4 285 séances ;
