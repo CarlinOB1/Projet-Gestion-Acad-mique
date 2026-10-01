@@ -97,7 +97,9 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '60/min',
-        'user': '600/min',
+        # Relevable pour le seul serveur du scan ZAP (zap/lancer_zap.py), qui
+        # envoie des milliers de requêtes avec un même compte.
+        'user': env.str('DJANGO_THROTTLE_USER', default='600/min'),
         'login': '5/min',
         'login_ip': '120/min',
     },

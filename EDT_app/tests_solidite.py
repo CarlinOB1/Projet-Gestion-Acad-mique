@@ -527,6 +527,18 @@ class DoublonsTest(UniversSimple, TestCase):
                                   semestre=self.sem1, annee=self.annee)
         self.assertEqual(Classe.objects.filter(filiere=None, semestre=self.sem1).count(), 2)
 
+    def test_controle_classe_l1_en_double_refusee_avec_message(self):
+        criteres = dict(filiere=None, code="MIP", parcours=self.classe.parcours, semestre=self.sem1, annee=self.annee)
+        Classe.objects.create(**criteres)
+        with self.assertRaisesMessage(ValidationError, "MIP existe déjà"):
+            Classe.objects.create(**criteres)
+
+    def test_controle_affectation_typee_en_double_refusee(self):
+        donnees = {"module_id": self.module.pk, "enseignant_id": self.ens.pk, "heures_prevues": 12, "type_seance": "TD"}
+        self.assertEqual(self.client_admin.post("/api/affectations/", donnees, format="json").status_code, 201)
+        resp = self.client_admin.post("/api/affectations/", donnees, format="json")
+        self.assertEqual(resp.status_code, 400, resp.content[:300])
+
     def test_la_base_interdit_elle_meme_les_affectations_generiques_en_double(self):
         AffectationModule.objects.bulk_create([
             AffectationModule(module=self.module, enseignant=self.ens, heures_prevues=12),

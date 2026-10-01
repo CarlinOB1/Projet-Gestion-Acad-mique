@@ -5,7 +5,6 @@ from datetime import time as time_type
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.db import models
-from django.db.models.functions import Coalesce
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -281,6 +280,14 @@ class Classe(models.Model):
                 raise ValidationError(
                     "Le semestre ne correspond pas à l'année académique de la classe."
                 )
+        # Classe sans filière (L1) : unique par son code. La base le garantit
+        # aussi (index unique_classe_sans_filiere, voir Meta) ; ce contrôle
+        # donne le message clair.
+        if not self.filiere_id and self.code and Classe.objects.filter(
+            filiere__isnull=True, parcours_id=self.parcours_id, semestre_id=self.semestre_id,
+            annee_id=self.annee_id, code=self.code,
+        ).exclude(pk=self.pk).exists():
+            raise ValidationError(f"La classe {self.code} existe déjà pour ce semestre.")
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -298,21 +305,17 @@ class Classe(models.Model):
         # index unique (CORRECTIONS_A_FAIRE.md point 31).
         #  - avec filière : la filière est NULL pour les L1, qui ne sont
         #    donc pas concernées ;
-        #  - sans filière : le code ne compte que si la filière est NULL,
-        #    sinon l'expression vaut NULL et les L2+ ne se gênent pas.
+        #  - sans filière : index unique `unique_classe_sans_filiere` sur
+        #    (parcours, semestre, annee, CASE WHEN filiere IS NULL THEN code
+        #    END), créé par la migration 0016 et connu de la base seulement
+        #    (0017) : déclaré ici, Django le vérifiait par une requête qui
+        #    plante quand les colonnes n'ont pas la collation de la
+        #    connexion (base en utf8mb4_unicode_ci). Le contrôle Python est
+        #    dans clean().
         constraints = [
             models.UniqueConstraint(
                 fields=['parcours', 'filiere', 'semestre', 'annee'],
                 name='unique_classe_avec_filiere',
-            ),
-            models.UniqueConstraint(
-                models.F('parcours'), models.F('semestre'), models.F('annee'),
-                models.Case(
-                    models.When(filiere__isnull=True, then=models.F('code')),
-                    default=models.Value(None),
-                    output_field=models.CharField(max_length=20),
-                ),
-                name='unique_classe_sans_filiere',
             ),
         ]
 
@@ -901,15 +904,12 @@ class AffectationModule(models.Model):
     # ── Contraintes d'intégrité ──────────────────────────────────────────────
 
     class Meta:
-        constraints = [
-            # Type vide ramené à '' : sans cela MySQL tient deux affectations
-            # génériques (type NULL) pour différentes (point 31).
-            models.UniqueConstraint(
-                models.F('module'), models.F('enseignant'),
-                Coalesce(models.F('type_seance'), models.Value('')),
-                name='unique_affectation_module_enseignant_type',
-            ),
-        ]
+        # Unicité de (module, enseignant, type) : index unique
+        # `unique_affectation_module_enseignant_type` sur (module,
+        # enseignant, COALESCE(type_seance, '')), qui empêche aussi deux
+        # affectations génériques (type NULL). Créé par la migration 0016 et
+        # connu de la base seulement (0017), pour la même raison de collation
+        # que Classe. Le contrôle Python, avec message clair, est dans clean().
         ordering = ['module', 'enseignant', 'type_seance']
 
     def clean(self):
@@ -945,6 +945,11 @@ class AffectationModule(models.Model):
                     "Supprimez-les d'abord, ou utilisez une affectation typée."
                 )
         else:
+            if autres.filter(type_seance=self.type_seance).exists():
+                raise ValidationError(
+                    f"Cet enseignant a déjà une affectation {self.type_seance} sur ce module. "
+                    "Modifiez-la plutôt que d'en créer une seconde."
+                )
             # Affectation typée : interdit si le couple a déjà une affectation générique
             if autres.filter(type_seance__isnull=True).exists():
                 raise ValidationError(

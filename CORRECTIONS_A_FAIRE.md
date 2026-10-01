@@ -886,6 +886,21 @@ est remplacé par des tests qui écrivent un vrai doublon en base et
 attendent son refus. La même migration aligne aussi en base la longueur
 des noms de fichiers (255 caractères), déjà déclarée dans le modèle.
 
+**Régression corrigée le 2026-10-01 (migration 0017)**, trouvée en remplissant
+la base du scan ZAP : sur une base dont les colonnes sont en
+`utf8mb4_unicode_ci` (`edt_charge`, `edt_zap`, et possiblement la future base
+de production), créer une classe de L1 ou une affectation plantait (MySQL,
+erreur 1267 « Illegal mix of collations »). Pour vérifier les deux
+contraintes à expression avant d'enregistrer, Django comparait la colonne à
+une valeur convertie avec la collation de la connexion
+(`utf8mb4_0900_ai_ci`). Les tests ne le voyaient pas : leur base suit la
+collation par défaut du serveur, comme `edt_uccb`. Correctif : les deux index
+restent en base (ils bloquent toujours les doublons), mais Django ne les
+connaît plus (`SeparateDatabaseAndState`) ; les contrôles avec message
+clair sont dans `Classe.clean()` et `AffectationModule.clean()` (classe de
+L1 en double, affectation typée ou générique en double). Vérifié en
+remplissant `edt_zap` par seed.py, qui échouait avant.
+
 ---
 
 ## 32. Une séance reportée bloque son ancien créneau et pas le nouveau
