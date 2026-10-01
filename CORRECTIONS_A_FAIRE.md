@@ -263,6 +263,15 @@ d'exclusion au niveau base de données.
 d'occurrence réelle non mesurée (dépend du volume d'utilisateurs
 simultanés), pas de reproduction ni de correctif.
 
+**Mise à jour du 2026-10-01 :** les verrous posés par
+`SeanceViewSet._locker_pour_validation` (fusion de
+`fix/bugs-decouverts-tests`) ferment le cas principal. Vérifié par
+`tests_solidite.RequetesSimultaneesTest` (tag `concurrence`) : 20 paires de
+créations simultanées, même enseignant et même créneau, dans deux classes
+différentes → une seule séance à chaque fois, aucune erreur serveur. Restent
+non couverts : le volume de module et d'affectation sous concurrence, et les
+séances reportées (point 32).
+
 ---
 
 ## 10. Saisie libre des horaires au lieu d'un choix parmi les 3 créneaux fixes
@@ -848,6 +857,26 @@ des relations, calcul des heures en une requête groupée.
 
 **Statut :** mesuré (5 tests ; seuil : au plus 3 requêtes de plus pour
 10 lignes de plus), non corrigé.
+
+**Test de charge du 2026-10-01** (`charge/locustfile.py`, base `edt_charge`
+remplie par `seed.py` : 183 étudiants, 31 enseignants, 4 285 séances ;
+serveur de développement, donc temps pessimistes — à comparer avant/après
+correctif, pas à promettre en ligne). Temps médians :
+
+| Utilisateurs simultanés | 10 | 25 | 50 |
+|---|---|---|---|
+| Planning de la semaine (étudiant) | 2,2 s | 15 s | 28 s |
+| Planning de la semaine (enseignant) | 1,7 s | 10 s | 20 s |
+| Une page du planning d'une classe (chef) | 2,9 s | 27 s | 55 s |
+| Mes modules (enseignant) | 2,1 s | 12 s | 21 s |
+| Documents | 0,1 s | 0,5 s | 0,8 s |
+
+Le serveur plafonne vers 2 requêtes par seconde quel que soit le nombre
+d'utilisateurs : au-delà, chacun attend son tour. Les documents, qui ne
+passent pas par les sérialiseurs imbriqués, restent rapides — ce qui désigne
+bien les séances comme cause. Aucune erreur serveur ni blocage de base, sauf
+la détection des conflits (point 34). Rejouer les mêmes paliers après
+correctif pour mesurer le gain.
 
 ---
 

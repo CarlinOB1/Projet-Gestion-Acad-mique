@@ -4,14 +4,32 @@
     {
       "name": "edt-frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "edt-frontend", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "edt-frontend",
+        "run",
+        "dev"
+      ],
       "port": 3000
     },
     {
       "name": "django-backend",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["manage.py", "runserver", "8000"],
+      "runtimeArgs": [
+        "manage.py",
+        "runserver",
+        "8000"
+      ],
       "port": 8000
+    },
+    {
+      "name": "django-charge",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set DB_NAME=edt_charge&& .venv\\Scripts\\python.exe manage.py runserver 8001 --noreload"
+      ],
+      "port": 8001
     }
   ]
 }

@@ -596,7 +596,7 @@ class RequetesSimultaneesTest(UniversSimple, TransactionTestCase):
             f.join(timeout=60)
         return resultats
 
-    def test_meme_enseignant_meme_creneau_une_seule_seance(self):
+    def test_controle_meme_enseignant_meme_creneau_une_seule_seance(self):
         etapes = creneaux(self.sem1.date_debut, self.REPETITIONS)
         doublons, plantages = [], []
         for jour, debut, fin in etapes:
