@@ -935,6 +935,24 @@ bien les séances comme cause. Aucune erreur serveur ni blocage de base, sauf
 la détection des conflits (point 34). Rejouer les mêmes paliers après
 correctif pour mesurer le gain.
 
+**Après correctif (V2 à V4, même base, même serveur, 2026-10-01 au soir).**
+Temps médians, entre parenthèses le temps sous lequel passent 95 % des
+requêtes :
+
+| Utilisateurs simultanés | 10 | 25 | 50 |
+|---|---|---|---|
+| Planning de la semaine (étudiant) | 0,1 s (0,7) | 0,1 s (0,5) | 0,3 s (4,2) |
+| Planning de la semaine (enseignant) | 0,1 s (0,2) | 0,1 s (0,5) | 0,3 s (2,6) |
+| Une page du planning d'une classe (chef) | 0,1 s (0,3) | 0,1 s (0,4) | 0,3 s (2,3) |
+| Mes modules (enseignant) | 0,2 s (1,3) | 0,2 s (1,0) | 0,5 s (5,4) |
+| Détection des conflits (chef) | 1,0 s (3,2) | 1,0 s (17) | 1,8 s (9,8) |
+
+Le serveur traite maintenant 17 requêtes par seconde à 50 utilisateurs
+(1,7 avant), sans aucune erreur. Le planning étudiant passe de 28 s à
+0,3 s en médiane à 50 utilisateurs. Objectif local atteint (moins de 1 s à
+25 utilisateurs). Reste plus lente : la détection des conflits, qui compare
+toutes les séances du semestre ; à surveiller, mais rarement appelée.
+
 ---
 
 ## 34. La détection des conflits plante pour tout chef de département
