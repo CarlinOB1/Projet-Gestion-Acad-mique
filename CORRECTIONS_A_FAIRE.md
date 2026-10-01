@@ -449,5 +449,428 @@ protection sera ajoutée. Code applicatif inchangé.
 
 ---
 
+> **Points 17 à 34 — campagne « solidité et sécurité » du 2026-10-01**
+> (branche `test/solidite-securite`). Chacun est reproduit par un test qui
+> décrit la règle voulue et porte `@faille_connue(N)`
+> (`EDT_app/outils_tests.py`) : le test échoue tant que la faille existe et
+> passe en « unexpected success » quand elle est corrigée — retirer alors le
+> décorateur. `VOIR_FAILLES=1` affiche la raison de chaque échec attendu.
+> Règles de droits de référence (validées le 2026-10-01) : un chef n'agit que
+> sur son département ; facultés, départements et leur chef, années,
+> semestres et parcours sont réservés à l'admin et à la scolarité
+> (`responsable`) ; un référent publie, dépublie et reporte dans ses classes ;
+> le planning est public, les coordonnées personnelles non.
+> Les numéros 15 et 16 cités dans d'anciennes notes ne figurent sur aucune
+> branche ; ils ne sont pas réattribués.
+
+---
+
+## 17. Un compte suspendu garde l'accès à plusieurs actions de chef
+
+**Découvert le :** 2026-10-01 (`tests_securite_roles.py`, `CompteSuspenduTest`).
+
+**Problème :** un chef suspendu alors que sa session est ouverte peut encore
+archiver une année, faire passer une classe au semestre suivant, reporter une
+séance et lancer la détection des conflits. Il peut aussi renouveler sa
+session indéfiniment : la suspension ne l'empêche jamais de rester connecté.
+
+**Cause :** `ProfilActifPermission` absente des actions `archiver`,
+`passer_semestre`, `reporter` et `conflits` (`EDT_app/views.py`, leurs
+`permission_classes` se limitent à `IsAuthenticated, IsChefDepartement`).
+`/api/token/refresh/` utilise la vue standard `TokenRefreshView`, qui ne lit
+pas `Profil.statut`. (Publier, dépublier, publier en masse et changer de
+statut vérifient bien la suspension : contrôles dans le même fichier.)
+
+**Piste de correction :** ajouter `ProfilActifPermission` à ces quatre
+actions (ou l'intégrer à `IsChefDepartement`) ; sous-classer
+`TokenRefreshSerializer` pour refuser un profil suspendu.
+
+**Statut :** reproduit (5 tests), non corrigé.
+
+---
+
+## 18. Un chef peut modifier les réglages communs de tout l'établissement
+
+**Découvert le :** 2026-10-01 (`ReglagesCommunsTest`).
+
+**Problème :** n'importe quel chef de département peut créer, modifier ou
+supprimer des facultés, des départements (y compris remplacer le chef de son
+propre département), des années académiques (et les archiver), des semestres
+et des parcours. Ces réglages doivent être réservés à l'admin et à la
+scolarité.
+
+**Cause :** `IsChefDepartementOrReadOnly` (`EDT_app/permissions.py`) donne
+l'écriture à tout chef sur `FaculteViewSet`, `DepartementViewSet`,
+`AnneeAcademiqueViewSet`, `SemestreViewSet` et `ParcoursViewSet` ;
+`archiver` utilise `IsChefDepartement`. `DepartementSerializer.chef_id` est
+modifiable.
+
+**Piste de correction :** une permission « admin ou scolarité en écriture,
+lecture pour tous » sur ces cinq ViewSets et sur `archiver`.
+
+**Statut :** reproduit (5 tests), non corrigé.
+
+---
+
+## 19. Un chef peut agir sur l'organisation d'un autre département
+
+**Découvert le :** 2026-10-01 (`OrganisationAutreDepartementTest`).
+
+**Problème :** un chef peut modifier ou supprimer les filières d'un autre
+département (en ajoutant un simple paramètre à l'adresse), modifier ou
+supprimer ses matières, et y créer des classes. Il peut aussi lire une
+affectation d'un autre département en tapant son numéro, alors que la liste
+la lui cache.
+
+**Cause :**
+- `FiliereViewSet.get_queryset` : `?departement_id=` court-circuite le
+  cloisonnement du chef, sur toutes les actions (écriture comprise).
+- `MatiereViewSet` : aucun cloisonnement.
+- `ClasseSerializer.validate` : ne vérifie pas que la filière choisie relève
+  du chef (le `get_queryset` ne protège que les classes existantes).
+- `AffectationModuleViewSet.get_queryset` : ne filtre que `list`.
+
+**Piste de correction :** ne garder `?departement_id=` que comme filtre à
+l'intérieur du périmètre ; cloisonner les matières comme les modules ;
+contrôler le département de la filière à la création d'une classe ; appliquer
+`modules_autorises()` à `retrieve` des affectations.
+
+**Statut :** reproduit (4 tests), non corrigé. Contrôles : classe, filière
+sans paramètre et module d'un autre département sont bien refusés.
+
+À noter au passage : l'API exige le champ `code` à la création de toute
+classe, même avec une filière (règle d'unicité qui le rend obligatoire).
+L'interface envoie `code: null`, à vérifier.
+
+---
+
+## 20. Un chef peut agir sur les personnes d'un autre département
+
+**Découvert le :** 2026-10-01 (`PersonnesTest`).
+
+**Problème :** un chef peut suspendre un enseignant d'un autre département,
+et même un autre chef ; lire la fiche complète de n'importe qui ; modifier ou
+supprimer un enseignant d'un autre département (en ajoutant
+`?tous_departements=1`) ; inscrire un étudiant dans une classe d'un autre
+département ou y déplacer un de ses étudiants. Il peut aussi rattacher un
+profil à un autre compte utilisateur.
+
+**Cause :**
+- `ProfilViewSet` : aucun `get_queryset` cloisonné ; `IsOwnerOrChefDepartement`
+  accepte tout chef sur tout profil ; `changer_statut` ne vérifie pas la cible.
+- `EnseignantViewSet.get_queryset` : `?tous_departements=1` élargit aussi
+  PATCH/DELETE (déjà noté le 2026-09-29).
+- `EtudiantSerializer.validate` : `classe_id` accepté sans contrôle de périmètre.
+- `ProfilSerializer.user_id` modifiable en écriture.
+
+**Piste de correction :** cloisonner les profils et `changer_statut`
+(suspendre un chef : admin ou scolarité) ; limiter `tous_departements` à la
+lecture ; contrôler `classe_id` contre `classes_autorisees()` ; rendre
+`user_id` non modifiable après création.
+
+**Statut :** reproduit (7 tests), non corrigé.
+
+---
+
+## 21. Les coordonnées des enseignants sont visibles par tous
+
+**Découvert le :** 2026-10-01 (`CoordonneesPersonnellesTest`, `PersonnesTest`).
+
+**Problème :** un étudiant reçoit l'email et le téléphone des enseignants dans
+la liste des séances et dans son planning. Un chef les reçoit aussi pour les
+enseignants des autres départements. L'interface les masque parfois, mais le
+serveur les envoie toujours.
+
+**Cause :** `EnseignantSerializer` imbrique le `ProfilSerializer` complet
+(email, téléphone, statut, motif de suspension), réutilisé par
+`SeanceSerializer`, `AffectationModuleSerializer` et
+`DocumentPedagogiqueSerializer`.
+
+**Piste de correction :** un sérialiseur réduit (nom, grade, département)
+pour toutes les imbrications et pour les fiches hors périmètre.
+
+**Statut :** reproduit (3 tests), non corrigé.
+
+---
+
+## 22. Publier, dépublier ou reporter ne vérifie pas la classe de la séance
+
+**Découvert le :** 2026-10-01 (`ActionsSeancesTest`).
+
+**Problème :** un chef peut publier, dépublier, reporter ou publier en masse
+les séances d'un autre département. Un référent peut publier ou dépublier les
+séances de n'importe quelle classe, pas seulement des siennes.
+
+**Cause :** `publier`, `depublier` et `reporter` récupèrent la séance avec
+`get_object()`, alors que `SeanceViewSet.get_queryset` ne cloisonne que
+`list` ; `publier_masse` part de `get_queryset()` non cloisonné. Aucune de ces
+actions ne vérifie `_get_classes_autorisees()`, contrairement à
+`perform_update`.
+
+**Piste de correction :** appliquer dans les quatre actions le même contrôle
+de classe que `perform_update` et `perform_destroy`.
+
+**Statut :** reproduit (5 tests), non corrigé.
+
+---
+
+## 23. Un référent ne peut pas reporter une séance de sa classe
+
+**Découvert le :** 2026-10-01 (`ActionsSeancesTest.test_referent_reporte_dans_sa_classe`).
+
+**Problème :** règle validée : le référent publie, dépublie et reporte les
+séances de ses classes. Il publie et dépublie déjà, mais le report lui est
+refusé.
+
+**Cause :** `SeanceViewSet.get_permissions` renvoie pour `reporter` les
+`permission_classes` propres à l'action (`IsChefDepartement`), alors que
+publier et dépublier passent par `IsChefOrReferentOrReadOnly`.
+
+**Piste de correction :** aligner `reporter` sur publier et dépublier, avec
+le contrôle de classe du point 22.
+
+**Statut :** reproduit, non corrigé (manque fonctionnel, pas une faille).
+
+---
+
+## 24. Un compte avec un profil mais sans rôle voit tous les documents
+
+**Découvert le :** 2026-10-01 (`DocumentsSansRoleTest`).
+
+**Problème :** un utilisateur qui a un profil mais n'est ni étudiant, ni
+enseignant, ni membre de la scolarité voit tous les documents pédagogiques.
+
+**Cause :** `DocumentViewSet.get_queryset` n'a pas de branche finale : sans
+étudiant ni enseignant, le queryset complet est renvoyé.
+
+**Piste de correction :** renvoyer `qs.none()` en dernier recours, sauf pour
+la scolarité.
+
+**Statut :** reproduit, non corrigé. Priorité basse (ce type de compte n'est
+pas créé par l'interface).
+
+---
+
+## 25. La connexion à l'administration Django n'est pas limitée
+
+**Découvert le :** 2026-10-01 (`LimitationTentativesTest`).
+
+**Problème :** après dix mots de passe faux, la page `/admin/` accepte encore
+la connexion : on peut y essayer des mots de passe sans frein, alors que la
+connexion de l'application est limitée à 5 essais par minute.
+
+**Cause :** la limitation (`EDT_app/throttles.py`) ne s'applique qu'à
+`/api/token/`.
+
+**Piste de correction :** en production, nginx réserve `/admin/` à des
+adresses internes (`DEPLOIEMENT.md`), à vérifier en Phase B. En complément,
+limiter aussi la connexion admin.
+
+**Statut :** reproduit, non corrigé. Priorité basse si nginx filtre `/admin/`.
+
+---
+
+## 26. Le partage entre origines autorise l'envoi d'identifiants sans en avoir besoin
+
+**Découvert le :** 2026-10-01 (`ConfigurationProductionTest`).
+
+**Problème :** le réglage CORS autorise le navigateur à joindre cookies et
+identifiants aux requêtes venant des origines autorisées. L'application n'en
+a pas besoin (le jeton voyage dans un en-tête), et ce réglage élargit
+inutilement la surface d'attaque.
+
+**Cause :** `CORS_ALLOW_CREDENTIALS = True` (`Gestion_edt/settings.py`).
+
+**Piste de correction :** passer à `False` et vérifier que l'interface
+fonctionne toujours.
+
+**Statut :** reproduit, non corrigé. Priorité basse.
+
+---
+
+## 27. Des saisies absurdes font planter le serveur au lieu d'être refusées
+
+**Découvert le :** 2026-10-01 (`tests_solidite.py`, `SaisiesMalformeesTest`).
+
+**Problème :** au lieu d'un refus clair, le serveur plante (erreur 500)
+quand :
+- un filtre de liste reçoit autre chose qu'un nombre (`?classe_id=abc`, sur
+  la plupart des listes) ;
+- la détection des conflits reçoit un semestre non numérique ;
+- le planning de l'enseignant reçoit une semaine en l'an 9999 ou un semestre
+  non numérique (le planning étudiant plante aussi sur l'an 9999) ;
+- la publication en masse reçoit une liste mal formée (un nombre seul, un
+  texte, une liste nue, un objet) ;
+- le passage au semestre suivant reçoit un semestre non numérique.
+
+**Cause :** les paramètres sont passés tels quels à `.filter()` ou `.get()`
+(`ValueError`) ; `mon_planning` n'attrape que `ValueError`, pas
+`OverflowError` ; `publier_masse` suppose une liste d'entiers.
+
+**Piste de correction :** un utilitaire qui lit un paramètre entier et lève
+une `ValidationError` (400), utilisé dans tous les `get_queryset` ; valider
+le corps de `publier_masse` avec `serializers.ListField(child=IntegerField())`.
+
+**Statut :** reproduit (7 tests), non corrigé.
+
+---
+
+## 28. Suppressions bloquées et cas limites qui plantent
+
+**Découvert le :** 2026-10-01 (`SuppressionsEtCasLimitesTest`).
+
+**Problème :**
+- supprimer un département qui a des enseignants, ou une classe qui a des
+  étudiants, plante au lieu d'expliquer pourquoi c'est impossible ;
+- un administrateur sans profil fait planter « mon profil » et le dépôt de
+  document ;
+- télécharger un document dont le fichier a disparu du disque plante ;
+- supprimer un module laisse ses fichiers sur le disque, sans plus aucun lien.
+
+**Cause :** `ProtectedError` non convertie (le gestionnaire global
+`EDT_app/exception_handlers.py` ne traite que `ValidationError`) ;
+`request.user.profil` lu sans garde ; `open()` sans gestion de
+`FileNotFoundError` dans `telecharger` ; aucun nettoyage des fichiers à la
+suppression d'un `DocumentPedagogique`.
+
+**Piste de correction :** convertir `ProtectedError` en 409 dans le
+gestionnaire global ; protéger l'accès au profil ; renvoyer 404 si le fichier
+manque ; supprimer le fichier à la suppression du document (signal
+`post_delete`).
+
+**Statut :** reproduit (6 tests), non corrigé.
+
+---
+
+## 29. Annuler une séance par une modification partielle est refusé
+
+**Découvert le :** 2026-10-01 (`SeancesSaisiesTest`).
+
+**Problème :** changer uniquement le statut d'une séance (par exemple
+l'annuler) est refusé avec « Horaires obligatoires », alors que la séance a
+déjà ses horaires.
+
+**Cause :** `SeanceSerializer.validate` lit `data.get(...)` : sur un PATCH,
+les champs non envoyés valent `None`.
+
+**Piste de correction :** compléter `data` avec les valeurs de
+`self.instance` avant les contrôles croisés.
+
+**Statut :** reproduit, non corrigé.
+
+---
+
+## 30. Le passage au semestre suivant n'inscrit pas les étudiants et accepte une autre année
+
+**Découvert le :** 2026-10-01 (`PasserSemestreTest`).
+
+**Problème :** après « passer au semestre suivant », les étudiants sont bien
+dans la nouvelle classe, mais sans inscription active pour elle. Et on peut
+les envoyer vers un semestre d'une autre année académique, alors que la
+documentation de l'action dit le contraire.
+
+**Cause :** `ClasseViewSet.passer_semestre` modifie `etudiant.classe`
+directement au lieu d'appeler `Etudiant.reinscrire()`, ne vérifie pas
+`semestre_cible.annee == classe_source.annee`, et n'est pas dans une
+transaction : un échec en cours de boucle laisse une partie des étudiants
+déplacés.
+
+**Piste de correction :** vérifier l'année, passer par `reinscrire()` (ou
+écrire l'inscription), et envelopper la boucle dans `transaction.atomic()`.
+
+**Statut :** reproduit (2 tests), non corrigé.
+
+---
+
+## 31. Doublons acceptés
+
+**Découvert le :** 2026-10-01 (`DoublonsTest`).
+
+**Problème :** on peut créer deux années académiques du même nom et deux
+affectations génériques identiques (même module, même enseignant). Les
+classes en double sont refusées par l'application, mais pas par la base :
+deux enregistrements simultanés peuvent passer.
+
+**Cause :** pas d'unicité sur `AnneeAcademique.libelle` ; la contrainte
+d'affectation inclut `type_seance`, et MySQL considère deux valeurs vides
+comme différentes ; MySQL ignore les contraintes d'unicité conditionnelles
+de `Classe` (avertissement `models.W036` au démarrage).
+
+**Piste de correction :** unicité du libellé d'année ; contrôle explicite des
+affectations génériques dans le sérialiseur ; pour les classes, une colonne
+calculée unique ou un verrou à la création.
+
+**Statut :** reproduit (3 tests), non corrigé.
+
+---
+
+## 32. Une séance reportée bloque son ancien créneau et pas le nouveau
+
+**Découvert le :** 2026-10-01 (`CreneauxSeancesReporteesTest`).
+
+**Problème :** une fois une séance reportée, on ne peut plus placer un autre
+cours de l'enseignant sur l'ancien créneau (pourtant libéré), mais on peut en
+placer un sur le nouveau (pourtant occupé) : l'enseignant se retrouve réservé
+deux fois. La détection des conflits ne voit pas non plus les séances
+reportées. Même famille que les points 5 et 13.
+
+**Cause :** `valider_conflit_enseignant` et `valider_conflit_classe`
+(`EDT_app/validation_seance.py`), ainsi que `SeanceViewSet.conflits`, ne
+lisent que `date_seance`/`heure_debut`/`heure_fin`, jamais les champs de
+report.
+
+**Piste de correction :** une fonction unique « créneau réel d'une séance »
+(celui du report si `Reportée`), utilisée par toutes les validations et par
+`conflits`.
+
+**Statut :** reproduit (3 tests), non corrigé.
+
+---
+
+## 33. Chaque ligne affichée déclenche des dizaines de requêtes à la base
+
+**Découvert le :** 2026-10-01 (`NombreDeRequetesTest`).
+
+**Problème :** le temps de chargement grandit avec le nombre de séances :
+environ 23 requêtes par séance dans la liste des séances, environ 30 dans le
+planning étudiant ou enseignant, 16 par affectation et 6 par module. Pour
+15 séances, le planning étudiant fait 451 requêtes. C'est la cause probable
+des 21 s mesurées sur le planning du chef le 2026-09-23.
+
+**Cause :** sérialiseurs imbriqués (module → classe → filière →
+département → chef → profil ; heures recalculées à chaque ligne ;
+`is_mutualise` interrogé séance par séance) sans `select_related` ni
+`prefetch_related` suffisants. `conflits` a déjà été corrigé (contrôle dans
+le même fichier).
+
+**Piste de correction :** sérialiseurs allégés pour les listes, préchargement
+des relations, calcul des heures en une requête groupée.
+
+**Statut :** mesuré (5 tests ; seuil : au plus 3 requêtes de plus pour
+10 lignes de plus), non corrigé.
+
+---
+
+## 34. La détection des conflits plante pour tout chef de département
+
+**Découvert le :** 2026-10-01 (`ActionsSeancesTest.test_un_chef_detecte_les_conflits_de_son_semestre`).
+
+**Problème :** quand un chef lance la détection des conflits sur son propre
+semestre, le serveur plante (erreur 500). Seuls l'admin et la scolarité
+peuvent s'en servir. Les tests existants passaient tous par la scolarité, ce
+qui masquait le défaut.
+
+**Cause :** `SeanceViewSet.conflits` filtre sur
+`classes__filiere__departement__in`, mais la relation inverse de
+`Classe.semestre` s'appelle `classe` (pas de `related_name`), d'où une
+`FieldError`.
+
+**Piste de correction :** remplacer `classes__` par `classe__`.
+
+**Statut :** reproduit, non corrigé. Correctif d'une ligne, priorité haute
+(fonction inutilisable pour les chefs).
+
+---
+
 <!-- Ajouter les prochains points ci-dessous, avec le même format
      (titre, date de découverte, problème, cause, piste de correction). -->
