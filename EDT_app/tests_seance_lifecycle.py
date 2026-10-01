@@ -273,11 +273,11 @@ class SeanceReportTest(TestCase):
             d += timedelta(days=1)
         return d
 
-    def test_referent_reporter_refuse(self):
+    def test_referent_reporte_dans_sa_classe(self):
         """
-        /reporter/ exige IsChefDepartement seul : contrairement à
-        create/update/destroy, le référent — pourtant gestionnaire légitime
-        de cette classe — en est exclu.
+        Le référent, gestionnaire légitime de sa classe, reporte ses séances
+        comme il les publie (règle validée le 2026-10-01,
+        CORRECTIONS_A_FAIRE.md point 23). Auparavant figé à 403.
         """
         referent_ens = make_enseignant("referent_report", self.dept)
         make_referent(referent_ens, [self.classe])
@@ -291,7 +291,9 @@ class SeanceReportTest(TestCase):
             },
             format="json",
         )
-        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.content[:300])
+        self.seance.refresh_from_db()
+        self.assertEqual(self.seance.statut, "Reportée")
 
     def test_report_echoue_si_volume_affectation_reduit_entre_temps(self):
         """
