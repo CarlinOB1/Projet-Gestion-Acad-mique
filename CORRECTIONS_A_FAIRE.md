@@ -1184,5 +1184,137 @@ suite de tests ; côté interface, `npm audit fix` puis `npm run build` et
 
 ---
 
+## 40. Mauvais mot de passe : aucun message, la page de connexion se recharge
+
+**Découvert le :** 2026-10-01 (tests navigateur, `e2e/01-connexion.spec.js`).
+
+**Problème :** quand on se trompe de mot de passe, rien ne s'affiche : la
+page de connexion se recharge à vide. La personne ne sait pas si elle a mal
+tapé ou si l'application est en panne.
+
+**Cause :** le refus du serveur (401) passe par l'intercepteur de
+`edt-frontend/src/api/client.js`, prévu pour les sessions expirées : il
+tente un renouvellement de session (il n'y en a pas), vide la session puis
+renvoie vers `/login` par un rechargement complet, ce qui efface le message
+d'erreur. Constaté dans le navigateur : 401 sur `/api/token/`, puis
+rechargement de `/login`.
+
+**Piste de correction :** ne pas appliquer le renouvellement aux appels de
+connexion (`/token/` et `/token/refresh/`). Une autre session de travail a
+déjà des modifications en cours dans `client.js` et `useLogin.js` sur ce
+sujet (copie de travail `.claude/worktrees/affectionate-jang-4dc4cc`, non
+commitée) : à reprendre de là.
+
+**Statut :** reproduit (1 scénario), non corrigé.
+
+---
+
+## 41. Compte suspendu en cours de session : message vague
+
+**Découvert le :** 2026-10-01 (tests navigateur, `e2e/04-suspension.spec.js`).
+
+**Problème :** une personne suspendue pendant qu'elle est connectée voit,
+à l'action suivante, « Une erreur est survenue. Veuillez rafraîchir la page
+ou réessayer plus tard. » Rafraîchir n'y change rien, et rien ne dit que le
+compte est suspendu. Le refus lui-même fonctionne (le serveur répond 403).
+
+**Cause :** le serveur envoie pourtant un message clair (« Votre profil est
+suspendu. Contactez le responsable pédagogique. », `ProfilActifPermission`),
+mais les pages n'affichent qu'un texte d'erreur générique.
+
+**Piste de correction :** dans l'intercepteur de `client.js`, repérer ce
+refus (403 avec ce message) et l'afficher une fois pour toute
+l'application, par exemple en déconnectant avec ce message sur la page de
+connexion.
+
+**Statut :** reproduit (1 scénario), non corrigé.
+
+---
+
+## 42. Un serveur qui ne répond pas fait attendre sans fin
+
+**Découvert le :** 2026-10-01 (tests navigateur, `e2e/06-pannes.spec.js`).
+
+**Problème :** si le serveur reçoit la demande mais ne répond jamais
+(surcharge, coupure réseau à mi-chemin), le planning reste en chargement
+indéfiniment, sans message. Un serveur éteint ou une erreur 500 donnent bien,
+eux, un message lisible.
+
+**Cause :** aucun délai maximal n'est réglé dans `axios.create()`
+(`client.js`).
+
+**Piste de correction :** `timeout: 30000` (30 s) dans `axios.create()`. Les
+dépôts de documents (jusqu'à 20 Mo) pourront demander un délai plus long,
+réglé sur leur appel.
+
+**Statut :** reproduit (1 scénario), non corrigé.
+
+---
+
+## 43. Double clic sur « Enregistrer la séance » : deux séances créées
+
+**Découvert le :** 2026-10-01 (tests navigateur, `e2e/08-double-clic.spec.js`).
+
+**Problème :** un double clic sur « Enregistrer la séance » crée deux
+séances identiques (même classe, même créneau, même enseignant).
+
+**Cause :** deux causes cumulées :
+- l'interface : le bouton n'est désactivé qu'après le premier rendu qui
+  suit l'envoi, trop tard pour un double clic (`SeanceDrawer.jsx`,
+  `SeanceForm.jsx`) ;
+- le serveur : une séance créée sans statut est un brouillon, et les
+  contrôles de conflit ignorent les brouillons
+  (`q_occupe_creneau`, statuts `Confirmée` et `Reportée` seulement). Deux
+  brouillons identiques sont donc acceptés.
+
+**Piste de correction :** dans `SeanceDrawer.handleSubmit`, ignorer un
+second envoi tant que le premier n'est pas terminé (drapeau dans un
+`useRef`). Côté serveur, à décider : refuser deux séances identiques, même
+en brouillon (même classe, même date, même heure, même module).
+
+**Statut :** reproduit (1 scénario), non corrigé.
+
+---
+
+## 44. Erreur 500 à la suspension : la page HTML du serveur s'affiche dans le panneau
+
+**Découvert le :** 2026-10-01 (tests navigateur, `e2e/06-pannes.spec.js`).
+
+**Problème :** si le serveur plante pendant une suspension ou une
+réactivation, le panneau affiche le code de la page d'erreur
+(« <!DOCTYPE html><html>… ») au lieu d'un message.
+
+**Cause :** `parseApiError` de `StatutDrawer.jsx` renvoie tel quel tout
+corps de réponse en texte (`typeof data === 'string'`).
+
+**Piste de correction :** n'afficher que `detail`, `message` ou les erreurs
+de champ, et sinon un message fixe (« Le serveur a rencontré une erreur.
+Réessayez plus tard. »). Les autres panneaux (`SeanceDrawer`,
+`ReportDrawer`) ne sont pas touchés : ils ignorent les réponses en texte.
+
+**Statut :** reproduit (1 scénario), non corrigé.
+
+---
+
+## 45. L'export CSV ne neutralise pas les formules (code inutilisé)
+
+**Découvert le :** 2026-10-01 (préparation des tests navigateur).
+
+**Problème :** `exportToCsv` (`edt-frontend/src/lib/exportCsv.js`) recopie
+les valeurs telles quelles. Une cellule qui commence par `=`, `+`, `-` ou
+`@` (un nom de module `=HYPERLINK(...)`) serait interprétée comme une
+formule à l'ouverture dans Excel.
+
+**Cause :** aucune page n'appelle aujourd'hui cette fonction : le risque
+n'existe pas tant qu'elle reste inutilisée.
+
+**Piste de correction :** la supprimer, ou, si un export CSV revient,
+préfixer d'une apostrophe les valeurs qui commencent par `=`, `+`, `-`, `@`,
+une tabulation ou un retour chariot.
+
+**Statut :** relevé, sans effet actuel. Priorité basse.
+
+---
+
 <!-- Ajouter les prochains points ci-dessous, avec le même format
      (titre, date de découverte, problème, cause, piste de correction). -->
