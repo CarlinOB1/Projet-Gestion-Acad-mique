@@ -737,8 +737,9 @@ le corps de `publier_masse` avec `serializers.ListField(child=IntegerField())`.
 **Découvert le :** 2026-10-01 (`SuppressionsEtCasLimitesTest`).
 
 **Problème :**
-- supprimer un département qui a des enseignants, ou une classe qui a des
-  étudiants, plante au lieu d'expliquer pourquoi c'est impossible ;
+- supprimer un département qui a des enseignants, une classe qui a des
+  étudiants, ou une année académique qui a des étudiants, plante au lieu
+  d'expliquer pourquoi c'est impossible ;
 - un administrateur sans profil fait planter « mon profil » et le dépôt de
   document ;
 - télécharger un document dont le fichier a disparu du disque plante ;
@@ -755,7 +756,8 @@ gestionnaire global ; protéger l'accès au profil ; renvoyer 404 si le fichier
 manque ; supprimer le fichier à la suppression du document (signal
 `post_delete`).
 
-**Statut :** reproduit (6 tests), non corrigé.
+**Statut :** reproduit (7 tests, dont l'année ajoutée le 2026-10-01 lors de
+l'étape C2), non corrigé.
 
 ---
 
@@ -906,6 +908,151 @@ qui masquait le défaut.
 **Piste de correction :** remplacer `classes__` par `classe__`.
 
 **Statut :** corrigé le 2026-10-01 (`classes__` → `classe__`).
+
+---
+
+## 35. Fichiers téléversés : contenu Office non vérifié et nom trop long qui plante
+
+**Découvert le :** 2026-10-01 (`tests_securite.py`, `DocumentsNomsEtContenusTest`, étape C1).
+
+**Problème :**
+- un fichier `.docx`, `.xlsx` ou `.pptx` n'est vérifié que sur ses quatre
+  premiers octets (ceux de toute archive ZIP) : une archive contenant un
+  programme, renommée en `cours.docx`, est acceptée et distribuée aux
+  étudiants ; un document à macros (`.docm`) simplement renommé en `.docx`
+  passe aussi ;
+- un nom de fichier de 300 caractères fait planter le dépôt (erreur 500) au
+  lieu d'être raccourci ou refusé.
+
+**Cause :** `EDT_app/fichiers.py` compare seulement la signature `PK`
+pour les formats Office récents ; le chemin enregistré
+(`documents/AAAA/MM/<32 caractères>/<nom>`) dépasse les 100 caractères du
+champ `DocumentPedagogique.fichier` et MySQL refuse l'écriture (`1406 Data
+too long`).
+
+**Piste de correction :** ouvrir l'archive (`zipfile`) et exiger
+`[Content_Types].xml` et le dossier attendu (`word/`, `xl/`, `ppt/`), refuser
+`vbaProject.bin` ; raccourcir le nom d'origine dans `chemin_televerse` (en
+gardant l'extension) ou porter `max_length` à 255. Mettre alors à jour
+`test_docx_valide_accepte` (`tests_securite.py`), qui dépose une simple
+signature ZIP et non un vrai document.
+
+**Statut :** reproduit (3 tests), non corrigé. Contrôles qui passent : noms
+piégés (guillemets, retour à la ligne, `../`) neutralisés en développement et
+en production, double extension `.pdf.exe` et formats à macros
+(`.docm`/`.xlsm`/`.pptm`/`.dotm`) refusés, texte contenant du HTML servi
+comme texte brut.
+
+---
+
+## 36. Supprimer un enseignant efface tout son historique
+
+**Découvert le :** 2026-10-01 (`tests_solidite.py`, `SuppressionEnseignantTest`, étape C2).
+
+**Problème :** supprimer un enseignant qui a déjà des séances réussit et
+efface en cascade toutes ses séances (y compris celles déjà faites, donc la
+progression des classes), ses affectations et ses documents, dont les
+fichiers restent sur le disque. Son compte et son profil, eux, restent :
+un compte sans rôle.
+
+**Cause :** `Seance.enseignant`, `AffectationModule.enseignant` et
+`DocumentPedagogique.enseignant` sont en `on_delete=CASCADE`
+(`EDT_app/models.py`).
+
+**Piste de correction (règle proposée, à valider) :** refuser la suppression
+tant que l'enseignant a des séances (`PROTECT` ou contrôle dans
+`EnseignantViewSet.perform_destroy`, réponse 409 avec un message) et
+proposer la suspension à la place.
+
+**Statut :** reproduit, non corrigé. Contrôle : un enseignant sans activité se
+supprime normalement.
+
+---
+
+## 37. Des textes d'un million de caractères sont acceptés
+
+**Découvert le :** 2026-10-01 (`tests_solidite.py`, `TextesTresLongsTest`, étape C2).
+
+**Problème :** la description d'un module et le motif de suspension (par la
+fiche profil) acceptent un million de caractères. La description est
+ensuite renvoyée dans chaque module, et donc dans chaque séance affichée :
+un seul module ainsi rempli alourdit tous les plannings qui le contiennent.
+
+**Cause :** `Module.description` et `Profil.motif_suspension` sont des
+`TextField` sans limite (MySQL les stocke en `LONGTEXT`) ; seul
+`changer_statut` limite le motif à 255 caractères
+(`ProfilSuspensionSerializer`).
+
+**Piste de correction :** `max_length` côté sérialiseur (par exemple 2 000
+caractères pour la description, 255 pour le motif, comme `changer_statut`).
+
+**Statut :** reproduit (2 tests), non corrigé.
+
+---
+
+## 38. Deux réinscriptions simultanées du même étudiant se bloquent ou l'inscrivent deux fois
+
+**Découvert le :** 2026-10-01 (`tests_solidite.py`,
+`RequetesSimultaneesTest.test_reinscriptions_simultanees_une_seule_inscription_active`, étape C2).
+
+**Problème :** deux réinscriptions du même étudiant au même instant (double
+clic, deux onglets, import lancé deux fois) provoquent un interblocage de la
+base (erreur MySQL 1213, donc une erreur serveur), ou laissent l'étudiant
+avec deux inscriptions actives. Mesuré sur 20 essais : 16 erreurs et 3
+doubles inscriptions au premier passage, 20 erreurs au second.
+
+**Cause :** `Etudiant.reinscrire()` lit puis écrit les inscriptions sans
+verrouiller l'étudiant ; rien n'interdit en base deux inscriptions actives
+pour un même étudiant (l'unicité porte sur le couple étudiant-classe).
+
+**Piste de correction :** verrouiller la ligne de l'étudiant
+(`select_for_update`) au début de la transaction de `reinscrire()`. Priorité
+basse tant que `reinscrire()` n'est appelée par aucune page (elle le
+deviendra avec la correction du point 30).
+
+**Statut :** reproduit, non corrigé. Contrôle : deux publications en masse
+croisées des mêmes séances ne se bloquent pas (verrous ordonnés de
+`_locker_pour_validation`).
+
+---
+
+## 39. Bibliothèques avec des failles connues
+
+**Découvert le :** 2026-10-01 (étape C5 : base publique OSV pour Python,
+`npm audit` pour l'interface).
+
+**Problème :** plusieurs bibliothèques installées ont des failles publiées et
+corrigées dans des versions plus récentes.
+
+- **Serveur (Python) :**
+  - Django 6.0.2 → **6.0.8** : 22 failles, dont 4 « hautes ». Deux touchent
+    directement l'application : la limite de taille des requêtes peut être
+    contournée, et une requête peut consommer trop de ressources. Les autres
+    visent des parties non utilisées (cache, ASGI, GeoDjango, admin).
+  - Django REST framework 3.17.1 → **3.17.2** : contournement de la limite de
+    taille des requêtes JSON.
+  - PyJWT 2.12.1 → **2.15.0** : surtout des failles liées aux clés publiques
+    (non utilisées ici, l'application signe avec une clé secrète), à mettre à
+    jour par prudence. Une faille n'a pas encore de correctif.
+  - sqlparse 0.5.5 → **0.6.0** : lenteurs volontaires possibles, exposition
+    faible (sert à l'affichage du SQL en développement).
+  - anyio : présent dans l'environnement mais pas utilisé par l'application
+    (vient d'un outil de développement), hors `requirements.txt`.
+- **Interface (npm)** : 19 paquets signalés (13 « hauts »), tous corrigeables
+  sans changement majeur (`npm audit fix`). Ceux qui partent chez
+  l'utilisateur : `axios`, `react-router` / `react-router-dom` (redirections
+  vers un site extérieur), `dompurify`. Les autres ne servent qu'à la
+  construction (`postcss`, `browserslist`, `js-yaml`, `brace-expansion`,
+  outils de développement).
+
+**Piste de correction :** fixer `Django==6.0.8` et
+`djangorestframework==3.17.2` dans `requirements.txt`, ajouter
+`PyJWT>=2.15.0` et `sqlparse>=0.6.0`, réinstaller puis relancer toute la
+suite de tests ; côté interface, `npm audit fix` puis `npm run build` et
+`npm run lint`. Refaire l'audit à chaque mise en ligne.
+
+**Statut :** constaté, non corrigé (mises à jour à télécharger : accord
+requis).
 
 ---
 

@@ -284,6 +284,92 @@ class SuppressionsEtCasLimitesTest(UniversSimple, TestCase):
             self.assertEqual(self.client_admin.delete(f"/api/modules/{self.module.pk}/").status_code, 204)
             self.assertFalse(os.path.exists(chemin), "fichier orphelin resté sur le disque")
 
+    @faille_connue(28)
+    def test_supprimer_une_annee_qui_a_des_etudiants(self):
+        resp = self.client_admin.delete(f"/api/annees/{self.annee.pk}/")
+        self.assertPasDePlantage(resp)
+        self.assertTrue(Etudiant.objects.filter(pk=self.etu.pk).exists())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2 bis. SUPPRIMER UN ENSEIGNANT — CORRECTIONS_A_FAIRE.md point 36
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SuppressionEnseignantTest(UniversSimple, TestCase):
+    """
+    Supprimer un enseignant efface en cascade ses séances (y compris celles
+    déjà faites), ses affectations et ses documents. Règle proposée (à
+    valider) : refuser tant qu'il a des séances ; le suspendre à la place.
+    """
+
+    def setUp(self):
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media, ignore_errors=True)
+        override = override_settings(MEDIA_ROOT=media)
+        override.enable()
+        self.addCleanup(override.disable)
+
+        self.construire_univers()
+        self.seance_faite = self.seance(self.sem1.date_debut, *BLOCS[0])
+        AffectationModuleFactory(module=self.module, enseignant=self.ens)
+        self.doc = DocumentPedagogique.objects.create(
+            titre="Cours", module=self.module, enseignant=self.ens,
+            fichier=SimpleUploadedFile("cours.pdf", PDF_MINIMAL, content_type="application/pdf"),
+        )
+
+    @faille_connue(36)
+    def test_supprimer_un_enseignant_qui_a_des_seances_est_refuse(self):
+        resp = client_de(self.admin).delete(f"/api/enseignants/{self.ens.pk}/")
+        self.assertIn(resp.status_code, (400, 409), resp.content[:300])
+        self.assertTrue(Seance.objects.filter(pk=self.seance_faite.pk).exists(), "séance effacée")
+
+    def test_controle_supprimer_un_enseignant_sans_activite(self):
+        sans_activite = make_enseignant("ens_sans_activite", self.dept)
+        resp = client_de(self.admin).delete(f"/api/enseignants/{sans_activite.pk}/")
+        self.assertEqual(resp.status_code, 204)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2 ter. TEXTES TRÈS LONGS — CORRECTIONS_A_FAIRE.md point 37
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TextesTresLongsTest(UniversSimple, TestCase):
+    """
+    Un texte d'un million de caractères (sous la limite de 2,5 Mo par
+    requête) doit être refusé proprement, pas planter ni être tronqué en
+    silence par la base.
+    """
+
+    UN_MILLION = "x" * 1_000_000
+
+    def setUp(self):
+        self.construire_univers()
+        self.client_admin = client_de(self.admin)
+
+    @faille_connue(37)
+    def test_description_de_module_d_un_million_de_caracteres(self):
+        resp = self.client_admin.patch(
+            f"/api/modules/{self.module.pk}/", {"description": self.UN_MILLION}, format="json",
+        )
+        self.assertEqual(resp.status_code, 400, resp.content[:200])
+
+    def test_controle_motif_de_suspension_limite_par_changer_statut(self):
+        resp = self.client_admin.patch(
+            f"/api/profils/{self.ens.pk}/changer_statut/",
+            {"statut": "suspendu", "motif_suspension": self.UN_MILLION}, format="json",
+        )
+        self.assertEqual(resp.status_code, 400, resp.content[:200])
+
+    @faille_connue(37)
+    def test_motif_de_suspension_d_un_million_de_caracteres_par_la_fiche(self):
+        # Le même motif passe par une simple modification de la fiche profil
+        # (voir aussi le point 20 : statut et motif y sont modifiables).
+        resp = self.client_admin.patch(
+            f"/api/profils/{self.ens.pk}/",
+            {"statut": "suspendu", "motif_suspension": self.UN_MILLION}, format="json",
+        )
+        self.assertEqual(resp.status_code, 400, resp.content[:200])
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. SÉANCES : SAISIES PARTIELLES ET VALEURS LIMITES — CORRECTIONS_A_FAIRE.md point 29
@@ -568,7 +654,25 @@ class RequetesSimultaneesTest(UniversSimple, TransactionTestCase):
 
     REPETITIONS = 20
 
+    @staticmethod
+    def _vider_tables_application():
+        # Django vide la base entre deux TransactionTestCase, mais sous Windows
+        # MySQL renvoie les noms de tables en minuscules (« edt_app_seance »)
+        # et Django ne reconnaît plus les siennes (« EDT_app_seance ») : les
+        # données de l'application restaient d'un test (et d'un lancement
+        # --keepdb) à l'autre. On les vide donc nous-mêmes.
+        from django.apps import apps
+        with connection.cursor() as curseur:
+            curseur.execute("SET FOREIGN_KEY_CHECKS = 0")
+            try:
+                for modele in apps.get_app_config("EDT_app").get_models(include_auto_created=True):
+                    curseur.execute(f"DELETE FROM {connection.ops.quote_name(modele._meta.db_table)}")
+            finally:
+                curseur.execute("SET FOREIGN_KEY_CHECKS = 1")
+
     def setUp(self):
+        self._vider_tables_application()
+        self.addCleanup(self._vider_tables_application)
         self.construire_univers()
         self.autre_classe = ClasseFactory(
             filiere=FiliereFactory(libelle="Filière Solidité 3", departement=self.dept),
@@ -618,3 +722,62 @@ class RequetesSimultaneesTest(UniversSimple, TransactionTestCase):
                 doublons.append(str(jour))
         self.assertEqual(plantages, [], "erreurs serveur sous requêtes simultanées")
         self.assertEqual(doublons, [], "enseignant réservé deux fois sur le même créneau")
+
+    def test_controle_publications_croisees_sans_blocage(self):
+        # Deux gestionnaires publient en masse les mêmes séances, listées dans
+        # l'ordre inverse : risque d'interblocage MySQL (erreur 1213).
+        ens2 = make_enseignant("ens_solidite_2", self.dept)
+        # Un module par enseignant : 20 répétitions de 2 h tiennent dans le
+        # volume de chacun (72 h).
+        module2 = ModuleFactory(
+            libelle="Module Solidité 2", matiere=self.matiere, semestre=self.sem1, credits=6,
+        )
+        plantages = []
+        for jour, debut, fin in creneaux(self.sem1.date_debut, self.REPETITIONS):
+            s1 = self.seance(jour, debut, fin, statut="brouillon")
+            s2 = self.seance(
+                jour, debut, fin, statut="brouillon", module=module2, enseignant=ens2, classe=self.autre_classe,
+            )
+
+            def publier(ids):
+                def appel():
+                    return client_de(self.admin).post(
+                        "/api/seances/publier_masse/", {"seance_ids": ids}, format="json",
+                    ).status_code
+                return appel
+
+            codes = self._en_parallele(publier([s1.pk, s2.pk]), publier([s2.pk, s1.pk]))
+            if any(isinstance(c, Exception) or c >= 500 for c in codes):
+                plantages.append((str(jour), [repr(c) for c in codes]))
+        self.assertEqual(plantages, [], "interblocage ou erreur serveur")
+
+    @faille_connue(38)
+    def test_reinscriptions_simultanees_une_seule_inscription_active(self):
+        # Deux réinscriptions du même étudiant vers deux classes différentes,
+        # au même instant (double clic, deux onglets, import en parallèle).
+        parcours = self.classe.parcours
+        classe2 = ClasseFactory(
+            parcours=parcours, filiere=FiliereFactory(libelle="Filière Réinscription 2", departement=self.dept),
+            semestre=self.sem1, annee=self.annee,
+        )
+        classe3 = ClasseFactory(
+            parcours=parcours, filiere=FiliereFactory(libelle="Filière Réinscription 3", departement=self.dept),
+            semestre=self.sem1, annee=self.annee,
+        )
+        doubles, plantages = [], []
+        for i in range(self.REPETITIONS):
+            etu = make_etudiant(f"etu_reinscription_{i}", self.classe)
+
+            def reinscrire(classe, pk=etu.pk):
+                return lambda: Etudiant.objects.get(pk=pk).reinscrire(classe)
+
+            resultats = self._en_parallele(reinscrire(classe2), reinscrire(classe3))
+            plantages += [repr(r) for r in resultats if isinstance(r, Exception)]
+            actives = Inscription.objects.filter(etudiant_id=etu.pk, statut="active").count()
+            if actives > 1:
+                doubles.append(f"étudiant {i} : {actives} inscriptions actives")
+        self.assertEqual(
+            (plantages, doubles), ([], []),
+            f"{len(plantages)} erreurs (dont interblocages MySQL 1213) et {len(doubles)} étudiants "
+            f"inscrits deux fois, sur {self.REPETITIONS} répétitions",
+        )
