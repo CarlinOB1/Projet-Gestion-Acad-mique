@@ -324,7 +324,6 @@ class SeancesSaisiesTest(UniversSimple, TestCase):
                 resp = self.client_chef.post("/api/seances/", self._payload(**surcharge), format="json")
                 self.assertEqual(resp.status_code, 400, resp.content[:300])
 
-    @faille_connue(29)
     def test_annuler_une_seance_par_modification_partielle(self):
         seance = self.seance(self.sem1.date_debut, *BLOCS[0])
         resp = self.client_chef.patch(f"/api/seances/{seance.pk}/", {"statut": "Annulée"}, format="json")

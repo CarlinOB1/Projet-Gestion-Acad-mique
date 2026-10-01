@@ -494,7 +494,11 @@ statut vérifient bien la suspension : contrôles dans le même fichier.)
 actions (ou l'intégrer à `IsChefDepartement`) ; sous-classer
 `TokenRefreshSerializer` pour refuser un profil suspendu.
 
-**Statut :** reproduit (5 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (branche `fix/securite-solidite`) :
+`ProfilActifPermission` ajoutée aux quatre actions (`reporter` passe par
+les permissions communes des séances) ; `/api/token/refresh/` utilise
+`CustomTokenRefreshView` (`EDT_app/authentication.py`), qui refuse un
+profil suspendu ou absent. Les 5 tests passent.
 
 ---
 
@@ -619,7 +623,9 @@ actions ne vérifie `_get_classes_autorisees()`, contrairement à
 **Piste de correction :** appliquer dans les quatre actions le même contrôle
 de classe que `perform_update` et `perform_destroy`.
 
-**Statut :** reproduit (5 tests), non corrigé.
+**Statut :** reproduit (5 tests), corrigé pour `reporter` seulement le
+2026-10-01 (contrôle de classe ajouté avec le point 23) ; publier,
+dépublier et publier en masse restent à faire (lot 2).
 
 ---
 
@@ -638,7 +644,8 @@ publier et dépublier passent par `IsChefOrReferentOrReadOnly`.
 **Piste de correction :** aligner `reporter` sur publier et dépublier, avec
 le contrôle de classe du point 22.
 
-**Statut :** reproduit, non corrigé (manque fonctionnel, pas une faille).
+**Statut :** corrigé le 2026-10-01 : `reporter` suit les permissions de
+publier et dépublier, avec contrôle de la classe de la séance.
 
 ---
 
@@ -655,8 +662,8 @@ enseignant, ni membre de la scolarité voit tous les documents pédagogiques.
 **Piste de correction :** renvoyer `qs.none()` en dernier recours, sauf pour
 la scolarité.
 
-**Statut :** reproduit, non corrigé. Priorité basse (ce type de compte n'est
-pas créé par l'interface).
+**Statut :** corrigé le 2026-10-01 : un profil sans rôle ne voit aucun
+document ; la scolarité voit tout.
 
 ---
 
@@ -693,7 +700,8 @@ inutilement la surface d'attaque.
 **Piste de correction :** passer à `False` et vérifier que l'interface
 fonctionne toujours.
 
-**Statut :** reproduit, non corrigé. Priorité basse.
+**Statut :** corrigé le 2026-10-01 (`CORS_ALLOW_CREDENTIALS = False` ;
+l'interface n'utilise pas `withCredentials`).
 
 ---
 
@@ -765,7 +773,8 @@ les champs non envoyés valent `None`.
 **Piste de correction :** compléter `data` avec les valeurs de
 `self.instance` avant les contrôles croisés.
 
-**Statut :** reproduit, non corrigé.
+**Statut :** corrigé le 2026-10-01 : `SeanceSerializer.validate`
+contrôle les valeurs envoyées complétées par celles de la séance.
 
 ---
 
@@ -896,8 +905,7 @@ qui masquait le défaut.
 
 **Piste de correction :** remplacer `classes__` par `classe__`.
 
-**Statut :** reproduit, non corrigé. Correctif d'une ligne, priorité haute
-(fonction inutilisable pour les chefs).
+**Statut :** corrigé le 2026-10-01 (`classes__` → `classe__`).
 
 ---
 

@@ -207,9 +207,8 @@ class AccesAnonymeTest(TestCase):
 class CompteSuspenduTest(UniversDeuxDepartements, TestCase):
     """
     Le chef A est suspendu alors que sa session est encore ouverte. Il doit
-    être refusé partout. Aujourd'hui, quatre actions réservées aux chefs
-    (archiver, passer au semestre suivant, reporter, détecter les conflits)
-    ne vérifient pas la suspension, et le renouvellement de session non plus.
+    être refusé partout, renouvellement de session compris
+    (CORRECTIONS_A_FAIRE.md point 17, corrigé le 2026-10-01).
     """
 
     def setUp(self):
@@ -222,11 +221,9 @@ class CompteSuspenduTest(UniversDeuxDepartements, TestCase):
     def test_controle_liste_des_seances_refusee(self):
         self.assertEqual(self.client_chef.get("/api/seances/").status_code, 403)
 
-    @faille_connue(17)
     def test_archiver_une_annee_refuse(self):
         self.assertRefuse(self.client_chef.post(f"/api/annees/{self.annee.pk}/archiver/"))
 
-    @faille_connue(17)
     def test_passer_au_semestre_suivant_refuse(self):
         resp = self.client_chef.post(
             f"/api/classes/{self.classe_a.pk}/passer_semestre/",
@@ -242,7 +239,6 @@ class CompteSuspenduTest(UniversDeuxDepartements, TestCase):
         self.assertRefuse(resp)
         self.assertEqual(Profil.objects.get(pk=user_de(self.chef_a).pk).statut, "suspendu")
 
-    @faille_connue(17)
     def test_reporter_refuse(self):
         resp = self.client_chef.patch(
             f"/api/seances/{self.seance_a.pk}/reporter/",
@@ -263,11 +259,9 @@ class CompteSuspenduTest(UniversDeuxDepartements, TestCase):
         )
         self.assertRefuse(resp)
 
-    @faille_connue(17)
     def test_detecter_les_conflits_refuse(self):
         self.assertRefuse(self.client_chef.get(f"/api/seances/conflits/?semestre_id={self.sem1.pk}"))
 
-    @faille_connue(17)
     def test_renouveler_sa_session_refuse(self):
         jeton = RefreshToken.for_user(user_de(self.chef_a))
         resp = APIClient().post("/api/token/refresh/", {"refresh": str(jeton)}, format="json")
@@ -573,7 +567,6 @@ class ActionsSeancesTest(UniversDeuxDepartements, TestCase):
         self.assertRefuse(self.client_chef_b.post(f"/api/seances/{self.seance_a.pk}/depublier/"))
         self.assertEqual(Seance.objects.get(pk=self.seance_a.pk).statut, "Confirmée")
 
-    @faille_connue(22)
     def test_chef_ne_reporte_pas_dans_un_autre_departement(self):
         self.assertRefuse(self.client_chef_b.patch(
             f"/api/seances/{self.seance_a.pk}/reporter/", self.REPORT, format="json"))
@@ -596,7 +589,6 @@ class ActionsSeancesTest(UniversDeuxDepartements, TestCase):
         resp = self.client_ref.post(f"/api/seances/{self.seance_a.pk}/depublier/")
         self.assertEqual(resp.status_code, 200)
 
-    @faille_connue(23)
     def test_referent_reporte_dans_sa_classe(self):
         resp = self.client_ref.patch(f"/api/seances/{self.seance_a.pk}/reporter/", self.REPORT, format="json")
         self.assertEqual(resp.status_code, 200)
@@ -613,7 +605,6 @@ class ActionsSeancesTest(UniversDeuxDepartements, TestCase):
 
     # ── Détection des conflits ──────────────────────────────────────────────
 
-    @faille_connue(34)
     def test_un_chef_detecte_les_conflits_de_son_semestre(self):
         # Les tests existants passent par la scolarité, qui saute le contrôle
         # de département : pour un chef, la requête plante (erreur 500).
@@ -646,7 +637,6 @@ class DocumentsSansRoleTest(UniversDeuxDepartements, TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["count"], 0)
 
-    @faille_connue(24)
     def test_profil_ni_etudiant_ni_enseignant_ne_voit_rien(self):
         user = make_user("profil_sans_role")
         ProfilFactory(user=user)

@@ -235,7 +235,6 @@ class ConfigurationProductionTest(SimpleTestCase):
     def test_controle_api_navigable_desactivee(self):
         self.assertFalse(self.prod["api_navigable"])
 
-    @faille_connue(26)
     def test_cors_n_autorise_pas_l_envoi_d_identifiants(self):
         # Le jeton voyage dans l'en-tête Authorization : aucun cookie n'a besoin
         # de traverser les origines.

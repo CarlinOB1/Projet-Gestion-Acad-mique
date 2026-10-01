@@ -250,8 +250,11 @@ CSRF_TRUSTED_ORIGINS = env.list(
     default=['http://localhost:3000', 'http://127.0.0.1:3000'],
 )
 
-# Rappel : Ceci doit toujours être à True
-CORS_ALLOW_CREDENTIALS = True
+# Le jeton voyage dans l'en-tête Authorization, jamais dans un cookie :
+# l'interface n'envoie aucun identifiant de navigateur (pas de
+# withCredentials), inutile donc de les autoriser (CORRECTIONS_A_FAIRE.md
+# point 26).
+CORS_ALLOW_CREDENTIALS = False
 
 # Media files (Profile pictures, etc.)
 MEDIA_URL = '/media/'

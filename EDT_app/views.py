@@ -136,7 +136,7 @@ class AnneeAcademiqueViewSet(BaseViewSet):
             qs = qs.filter(statut=statut)
         return qs
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsChefDepartement])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, ProfilActifPermission, IsChefDepartement])
     def archiver(self, request, pk=None):
         annee = self.get_object()
 
@@ -231,7 +231,7 @@ class ClasseViewSet(BaseViewSet):
             qs = qs.filter(filiere_id=filiere_id)
         return qs
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsChefDepartement])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, ProfilActifPermission, IsChefDepartement])
     def passer_semestre(self, request, pk=None):
         """
         Transfère les étudiants éligibles de cette classe vers une classe cible.
@@ -859,7 +859,9 @@ class SeanceViewSet(BaseViewSet):
           - référent de classe      : accès aux séances de ses classes assignées
         Les lectures (GET) restent libères pour tout utilisateur actif.
         """
-        if self.action in ['conflits', 'reporter', 'seances_liees']:
+        # `reporter` suit publier/depublier (chef ou référent, classe vérifiée
+        # dans l'action) : CORRECTIONS_A_FAIRE.md points 17 et 23.
+        if self.action in ['conflits', 'seances_liees']:
             return super().get_permissions()
             
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
@@ -1110,7 +1112,6 @@ class SeanceViewSet(BaseViewSet):
     @action(
         detail=True,
         methods=['patch'],
-        permission_classes=[IsAuthenticated, IsChefDepartement],
         url_path='reporter',
     )
     def reporter(self, request, pk=None):
@@ -1120,6 +1121,12 @@ class SeanceViewSet(BaseViewSet):
         Toutes les validations du modèle sont réappliquées sur le nouveau créneau.
         """
         seance = self.get_object()
+        classes_autorisees = self._get_classes_autorisees()
+        if classes_autorisees is not None and seance.classe_id not in classes_autorisees:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                "Vous n'avez pas les droits pour reporter des séances dans cette classe."
+            )
         with transaction.atomic():
             self._locker_pour_validation(
                 enseignants=[seance.enseignant], classes=[seance.classe],
@@ -1224,7 +1231,7 @@ class SeanceViewSet(BaseViewSet):
     @action(
         detail=False,
         methods=['get'],
-        permission_classes=[IsAuthenticated, IsChefDepartement],
+        permission_classes=[IsAuthenticated, ProfilActifPermission, IsChefDepartement],
         url_path='conflits',
     )
     def conflits(self, request):
@@ -1249,7 +1256,7 @@ class SeanceViewSet(BaseViewSet):
                 departements = user.profil.enseignant.departements_diriges.all()
                 if not Semestre.objects.filter(
                     id=semestre_id,
-                    classes__filiere__departement__in=departements
+                    classe__filiere__departement__in=departements
                 ).exists():
                     from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("Ce semestre n'appartient pas à votre département.")
@@ -1336,6 +1343,11 @@ class DocumentViewSet(BaseViewSet):
             perimetre = modules_autorises(user)
             if perimetre is not None:
                 qs = qs.filter(module__in=perimetre)
+
+        elif not user.groups.filter(name='responsable').exists():
+            # Profil sans rôle (ni étudiant, ni enseignant, ni scolarité) :
+            # rien à voir (CORRECTIONS_A_FAIRE.md point 24).
+            return qs.none()
 
         return qs
 

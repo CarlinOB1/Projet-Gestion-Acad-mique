@@ -832,14 +832,25 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         )
         from EDT_app.validation_seance import _calculer_duree_effective
 
-        heure_debut = data.get('heure_debut')
-        heure_fin   = data.get('heure_fin')
-        date_seance = data.get('date_seance')
-        module      = data.get('module')
-        enseignant  = data.get('enseignant')
-        classe      = data.get('classe')
-        annee       = data.get('annee')
-        statut      = data.get('statut', 'Confirmée')
+        # Modification partielle : les champs non envoyés gardent la valeur
+        # de la séance existante. Sans cela, annuler une séance en n'envoyant
+        # que son statut était refusé (« Horaires obligatoires »,
+        # CORRECTIONS_A_FAIRE.md point 29). `valeurs` sert aux contrôles ;
+        # seul `data` (ce qui a été envoyé) est enregistré.
+        valeurs = dict(data)
+        if self.instance is not None:
+            for champ in self._CHAMPS_CONTROLES:
+                if champ not in valeurs:
+                    valeurs[champ] = getattr(self.instance, champ)
+
+        heure_debut = valeurs.get('heure_debut')
+        heure_fin   = valeurs.get('heure_fin')
+        date_seance = valeurs.get('date_seance')
+        module      = valeurs.get('module')
+        enseignant  = valeurs.get('enseignant')
+        classe      = valeurs.get('classe')
+        annee       = valeurs.get('annee')
+        statut      = valeurs.get('statut', 'Confirmée')
         # Fallback sur l'instance existante (mise à jour partielle) : sans
         # lui, un PATCH qui ne touche pas `seance_liee` verrait ce champ
         # comme absent ici alors que la séance est bien mutualisée côté
@@ -888,10 +899,10 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
                     self._to_drf_error('module_id', exc)
 
             # 5. Affectation de l'enseignant + volume restant
-            if module and enseignant and data.get('type_seance'):
+            if module and enseignant and valeurs.get('type_seance'):
                 try:
                     valider_affectation(
-                        module, enseignant, data.get('type_seance'), duree, pk
+                        module, enseignant, valeurs.get('type_seance'), duree, pk
                     )
                 except Exception as exc:
                     self._to_drf_error('enseignant_id', exc)
@@ -959,9 +970,15 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
 
         # 12. Champs de report obligatoires si statut == 'Reportée'
         if statut == 'Reportée':
-            data = self._validate_report(data, pk)
+            self._validate_report(valeurs, pk)
 
         return data
+
+    _CHAMPS_CONTROLES = (
+        'heure_debut', 'heure_fin', 'date_seance', 'module', 'enseignant',
+        'classe', 'annee', 'statut', 'type_seance',
+        'date_report', 'heure_debut_report', 'heure_fin_report',
+    )
 
 
     def _validate_report(self, data, pk):
