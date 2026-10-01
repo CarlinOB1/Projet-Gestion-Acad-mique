@@ -32,7 +32,6 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from EDT_app.factories import ProfilFactory
-from EDT_app.outils_tests import faille_connue
 from EDT_app.tests_securite import make_user
 
 
@@ -125,7 +124,6 @@ class LimitationTentativesTest(TestCase):
         ]
         self.assertIn(429, codes, "aucune limite sur le renouvellement de session")
 
-    @faille_connue(25)
     def test_connexion_a_l_administration_limitee(self):
         User.objects.create_superuser("admin_force_brute", password="Bon-mot-de-passe-42")
         client = Client()

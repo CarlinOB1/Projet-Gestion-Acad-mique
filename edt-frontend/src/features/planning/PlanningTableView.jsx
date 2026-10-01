@@ -371,7 +371,8 @@ export default function PlanningTableView({
     );
   }
 
-  // ── État vide contextualisé (aucun cours sur tout le semestre)
+  // ── État vide contextualisé. `events` ne contient que la semaine affichée
+  // (V5) : hors semestre passé ou à venir, le message parle de la semaine.
   const hasNoEventsAtAll = !isLoading && !isError && events.length === 0;
   const semestreDateDebut = semestre?.date_debut ? new Date(semestre.date_debut) : null;
   const semestreDateFin   = semestre?.date_fin   ? new Date(semestre.date_fin)   : null;
@@ -382,7 +383,7 @@ export default function PlanningTableView({
   const emptyLabel =
     isFuture ? `Le ${semestre?.libelle || 'semestre'} n'a pas encore commencé. Il débutera le ${fmtDate.format(semestreDateDebut)}.`
   : isPast   ? `Le ${semestre?.libelle || 'semestre'} est terminé (jusqu'au ${fmtDate.format(semestreDateFin)}).`
-  :            `Aucun cours n'a été planifié pour ce semestre.`;
+  :            `Aucun cours n'est planifié cette semaine.`;
 
   return (
     <div className={`flex flex-col gap-4 ${isPrintMode ? 'w-[1050px] bg-background p-4' : ''}`}>

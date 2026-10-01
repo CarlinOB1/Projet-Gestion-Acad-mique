@@ -31,7 +31,7 @@ from EDT_app.factories import (
     ParcoursFactory,
     Semestre1Factory,
 )
-from EDT_app.models import AnneeAcademique, Inscription
+from EDT_app.models import AnneeAcademique, Classe, Inscription
 
 
 class EtudiantReinscriptionTest(TestCase):
@@ -157,31 +157,15 @@ class EtudiantReinscriptionTest(TestCase):
         ramener l'étudiant à son état d'origine, sinon il se retrouverait sans
         aucune inscription active et sans nouvelle classe.
         """
-        # Niveau et année choisis pour que seul le statut « archivée » fasse
-        # échouer l'appel : niveau immédiatement supérieur à classe_l1 (1 -> 2)
-        # et année qui la suit directement (2025-2026 -> 2026-2027), sinon
-        # c'est _valider_progression() qui refuserait en premier, pour une
-        # tout autre raison que celle visée par ce test. Création directe
-        # (pas via AnneeAcademiqueFactory) : le libellé "2026-2027" existe
-        # déjà, actif, pour classe_l2 (créé dans setUp) — la fabrique, qui
-        # fait un get_or_create sur le libellé, renverrait cette même ligne
-        # active au lieu d'une ligne archivée distincte.
-        annee_archivee = AnneeAcademique.objects.create(
-            libelle="2026-2027",
-            date_debut=date(2026, 9, 1),
-            date_fin=date(2027, 6, 30),
-            statut="archivée",
-        )
-        classe_archivee = ClasseFactory(
-            parcours=ParcoursFactory(type_parcours="Licence", niveau=2),
-            filiere=FiliereFactory(libelle="Filiere Archivee"),
-            semestre=Semestre1Factory(
-                annee=annee_archivee,
-                date_debut=date(2026, 9, 1),
-                date_fin=date(2027, 1, 31),
-            ),
-            annee=annee_archivee,
-        )
+        # classe_l2 a le niveau et l'année qui conviennent (1 -> 2,
+        # 2025-2026 -> 2026-2027) : sans cela, _valider_progression()
+        # refuserait en premier, pour une tout autre raison que celle visée par
+        # ce test. On archive donc son année sur place : une seconde année
+        # « 2026-2027 » archivée n'est plus possible, le libellé d'année est
+        # unique (CORRECTIONS_A_FAIRE.md point 31). update() contourne la
+        # règle qui interdit d'archiver une année aux séances futures.
+        AnneeAcademique.objects.filter(pk=self.classe_l2.annee_id).update(statut="archivée")
+        classe_archivee = Classe.objects.get(pk=self.classe_l2.pk)
 
         active = self.etudiant.reinscrire(self.classe_l1)
 

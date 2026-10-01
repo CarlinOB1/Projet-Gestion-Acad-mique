@@ -73,6 +73,31 @@ def _calculer_duree_effective(heure_debut, heure_fin):
     return duree_effective.total_seconds() / 3600
 
 
+# ── Créneau réellement occupé ────────────────────────────────────────────────
+
+def q_occupe_creneau(jour, heure_debut, heure_fin):
+    """
+    Filtre des séances qui occupent réellement le créneau demandé.
+
+    Une séance 'Reportée' occupe son créneau de report et libère celui
+    d'origine ; une séance 'Confirmée' occupe son créneau d'origine. Même
+    règle que Seance.creneau_effectif(), traduite en requête : tous les
+    contrôles de conflit l'utilisent (CORRECTIONS_A_FAIRE.md point 32 ;
+    avant, une séance reportée bloquait encore son ancien créneau et pas
+    le nouveau).
+    """
+    from django.db.models import Q
+
+    origine = Q(date_seance=jour, heure_debut__lt=heure_fin, heure_fin__gt=heure_debut)
+    report = Q(date_report=jour, heure_debut_report__lt=heure_fin, heure_fin_report__gt=heure_debut)
+    report_incomplet = Q(heure_debut_report__isnull=True) | Q(heure_fin_report__isnull=True)
+    return (
+        (Q(statut='Confirmée') & origine)
+        | (Q(statut='Reportée') & report)
+        | (Q(statut='Reportée') & report_incomplet & origine)
+    )
+
+
 # ── Règles atomiques ─────────────────────────────────────────────────────────
 
 def valider_horaires(heure_debut, heure_fin):
@@ -200,11 +225,8 @@ def valider_conflit_enseignant(enseignant, date_seance, heure_debut, heure_fin,
         return
 
     qs = Seance.objects.filter(
+        q_occupe_creneau(date_seance, heure_debut, heure_fin),
         enseignant=enseignant,
-        date_seance=date_seance,
-        heure_debut__lt=heure_fin,
-        heure_fin__gt=heure_debut,
-        statut__in=['Confirmée', 'Reportée'],
     ).exclude(pk=pk)
 
     if pks_exemptes:
@@ -246,11 +268,8 @@ def valider_conflit_classe(classe, date_seance, heure_debut, heure_fin, pk):
         return
 
     if Seance.objects.filter(
+        q_occupe_creneau(date_seance, heure_debut, heure_fin),
         classe=classe,
-        date_seance=date_seance,
-        heure_debut__lt=heure_fin,
-        heure_fin__gt=heure_debut,
-        statut__in=['Confirmée', 'Reportée'],
     ).exclude(pk=pk).exists():
         raise ValidationError(
             f"La classe a déjà une séance le {date_seance} sur ce créneau."
@@ -417,11 +436,8 @@ def valider_creneau_report(enseignant, classe, annee, date_report,
 
     if enseignant and heure_debut_report and heure_fin_report:
         if Seance.objects.filter(
+            q_occupe_creneau(date_report, heure_debut_report, heure_fin_report),
             enseignant=enseignant,
-            date_seance=date_report,
-            heure_debut__lt=heure_fin_report,
-            heure_fin__gt=heure_debut_report,
-            statut__in=['Confirmée', 'Reportée'],
         ).exclude(pk=pk).exists():
             raise ValidationError(
                 "Conflit d'horaire pour l'enseignant sur le créneau de report."
@@ -429,11 +445,8 @@ def valider_creneau_report(enseignant, classe, annee, date_report,
 
     if classe and heure_debut_report and heure_fin_report:
         if Seance.objects.filter(
+            q_occupe_creneau(date_report, heure_debut_report, heure_fin_report),
             classe=classe,
-            date_seance=date_report,
-            heure_debut__lt=heure_fin_report,
-            heure_fin__gt=heure_debut_report,
-            statut__in=['Confirmée', 'Reportée'],
         ).exclude(pk=pk).exists():
             raise ValidationError(
                 "La classe a déjà une séance sur le créneau de report."

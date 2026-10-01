@@ -494,10 +494,9 @@ class DocumentsNomsEtContenusTest(TestCase):
             self.assertNotIn('..', chemin)
             self.assertRegex(chemin, r'^documents/\d{4}/\d{2}/[0-9a-f]{32}/[^/\\]+$')
 
-    @faille_connue(35)
     def test_nom_tres_long_sans_plantage(self):
-        # La colonne du chemin est limitée à 100 caractères : la base refuse
-        # l'écriture et le serveur plante au lieu de raccourcir le nom.
+        # Django raccourcit le nom à la longueur du champ (255) ; la base
+        # n'acceptait que 100 caractères avant la migration 0016 (point 35).
         resp = self._deposer('a' * 300 + '.pdf', PDF_MINIMAL)
         self.assertLess(resp.status_code, 500, resp.content[:300])
         if resp.status_code == 201:

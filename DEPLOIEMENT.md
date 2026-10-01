@@ -43,9 +43,15 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy same-origin always;
     add_header X-Frame-Options DENY always;
-    # À affiner : ouvrir l'application, regarder la console du navigateur, et
-    # autoriser explicitement ce qui est réellement chargé (polices, etc.).
-    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    # Politique de contenu stricte : aucun script hors des fichiers de
+    # l'application (ni script en ligne, ni domaine extérieur). C'est la
+    # parade principale si une faille permettait d'injecter du code, car les
+    # jetons de session sont rangés dans le navigateur (localStorage).
+    # Vérifiée le 2026-10-01 sur l'interface construite (planning chef et
+    # étudiant, changement de semaine, export PDF) : aucun blocage. Les
+    # domaines Google ne servent qu'aux polices (src/index.css, index.html) ;
+    # à retirer si les polices sont un jour hébergées avec l'application.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
 
     # Frontend (fichiers construits)
     root /srv/edt/edt-frontend/dist;

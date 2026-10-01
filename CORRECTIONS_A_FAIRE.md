@@ -155,7 +155,11 @@ utilisé (le nouveau, celui du report).
 'Reportée'`) au lieu des champs originaux pour tous les contrôles de
 conflit et de volume, pas seulement pour `_valider_creneau_report()`.
 
-**Statut :** identifié par lecture de code, pas encore reproduit ni corrigé.
+**Statut :** corrigé dans le code par le commit 7d2549d (`Seance.clean()`
+contrôle tout sur `creneau_effectif()`), statut mis à jour le 2026-10-01.
+Complété par le point 32 : les autres séances sont maintenant lues, elles
+aussi, sur leur créneau réel. Pas de test dédié au remplacement sur une
+séance reportée.
 
 ---
 
@@ -179,7 +183,9 @@ dans `Seance.clean()`), vérifier que `seance_liee.module_id == self.module_id`
 avant d'appliquer l'exemption, ou lever une alerte explicite si les modules
 divergent.
 
-**Statut :** identifié par lecture de code, pas encore reproduit ni corrigé.
+**Statut :** corrigé dans le code par le commit 7d2549d
+(`valider_module_seance_liee`, dans les deux sens), statut mis à jour le
+2026-10-01. Pas de test dédié.
 
 ---
 
@@ -332,7 +338,10 @@ séance associée de sa propre recherche de conflit.
 les séances de `seance.seances_associees.all()` (pas seulement
 `seance_liee_pk`), pour que l'exemption s'applique dans les deux sens.
 
-**Statut :** identifié par lecture de code et reproduit via le contrôle
+**Statut :** corrigé dans le code par le commit 7d2549d (`pks_exemptes`
+inclut `seances_associees`), statut mis à jour le 2026-10-01 ; la
+détection des conflits applique la même exemption depuis le point 32.
+Constat d'origine : identifié par lecture de code et reproduit via le contrôle
 d'intégrité de `seed.py` (pas de correction appliquée, hors périmètre de la
 refonte du seed en cours).
 
@@ -368,10 +377,10 @@ et que son statut n'est pas `active`, la rouvrir explicitement (repasser
 l'état ; ou refuser explicitement la réinscription sur une classe déjà
 historisée, si la règle métier est qu'on ne revient jamais en arrière.
 
-**Statut :** reproduit et figé par
-`test_retour_sur_une_classe_deja_quittee_ne_reactive_pas_linscription`, qui
-documente le comportement actuel — ce test sera à mettre à jour le jour où la
-correction sera appliquée. Code applicatif inchangé.
+**Statut :** corrigé par le commit 7d2549d (`reinscrire()` rouvre la ligne
+historique), test inversé :
+`test_retour_sur_une_classe_deja_quittee_reactive_linscription`. Statut mis
+à jour le 2026-10-01.
 
 ---
 
@@ -410,11 +419,9 @@ bascule que `Module._heures`/`Module.heures_consommees()` — utiliser
 `date_report` plutôt que `date_seance` quand le statut est `Reportée`) et
 pour la durée sommée.
 
-**Statut :** reproduit et figé par
-`test_seance_reportee_reste_comptee_sur_son_ancien_jour_jamais_sur_le_nouveau`,
-qui documente le comportement actuel dans les deux sens (ancien jour /
-nouveau jour) — ce test sera à inverser le jour où la correction sera
-appliquée. Code applicatif inchangé.
+**Statut :** corrigé par le commit 7d2549d, test inversé :
+`test_seance_reportee_compte_sur_son_nouveau_jour_pas_sur_lancien`. Statut
+mis à jour le 2026-10-01.
 
 ---
 
@@ -706,7 +713,12 @@ connexion de l'application est limitée à 5 essais par minute.
 adresses internes (`DEPLOIEMENT.md`), à vérifier en Phase B. En complément,
 limiter aussi la connexion admin.
 
-**Statut :** reproduit, non corrigé. Priorité basse si nginx filtre `/admin/`.
+**Statut :** corrigé le 2026-10-01 (lot 6) : `limiter_connexion_admin`
+(`EDT_app/throttles.py`, branchée dans `EDT_app/admin.py`) applique à
+`/admin/login/` les mêmes limites que la connexion de l'application
+(5 essais par minute et par compte, 120 par adresse), avec des compteurs
+séparés ; au-delà, réponse 429 sans vérifier le mot de passe. Le filtrage
+de `/admin/` par nginx reste à vérifier en Phase B.
 
 ---
 
@@ -834,7 +846,12 @@ déplacés.
 **Piste de correction :** vérifier l'année, passer par `reinscrire()` (ou
 écrire l'inscription), et envelopper la boucle dans `transaction.atomic()`.
 
-**Statut :** reproduit (2 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 5) : le semestre cible doit être
+de la même année (et différent du semestre actuel) ; chaque étudiant passe
+par `reinscrire()`, qui ouvre son inscription dans la nouvelle classe ; le
+tout dans une transaction. La classe cible d'une classe de L1 se choisit
+aussi par son code (MIP, BCG, PCG) : avant, avec plusieurs L1 dans le même
+semestre, la recherche pouvait planter ou viser la mauvaise classe.
 
 ---
 
@@ -856,7 +873,18 @@ de `Classe` (avertissement `models.W036` au démarrage).
 affectations génériques dans le sérialiseur ; pour les classes, une colonne
 calculée unique ou un verrou à la création.
 
-**Statut :** reproduit (3 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 5, migration 0016), après
+vérification qu'aucun doublon n'existait dans `edt_uccb` ni `edt_charge` :
+- libellé d'année unique ;
+- affectations : contrainte d'unicité sur (module, enseignant, type vide
+  ramené à '') et message clair dans `AffectationModule.clean()` ;
+- classes : contraintes réécrites sans `condition=` (ignorée par MySQL),
+  en s'appuyant sur le fait que deux NULL ne se gênent pas dans un index
+  unique. L'avertissement `models.W036` a disparu.
+Le test qui exigeait `supports_partial_indexes` (toujours faux sous MySQL)
+est remplacé par des tests qui écrivent un vrai doublon en base et
+attendent son refus. La même migration aligne aussi en base la longueur
+des noms de fichiers (255 caractères), déjà déclarée dans le modèle.
 
 ---
 
@@ -879,7 +907,12 @@ report.
 (celui du report si `Reportée`), utilisée par toutes les validations et par
 `conflits`.
 
-**Statut :** reproduit (3 tests), non corrigé.
+**Statut :** corrigé le 2026-10-01 (lot 5) : `q_occupe_creneau()`
+(`EDT_app/validation_seance.py`) traduit `creneau_effectif()` en requête et
+sert à tous les contrôles de conflit (enseignant, classe, créneau de
+report). `conflits` lit aussi les séances reportées sur leur créneau réel,
+n'oppose plus deux séances mutualisées, et ne charge les fiches complètes
+que pour les séances en conflit.
 
 ---
 
@@ -914,6 +947,11 @@ des relations, calcul des heures en une requête groupée.
   module et enseignant réduits, heures préchargées.
 Le SeanceSerializer complet reste pour l'ouverture et la modification
 d'une séance.
+V5 (2026-10-01) : le planning ne demande plus que la semaine affichée
+(`date_debut`/`date_fin` pour un gestionnaire, `semaine` pour un enseignant
+ou un étudiant), en une page de 200 lignes au plus (`?page_size=`,
+`EDT_app/pagination.py`). Planning d'un chef : 1 requête par semaine au lieu
+de 14 pour tout le semestre (vérifié dans le navigateur).
 
 **Test de charge du 2026-10-01** (`charge/locustfile.py`, base `edt_charge`
 remplie par `seed.py` : 183 étudiants, 31 enseignants, 4 285 séances ;
@@ -1001,7 +1039,10 @@ gardant l'extension) ou porter `max_length` à 255. Mettre alors à jour
 `test_docx_valide_accepte` (`tests_securite.py`), qui dépose une simple
 signature ZIP et non un vrai document.
 
-**Statut :** reproduit (3 tests), non corrigé. Contrôles qui passent : noms
+**Statut :** nom trop long corrigé le 2026-10-01 par la migration 0016 : la
+base acceptait 100 caractères alors que le modèle en déclarait 255 ; Django
+raccourcit maintenant le nom (extension gardée) et l'écriture passe.
+Contenu Office : reproduit (2 tests), non corrigé. Contrôles qui passent : noms
 piégés (guillemets, retour à la ligne, `../`) neutralisés en développement et
 en production, double extension `.pdf.exe` et formats à macros
 (`.docm`/`.xlsm`/`.pptm`/`.dotm`) refusés, texte contenant du HTML servi

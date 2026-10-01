@@ -27,7 +27,7 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import connection, connections
+from django.db import IntegrityError, connection, connections, transaction
 from django.test import TestCase, TransactionTestCase, override_settings, tag
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
@@ -45,6 +45,7 @@ from EDT_app.factories import (
 )
 from EDT_app.models import (
     AffectationModule,
+    Classe,
     DocumentPedagogique,
     Etudiant,
     Inscription,
@@ -425,7 +426,6 @@ class PasserSemestreTest(UniversSimple, TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(Etudiant.objects.get(pk=self.etu.pk).classe.semestre_id, self.sem2.pk)
 
-    @faille_connue(30)
     def test_le_passage_ouvre_une_inscription_dans_la_nouvelle_classe(self):
         self.client_chef.post(
             f"/api/classes/{self.classe.pk}/passer_semestre/", {"semestre_cible_id": self.sem2.pk}, format="json",
@@ -436,7 +436,23 @@ class PasserSemestreTest(UniversSimple, TestCase):
             "étudiant déplacé sans inscription active dans sa nouvelle classe",
         )
 
-    @faille_connue(30)
+    def test_une_classe_l1_passe_dans_la_classe_de_meme_code(self):
+        # Avec MIP et BCG en S1 et en S2, la classe cible se choisit par son code.
+        sources = {}
+        for code in ("MIP", "BCG"):
+            sources[code] = Classe.objects.create(filiere=None, code=code, parcours=self.classe.parcours,
+                                                  semestre=self.sem1, annee=self.annee)
+            Classe.objects.create(filiere=None, code=code, parcours=self.classe.parcours,
+                                  semestre=self.sem2, annee=self.annee)
+        etu_l1 = make_etudiant("etu_l1_mip", classe=sources["MIP"])
+        # Les classes de L1 dépendent de la faculté : c'est la scolarité qui les gère.
+        resp = client_de(self.admin).post(
+            f"/api/classes/{sources['MIP'].pk}/passer_semestre/", {"semestre_cible_id": self.sem2.pk}, format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content[:300])
+        nouvelle = Etudiant.objects.get(pk=etu_l1.pk).classe
+        self.assertEqual((nouvelle.code, nouvelle.semestre_id), ("MIP", self.sem2.pk))
+
     def test_semestre_cible_d_une_autre_annee_refuse(self):
         autre_annee = AnneeAcademiqueFactory(
             libelle="2026-2027", date_debut=date(2026, 9, 1), date_fin=date(2027, 6, 30),
@@ -460,14 +476,12 @@ class DoublonsTest(UniversSimple, TestCase):
         self.construire_univers()
         self.client_admin = client_de(self.admin)
 
-    @faille_connue(31)
     def test_deux_annees_academiques_du_meme_nom(self):
         resp = self.client_admin.post("/api/annees/", {
             "libelle": self.annee.libelle, "date_debut": "2025-09-02", "date_fin": "2026-06-29",
         }, format="json")
         self.assertEqual(resp.status_code, 400)
 
-    @faille_connue(31)
     def test_deux_affectations_generiques_identiques(self):
         donnees = {"module_id": self.module.pk, "enseignant_id": self.ens.pk, "heures_prevues": 12}
         self.assertEqual(self.client_admin.post("/api/affectations/", donnees, format="json").status_code, 201)
@@ -484,13 +498,41 @@ class DoublonsTest(UniversSimple, TestCase):
         self.assertEqual(resp.status_code, 400, resp.content[:300])
         self.assertNotIn("code", resp.data, "refus dû au champ code, pas au doublon")
 
-    @faille_connue(31)
+    def _doublon_refuse_par_la_base(self, objet):
+        # bulk_create contourne toutes les vérifications Python : seule la
+        # base peut refuser (cas de deux enregistrements simultanés).
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                type(objet).objects.bulk_create([objet])
+
     def test_la_base_interdit_elle_meme_les_classes_en_double(self):
-        # MySQL ignore les contraintes d'unicité conditionnelles : seule la
-        # vérification Python protège, et deux requêtes simultanées passent.
-        self.assertTrue(
-            connection.features.supports_partial_indexes,
-            "la base ne crée pas la contrainte d'unicité des classes",
+        # MySQL ignore les contraintes d'unicité conditionnelles : les
+        # contraintes de Classe sont écrites pour s'en passer.
+        self._doublon_refuse_par_la_base(Classe(
+            libelle="doublon", code=self.classe.code, parcours=self.classe.parcours,
+            filiere=self.filiere, semestre=self.sem1, annee=self.annee,
+        ))
+
+    def test_la_base_interdit_elle_meme_les_classes_l1_en_double(self):
+        l1 = Classe.objects.create(filiere=None, code="MIP", parcours=self.classe.parcours,
+                                   semestre=self.sem1, annee=self.annee)
+        self._doublon_refuse_par_la_base(Classe(
+            libelle="doublon", code="MIP", parcours=l1.parcours, filiere=None,
+            semestre=self.sem1, annee=self.annee,
+        ))
+
+    def test_controle_deux_classes_l1_de_codes_differents_acceptees(self):
+        for code in ("MIP", "BCG"):
+            Classe.objects.create(filiere=None, code=code, parcours=self.classe.parcours,
+                                  semestre=self.sem1, annee=self.annee)
+        self.assertEqual(Classe.objects.filter(filiere=None, semestre=self.sem1).count(), 2)
+
+    def test_la_base_interdit_elle_meme_les_affectations_generiques_en_double(self):
+        AffectationModule.objects.bulk_create([
+            AffectationModule(module=self.module, enseignant=self.ens, heures_prevues=12),
+        ])
+        self._doublon_refuse_par_la_base(
+            AffectationModule(module=self.module, enseignant=self.ens, heures_prevues=12),
         )
 
 
@@ -528,21 +570,37 @@ class CreneauxSeancesReporteesTest(UniversSimple, TestCase):
             type_seance="CM", statut="Confirmée",
         )
 
-    @faille_connue(32)
     def test_le_nouveau_creneau_est_bloque_pour_l_enseignant(self):
         with self.assertRaises(ValidationError):
             self._nouvelle(self.mardi).full_clean()
 
-    @faille_connue(32)
     def test_l_ancien_creneau_est_libere(self):
         self._nouvelle(self.lundi).full_clean()
 
-    @faille_connue(32)
     def test_la_detection_des_conflits_voit_les_seances_reportees(self):
         self._nouvelle(self.mardi).save_base(raw=True)  # contourne la validation
         resp = client_de(self.admin).get(f"/api/seances/conflits/?semestre_id={self.sem1.pk}")
         self.assertEqual(resp.status_code, 200)
         self.assertGreaterEqual(resp.data["count"], 2)
+
+    def test_controle_seances_mutualisees_pas_en_conflit(self):
+        # Même enseignant, même créneau réel, deux classes : c'est voulu
+        # quand les deux séances sont liées (cours mutualisé).
+        jumelle = self._nouvelle(self.mardi)
+        jumelle.seance_liee = self.reportee
+        jumelle.save_base(raw=True)
+        resp = client_de(self.admin).get(f"/api/seances/conflits/?semestre_id={self.sem1.pk}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["count"], 0)
+
+    def test_controle_taille_de_page_demandee(self):
+        # V5 : l'interface demande une semaine entière en une page ; une
+        # valeur absurde retombe sur 20, une valeur énorme est plafonnée.
+        client = client_de(self.admin)
+        for valeur in ("abc", "-1", "0", "100000"):
+            with self.subTest(page_size=valeur):
+                self.assertEqual(client.get(f"/api/seances/?page_size={valeur}").status_code, 200)
+        self.assertEqual(len(client.get("/api/seances/?page_size=1").data["results"]), 1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

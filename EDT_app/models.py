@@ -5,6 +5,7 @@ from datetime import time as time_type
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.db import models
+from django.db.models.functions import Coalesce
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -139,7 +140,9 @@ class AnneeAcademique(models.Model):
         ('archivée', 'Archivée'),
     ]
 
-    libelle = models.CharField(max_length=20, blank=False)
+    # Unique : deux années « 2025-2026 » rendaient les listes et les
+    # passages ambigus (CORRECTIONS_A_FAIRE.md point 31).
+    libelle = models.CharField(max_length=20, blank=False, unique=True)
     date_debut = models.DateField(blank=False, null=False)
     date_fin = models.DateField(blank=False, null=False)
     statut = models.CharField(
@@ -290,17 +293,25 @@ class Classe(models.Model):
     class Meta:
         # La contrainte d'unicité porte sur l'identifiant réel :
         # soit la filière (L2+), soit le code (L1).
-        # On utilise unique_together sur les deux colonnes nullables :
-        # Django tolère plusieurs NULL dans une colonne unique.
+        # MySQL ignore les contraintes conditionnelles (`condition=`) : on
+        # s'appuie sur le fait que deux NULL ne se gênent jamais dans un
+        # index unique (CORRECTIONS_A_FAIRE.md point 31).
+        #  - avec filière : la filière est NULL pour les L1, qui ne sont
+        #    donc pas concernées ;
+        #  - sans filière : le code ne compte que si la filière est NULL,
+        #    sinon l'expression vaut NULL et les L2+ ne se gênent pas.
         constraints = [
             models.UniqueConstraint(
                 fields=['parcours', 'filiere', 'semestre', 'annee'],
-                condition=models.Q(filiere__isnull=False),
                 name='unique_classe_avec_filiere',
             ),
             models.UniqueConstraint(
-                fields=['parcours', 'code', 'semestre', 'annee'],
-                condition=models.Q(filiere__isnull=True),
+                models.F('parcours'), models.F('semestre'), models.F('annee'),
+                models.Case(
+                    models.When(filiere__isnull=True, then=models.F('code')),
+                    default=models.Value(None),
+                    output_field=models.CharField(max_length=20),
+                ),
                 name='unique_classe_sans_filiere',
             ),
         ]
@@ -891,8 +902,11 @@ class AffectationModule(models.Model):
 
     class Meta:
         constraints = [
+            # Type vide ramené à '' : sans cela MySQL tient deux affectations
+            # génériques (type NULL) pour différentes (point 31).
             models.UniqueConstraint(
-                fields=['module', 'enseignant', 'type_seance'],
+                models.F('module'), models.F('enseignant'),
+                Coalesce(models.F('type_seance'), models.Value('')),
                 name='unique_affectation_module_enseignant_type',
             ),
         ]
@@ -918,6 +932,11 @@ class AffectationModule(models.Model):
         ).exclude(pk=self.pk)
 
         if self.type_seance is None:
+            if autres.filter(type_seance__isnull=True).exists():
+                raise ValidationError(
+                    "Cet enseignant a déjà une affectation générique sur ce module. "
+                    "Modifiez-la plutôt que d'en créer une seconde."
+                )
             # Affectation générique : interdit si le couple a déjà des affectations typées
             if autres.filter(type_seance__isnull=False).exists():
                 raise ValidationError(

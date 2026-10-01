@@ -363,29 +363,52 @@ class ClasseViewSet(BaseViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Trouve ou crée la classe cible
-        classe_cible, created = Classe.objects.get_or_create(
-            parcours=classe_source.parcours,
-            filiere=classe_source.filiere,
-            semestre=semestre_cible,
-            annee=semestre_cible.annee,
-        )
+        # Passage de semestre au sein de la même année : changer d'année
+        # relève d'une réinscription (CORRECTIONS_A_FAIRE.md point 30).
+        if semestre_cible.annee_id != classe_source.annee_id:
+            return Response(
+                {'semestre_cible_id': "Le semestre cible doit appartenir à la même année académique que la classe."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if semestre_cible.pk == classe_source.semestre_id:
+            return Response(
+                {'semestre_cible_id': "La classe est déjà dans ce semestre."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        etudiants     = Etudiant.objects.filter(classe=classe_source).select_related('profil')
-        passes        = []
-        bloques       = []
+        # Tout ou rien : un échec en cours de route n'en laisse aucun déplacé.
+        with transaction.atomic():
+            # Trouve ou crée la classe cible. Une classe sans filière (L1)
+            # se reconnaît à son code (MIP, BCG, PCG).
+            criteres = {
+                'parcours': classe_source.parcours,
+                'filiere': classe_source.filiere,
+                'semestre': semestre_cible,
+                'annee': semestre_cible.annee,
+            }
+            if classe_source.filiere_id is None:
+                criteres['code'] = classe_source.code
+            classe_cible = Classe.objects.filter(**criteres).first()
+            created = classe_cible is None
+            if created:
+                classe_cible = Classe.objects.create(**{'code': classe_source.code, **criteres})
 
-        for etudiant in etudiants:
-            if etudiant.profil.statut == 'suspendu':
-                bloques.append({
-                    'matricule': etudiant.matricule,
-                    'motif': 'Profil suspendu',
-                })
-                continue
+            etudiants = Etudiant.objects.filter(classe=classe_source).select_related('profil', 'classe')
+            passes    = []
+            bloques   = []
 
-            etudiant.classe = classe_cible
-            etudiant.save()
-            passes.append(etudiant.matricule)
+            for etudiant in etudiants:
+                if etudiant.profil.statut == 'suspendu':
+                    bloques.append({
+                        'matricule': etudiant.matricule,
+                        'motif': 'Profil suspendu',
+                    })
+                    continue
+
+                # reinscrire() clôt l'inscription en cours et ouvre celle de
+                # la nouvelle classe, en plus de déplacer l'étudiant.
+                etudiant.reinscrire(classe_cible)
+                passes.append(etudiant.matricule)
 
         return Response(
             {
@@ -1426,8 +1449,10 @@ class SeanceViewSet(BaseViewSet):
         Détecte toutes les séances en conflit pour un semestre donné.
         Paramètre obligatoire : ?semestre_id=<int>
 
-        Un conflit est détecté quand deux séances confirmées partagent
-        le même créneau et le même enseignant OU la même classe.
+        Un conflit est détecté quand deux séances confirmées ou reportées
+        occupent le même créneau réel (celui du report pour une séance
+        reportée) avec la même classe, ou le même enseignant hors séances
+        mutualisées.
         """
         semestre_id = _id_param(request, 'semestre_id')
         if not semestre_id:
@@ -1448,31 +1473,40 @@ class SeanceViewSet(BaseViewSet):
                     from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("Ce semestre n'appartient pas à votre département.")
 
-        # Chargée une seule fois, comparée en Python (O(n²) borné par le
-        # nombre de séances confirmées du semestre — quelques centaines au
-        # plus) au lieu de relancer deux requêtes filter().exists() par
-        # séance : avant ce correctif, un semestre de N séances déclenchait
-        # jusqu'à 2N+1 requêtes SQL pour cette seule action.
-        seances = list(Seance.objects.filter(
+        # Une seule requête, limitée aux colonnes utiles, comparée en Python
+        # jour par jour. Une séance reportée compte sur son créneau de report
+        # (CORRECTIONS_A_FAIRE.md point 32). Les fiches complètes ne sont
+        # chargées que pour les séances en conflit.
+        lignes = Seance.objects.filter(
             classe__semestre_id=semestre_id,
-            statut='Confirmée',
-        ).select_related(*SEANCE_RELATIONS).order_by('date_seance', 'heure_debut'))
+            statut__in=['Confirmée', 'Reportée'],
+        ).values_list(
+            'pk', 'statut', 'enseignant_id', 'classe_id', 'seance_liee_id',
+            'date_seance', 'heure_debut', 'heure_fin',
+            'date_report', 'heure_debut_report', 'heure_fin_report',
+        )
+
+        par_jour = {}
+        for (pk, statut, ens_id, classe_id, liee_id,
+             jour, debut, fin, jour_r, debut_r, fin_r) in lignes:
+            if statut == 'Reportée' and debut_r and fin_r:
+                jour, debut, fin = jour_r, debut_r, fin_r
+            par_jour.setdefault(jour, []).append((pk, ens_id, classe_id, liee_id, debut, fin))
 
         conflits_ids = set()
+        for seances_du_jour in par_jour.values():
+            for i, (pk, ens_id, classe_id, liee_id, debut, fin) in enumerate(seances_du_jour):
+                for (pk2, ens_id2, classe_id2, liee_id2, debut2, fin2) in seances_du_jour[i + 1:]:
+                    if not (debut2 < fin and fin2 > debut):
+                        continue
+                    # Deux séances mutualisées partagent volontairement leur
+                    # enseignant et leur créneau (même exemption qu'à la saisie).
+                    mutualisees = liee_id == pk2 or liee_id2 == pk
+                    if classe_id == classe_id2 or (ens_id == ens_id2 and not mutualisees):
+                        conflits_ids.update((pk, pk2))
 
-        for i, seance in enumerate(seances):
-            for autre in seances[i + 1:]:
-                if autre.date_seance != seance.date_seance:
-                    # Trié par date croissante : au-delà, plus aucune séance
-                    # ne peut partager cette date.
-                    break
-                if not (autre.heure_debut < seance.heure_fin and autre.heure_fin > seance.heure_debut):
-                    continue
-                if autre.enseignant_id == seance.enseignant_id or autre.classe_id == seance.classe_id:
-                    conflits_ids.add(seance.pk)
-                    conflits_ids.add(autre.pk)
-
-        seances_en_conflit = [s for s in seances if s.pk in conflits_ids]
+        seances_en_conflit = Seance.objects.filter(pk__in=conflits_ids) \
+            .select_related(*SEANCE_RELATIONS).order_by('date_seance', 'heure_debut')
         serializer = SeanceListeSerializer(seances_en_conflit, many=True, context={'request': request})
         return Response(
             {

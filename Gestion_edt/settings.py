@@ -77,7 +77,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     # Pagination par défaut sur toutes les listes
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # (20 lignes, jusqu'à 200 sur demande avec ?page_size=)
+    'DEFAULT_PAGINATION_CLASS': 'EDT_app.pagination.PaginationStandard',
     'PAGE_SIZE': 20,
     # Convertit toute django.core.exceptions.ValidationError non interceptée
     # en réponse 400 DRF au lieu d'un 500 (cf. EDT_app/exception_handlers.py).
