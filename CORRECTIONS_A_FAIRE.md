@@ -1056,17 +1056,19 @@ corrigées dans des versions plus récentes.
 suite de tests ; côté interface, `npm audit fix` puis `npm run build` et
 `npm run lint`. Refaire l'audit à chaque mise en ligne.
 
-**Statut :**
+**Statut :** corrigé, sauf le reste connu ci-dessous.
 - **Serveur : corrigé le 2026-10-01.** Installés : Django 6.0.8, DRF
   3.17.2, PyJWT 2.15.1, sqlparse 0.6.0 (et anyio 4.15.1, pip 26.2.1 dans
   l'environnement de développement). `requirements.txt` mis à jour. Audit
   OSV après mise à jour : 0 faille connue sur les 34 paquets de `.venv` et
   les 41 de `.venv-charge`.
-- **Interface : en attente.** `npm audit fix` a été simulé (`--dry-run`) :
-  25 mises à jour mineures, aucune version majeure ; toutes les versions
-  cibles sont sans faille connue (OSV), sauf `react-router` 6.30.6. Il
-  modifie `package.json` et `package-lock.json`, qui portaient des
-  changements d'interface non commités : à lancer après leur commit.
+- **Interface : corrigé le 2026-10-01** (`npm audit fix`, commit d7fdc3a) :
+  25 mises à jour mineures, aucune version majeure (axios 1.20.0,
+  react-router-dom 6.30.6, dompurify 3.4.16…), toutes vérifiées sur OSV.
+  `npm audit` : 19 paquets signalés avant, 2 après (`react-router` et
+  `react-router-dom`, ci-dessous). Construction OK, lint inchangé (84
+  erreurs préexistantes), connexion et redirections vérifiées dans le
+  navigateur.
 - **Reste connu, sans effet sur l'application :** `react-router` 6.30.6 garde
   deux failles moyennes corrigées seulement en version 7
   (GHSA-337j-9hxr-rhxg : rendu côté serveur, que l'application n'utilise
