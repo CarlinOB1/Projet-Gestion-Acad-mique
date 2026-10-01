@@ -3,7 +3,7 @@
  * @description Définition centralisée des colonnes DataTable pour l'affichage
  * des séances dans la Liste des séances (groupées par classe/jour).
  */
-import { CalendarClock, Pencil, CalendarCog, Trash2 } from 'lucide-react';
+import { CalendarClock, Pencil, CalendarCog, Trash2 } from '@/components/ui/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SEANCE_COLORS, STATUT_COLORS } from '@/lib/constants';

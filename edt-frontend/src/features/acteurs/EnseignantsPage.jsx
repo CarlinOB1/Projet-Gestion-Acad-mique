@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Search } from '@/components/ui/icons';
 import { getEnseignants } from "@/api/acteurs";
 import useAuthStore, { selectIsChefDepartement } from "@/store/authStore";
 import PageHeader from "@/components/shared/PageHeader";

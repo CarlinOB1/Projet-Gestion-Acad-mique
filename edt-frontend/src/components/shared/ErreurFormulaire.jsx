@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from '@/components/ui/icons';
 
 /**
  * Erreur renvoyée par le serveur, affichée dans le formulaire juste au-dessus

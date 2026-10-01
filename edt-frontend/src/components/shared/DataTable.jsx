@@ -7,7 +7,7 @@
  */
 
 import React from 'react';
-import { Pencil, Trash2, AlertCircle, MoreHorizontal } from 'lucide-react';
+import { Pencil, Trash2, AlertCircle, MoreHorizontal } from '@/components/ui/icons';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { confirmer } from '@/lib/confirmer';
 import { cn } from '@/lib/utils';

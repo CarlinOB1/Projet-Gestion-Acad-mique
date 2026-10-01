@@ -4,7 +4,7 @@
  * Les filtres enseignant et statut ont été retirés à la demande de l'utilisateur.
  */
 import { useState } from 'react';
-import { Search, X, SlidersHorizontal } from 'lucide-react';
+import { Search, X, SlidersHorizontal } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {

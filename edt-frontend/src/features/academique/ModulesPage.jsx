@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Layers, Users, AlertCircle } from 'lucide-react';
+import { Plus, Layers, Users, AlertCircle } from '@/components/ui/icons';
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,

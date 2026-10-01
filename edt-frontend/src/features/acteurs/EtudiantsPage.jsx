@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { UserX, UserCheck, Plus, SlidersHorizontal, School, GraduationCap } from 'lucide-react';
+import { UserX, UserCheck, Plus, SlidersHorizontal, School, GraduationCap } from '@/components/ui/icons';
 import { getEtudiants, createEtudiant, updateEtudiant, removeEtudiant } from '@/api/acteurs';
 import { getClasses, getParcours, getFilieres } from '@/api/academique';
 // CORRECTION : alias @/ correct

@@ -3,7 +3,7 @@
  * @description Page listant les enseignants intervenant dans le planning de
  * l'étudiant connecté, regroupés avec leurs matières respectives.
  */
-import { Users } from 'lucide-react';
+import { Users } from '@/components/ui/icons';
 import { useTrombinoscope } from '@/hooks/useTrombinoscope';
 import EnseignantCard from './EnseignantCard';
 

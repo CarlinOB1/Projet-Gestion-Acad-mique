@@ -4,7 +4,7 @@
  * inspirée du format officiel de l'emploi du temps UCCB et de la maquette Figma.
  */
 import { useState, useMemo, forwardRef, Fragment } from 'react';
-import { ChevronLeft, ChevronRight, CalendarDays, Clock, AlertCircle, CalendarX, Plus, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, Clock, AlertCircle, CalendarX, Plus, AlertTriangle } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,

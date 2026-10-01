@@ -422,6 +422,25 @@ class EnseignantViewSet(BaseViewSet):
             qs = qs.filter(departement_id=dept_id)
         return qs
 
+    def perform_destroy(self, instance):
+        """
+        Supprimer un enseignant effaçait en cascade ses séances (y compris
+        celles déjà faites), ses affectations et ses documents
+        (CORRECTIONS_A_FAIRE.md point 36). Règle retenue (2026-10-01) : la
+        suppression sera permise à terme en gardant les séances effectuées à
+        son nom ; en attendant, un enseignant qui a des séances se suspend.
+        """
+        if instance.seance_set.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'detail': (
+                    "Cet enseignant a des séances : il ne peut pas être supprimé. "
+                    "Suspendez son compte à la place (fiche du profil, "
+                    "« changer de statut »)."
+                )
+            })
+        instance.delete()
+
     @action(
         detail=False,
         methods=['get'],

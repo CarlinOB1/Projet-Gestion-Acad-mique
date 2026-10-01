@@ -2,7 +2,7 @@
  * Topbar — titre dynamique, bouton menu mobile, profil et badge de rôle.
  */
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, User } from 'lucide-react';
+import { Menu, User } from '@/components/ui/icons';
 import useAuthStore from '@/store/authStore';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { NAV_ITEMS } from '@/lib/navigation';

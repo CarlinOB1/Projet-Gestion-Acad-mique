@@ -959,13 +959,18 @@ un compte sans rôle.
 `DocumentPedagogique.enseignant` sont en `on_delete=CASCADE`
 (`EDT_app/models.py`).
 
-**Piste de correction (règle proposée, à valider) :** refuser la suppression
-tant que l'enseignant a des séances (`PROTECT` ou contrôle dans
-`EnseignantViewSet.perform_destroy`, réponse 409 avec un message) et
-proposer la suspension à la place.
+**Règle validée (2026-10-01) :** à terme, on peut supprimer un enseignant,
+mais les séances déjà effectuées restent à son nom (il faudra alors garder
+une trace de l'enseignant, par exemple un enseignant « archivé », plutôt que
+d'effacer sa ligne). Pour l'instant, la suppression d'un enseignant qui a
+des séances est refusée et propose la suspension.
 
-**Statut :** reproduit, non corrigé. Contrôle : un enseignant sans activité se
-supprime normalement.
+**Statut :** étape provisoire faite le 2026-10-01 :
+`EnseignantViewSet.perform_destroy` refuse (400) avec un message qui renvoie
+vers la suspension. Reste à faire : la suppression qui garde les séances
+effectuées. L'interface ne propose pas de bouton de suppression
+d'enseignant. Contrôle : un enseignant sans activité se supprime
+normalement.
 
 ---
 
@@ -1051,8 +1056,24 @@ corrigées dans des versions plus récentes.
 suite de tests ; côté interface, `npm audit fix` puis `npm run build` et
 `npm run lint`. Refaire l'audit à chaque mise en ligne.
 
-**Statut :** constaté, non corrigé (mises à jour à télécharger : accord
-requis).
+**Statut :**
+- **Serveur : corrigé le 2026-10-01.** Installés : Django 6.0.8, DRF
+  3.17.2, PyJWT 2.15.1, sqlparse 0.6.0 (et anyio 4.15.1, pip 26.2.1 dans
+  l'environnement de développement). `requirements.txt` mis à jour. Audit
+  OSV après mise à jour : 0 faille connue sur les 34 paquets de `.venv` et
+  les 41 de `.venv-charge`.
+- **Interface : en attente.** `npm audit fix` a été simulé (`--dry-run`) :
+  25 mises à jour mineures, aucune version majeure ; toutes les versions
+  cibles sont sans faille connue (OSV), sauf `react-router` 6.30.6. Il
+  modifie `package.json` et `package-lock.json`, qui portaient des
+  changements d'interface non commités : à lancer après leur commit.
+- **Reste connu, sans effet sur l'application :** `react-router` 6.30.6 garde
+  deux failles moyennes corrigées seulement en version 7
+  (GHSA-337j-9hxr-rhxg : rendu côté serveur, que l'application n'utilise
+  pas ; GHSA-wrjc-x8rr-h8h6 : redirection vers un site extérieur quand une
+  adresse fournie par l'utilisateur est passée à la navigation, alors que
+  toutes les navigations de l'application vont vers des adresses écrites en
+  dur). Passer à React Router 7 lors d'un prochain chantier d'interface.
 
 ---
 

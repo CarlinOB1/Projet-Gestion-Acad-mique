@@ -2,7 +2,7 @@
 import * as React from "react";
 import { Toast as ToastPrimitives } from "radix-ui";
 import { cva } from "class-variance-authority";
-import { X } from "lucide-react";
+import { X } from '@/components/ui/icons';
 import { cn } from "@/lib/utils";
 
 function ToastProvider({ ...props }) {

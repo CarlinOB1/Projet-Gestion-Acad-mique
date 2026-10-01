@@ -9,7 +9,7 @@ import {
   Trash2,
   Layers,
   List,
-} from "lucide-react";
+} from '@/components/ui/icons';
 import useAuthStore from "@/store/authStore";
 import { useSeances } from "@/hooks/useSeances";
 import { useDeleteSeance } from "@/hooks/useSeanceMutations";

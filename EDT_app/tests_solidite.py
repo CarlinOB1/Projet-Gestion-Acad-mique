@@ -297,9 +297,10 @@ class SuppressionsEtCasLimitesTest(UniversSimple, TestCase):
 
 class SuppressionEnseignantTest(UniversSimple, TestCase):
     """
-    Supprimer un enseignant efface en cascade ses séances (y compris celles
-    déjà faites), ses affectations et ses documents. Règle proposée (à
-    valider) : refuser tant qu'il a des séances ; le suspendre à la place.
+    Supprimer un enseignant effaçait en cascade ses séances (y compris celles
+    déjà faites), ses affectations et ses documents. Règle validée le
+    2026-10-01 : à terme, suppression permise en gardant les séances
+    effectuées à son nom ; en attendant, refus avec proposition de suspension.
     """
 
     def setUp(self):
@@ -317,10 +318,10 @@ class SuppressionEnseignantTest(UniversSimple, TestCase):
             fichier=SimpleUploadedFile("cours.pdf", PDF_MINIMAL, content_type="application/pdf"),
         )
 
-    @faille_connue(36)
     def test_supprimer_un_enseignant_qui_a_des_seances_est_refuse(self):
         resp = client_de(self.admin).delete(f"/api/enseignants/{self.ens.pk}/")
         self.assertIn(resp.status_code, (400, 409), resp.content[:300])
+        self.assertIn("Suspendez", str(resp.data))
         self.assertTrue(Seance.objects.filter(pk=self.seance_faite.pk).exists(), "séance effacée")
 
     def test_controle_supprimer_un_enseignant_sans_activite(self):

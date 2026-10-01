@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Navigate } from 'react-router-dom';
-import { Eye, EyeOff, ChevronLeft, ChevronRight, Pause, Play, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, ChevronLeft, ChevronRight, Pause, Play, Loader2 } from '@/components/ui/icons';
 import useAuthStore from '@/store/authStore';
 import { loginSchema } from '@/lib/schemas';
 import { useLogin, parseLoginError } from './useLogin';

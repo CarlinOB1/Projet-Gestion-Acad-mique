@@ -4,7 +4,7 @@
  * et chevron, contenant les sous-groupes JourGroupSection.
  */
 import { useState } from 'react';
-import { ChevronDown, GraduationCap, Send } from 'lucide-react';
+import { ChevronDown, GraduationCap, Send } from '@/components/ui/icons';
 import JourGroupSection from './JourGroupSection';
 import { Button } from '@/components/ui/button';
 

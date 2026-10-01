@@ -4,7 +4,7 @@
  * recherche + un seul bouton "Filtres" (Popover) + chip semestre + compteur.
  */
 import { useMemo } from 'react';
-import { Search, SlidersHorizontal, Plus, X } from 'lucide-react';
+import { Search, SlidersHorizontal, Plus, X } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
