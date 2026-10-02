@@ -25,6 +25,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -69,6 +70,14 @@ def env_java_recent():
     print(f"Java utilisé par ZAP : {java_home}", flush=True)
     return {**os.environ, "JAVA_HOME": java_home,
             "PATH": os.path.join(java_home, "bin") + os.pathsep + os.environ.get("PATH", "")}
+
+
+def port_libre():
+    """Port libre pour le proxy interne de ZAP (8080 par défaut, souvent
+    déjà pris, par exemple par Oracle)."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def attendre_serveur(delai=90):
@@ -180,7 +189,8 @@ def main():
             # -silent : ZAP ne contacte aucun service extérieur (pas de
             # recherche de mises à jour) ; -dir : réglages jetables.
             subprocess.run(
-                [zap, "-cmd", "-silent", "-dir", os.path.join(travail, f"zap-{role}"), "-autorun", chemin_plan],
+                [zap, "-cmd", "-silent", "-port", str(port_libre()),
+                 "-dir", os.path.join(travail, f"zap-{role}"), "-autorun", chemin_plan],
                 cwd=os.path.dirname(zap), env=env_zap, check=False,
             )
     finally:
