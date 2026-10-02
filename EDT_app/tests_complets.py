@@ -994,6 +994,22 @@ class TestPlanningEtudiant(TestCase):
         self.assertIn(self.seance_a.pk, ids)
         self.assertNotIn(self.seance_b.pk, ids)
 
+    def test_etudiant_ne_voit_pas_les_brouillons(self):
+        """Une séance en préparation n'apparaît pas dans le planning de l'étudiant."""
+        brouillon = SeanceFactory(
+            module=self.seance_a.module, enseignant=self.seance_a.enseignant,
+            classe=self.classe_a, annee=self.annee,
+            date_seance=self.sem.date_debut,
+            heure_debut=time(11, 15), heure_fin=time(13, 15),
+            statut="brouillon",
+        )
+        client = auth_client("etudiant_a", "pass1234")
+        resp = client.get("/api/etudiants/mon_planning/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        ids = [s["id"] for s in resp.data]
+        self.assertIn(self.seance_a.pk, ids)
+        self.assertNotIn(brouillon.pk, ids)
+
     def test_enseignant_ne_peut_pas_acceder_planning_etudiant(self):
         """Un enseignant accédant à /etudiants/mon_planning/ → 403."""
         ens_user, ens_pwd = make_user("enseignant_test", "pass1234")

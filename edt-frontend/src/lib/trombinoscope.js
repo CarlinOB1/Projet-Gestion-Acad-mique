@@ -1,17 +1,26 @@
 /**
  * @file trombinoscope.js
  * @description Utilitaires de transformation des séances en liste d'enseignants
- * distincts avec leurs matières, pour l'affichage du trombinoscope étudiant.
+ * distincts avec leurs modules, pour l'affichage du trombinoscope étudiant.
  */
+import { TYPE_SEANCE } from './constants';
+import { prochaineSeance } from './creneau';
+
+const parLibelle = (a, b) => a.localeCompare(b, 'fr');
 
 /**
  * Regroupe les événements de planning (FullCalendar) par enseignant.
  * Chaque événement porte la séance complète dans `extendedProps`.
  *
  * @param {Array} events - Événements retournés par useSeances (transformSeanceToEvent)
- * @returns {Array<{ id, nom_complet, grade, departement, matieres: string[] }>}
+ * @param {Date} [maintenant]
+ * @returns {Array<{
+ *   id, nom_complet, grade, departement,
+ *   modules: Array<{ id, libelle, types: string[] }>,
+ *   prochaine: Object|null
+ * }>}
  */
-export function buildTrombinoscope(events = []) {
+export function buildTrombinoscope(events = [], maintenant = new Date()) {
   const map = new Map();
 
   events.forEach((event) => {
@@ -29,22 +38,32 @@ export function buildTrombinoscope(events = []) {
         nom_complet: enseignant.nom_complet || "Enseignant",
         grade: enseignant.grade || "",
         departement: enseignant.departement?.libelle || "",
-        matieres: new Set(),
+        modules: new Map(),
+        seances: [],
       });
     }
 
     const entry = map.get(id);
+    entry.seances.push(seance);
     if (module?.libelle) {
-      entry.matieres.add(module.libelle);
+      if (!entry.modules.has(module.id)) {
+        entry.modules.set(module.id, { id: module.id, libelle: module.libelle, types: new Set() });
+      }
+      if (seance.type_seance) entry.modules.get(module.id).types.add(seance.type_seance);
     }
   });
 
   return Array.from(map.values())
-    .map((entry) => ({
+    .map(({ modules, seances, ...entry }) => ({
       ...entry,
-      matieres: Array.from(entry.matieres).sort((a, b) => a.localeCompare(b)),
+      // Le type (CM, TD, TP) dit à l'étudiant dans quel cadre il voit cet
+      // enseignant : un même module peut être partagé entre plusieurs.
+      modules: Array.from(modules.values())
+        .map((m) => ({ ...m, types: Object.values(TYPE_SEANCE).filter((type) => m.types.has(type)) }))
+        .sort((a, b) => parLibelle(a.libelle, b.libelle)),
+      prochaine: prochaineSeance(seances, maintenant),
     }))
-    .sort((a, b) => a.nom_complet.localeCompare(b.nom_complet));
+    .sort((a, b) => parLibelle(a.nom_complet, b.nom_complet));
 }
 
 /**

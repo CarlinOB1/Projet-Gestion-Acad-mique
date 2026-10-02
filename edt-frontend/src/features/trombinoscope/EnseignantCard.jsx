@@ -1,54 +1,70 @@
 /**
  * @file EnseignantCard.jsx
  * @description Carte individuelle du trombinoscope — avatar (initiales), nom,
- * grade, département et badges des matières enseignées.
+ * grade et département, modules enseignés à la classe avec le type de cours
+ * (CM, TD, TP), et prochain cours avec cet enseignant.
  */
-import { GraduationCap } from '@/components/ui/icons';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
+import { CalendarClock } from '@/components/ui/icons';
+import { formatJourProche } from '@/lib/creneau';
 import { getInitials } from '@/lib/trombinoscope';
+import { formatCreneau } from '@/lib/utils';
 
 /**
- * @param {{ enseignant: { nom_complet, grade, departement, matieres: string[] } }} props
+ * @param {{ enseignant: { nom_complet, grade, departement, modules: Array, prochaine: Object|null } }} props
  */
 export default function EnseignantCard({ enseignant }) {
-  const { nom_complet, grade, departement, matieres } = enseignant;
+  const { nom_complet, grade, departement, modules, prochaine } = enseignant;
+  const fonction = [grade, departement].filter(Boolean).join(' · ');
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4 flex flex-col items-center text-center gap-3">
+    <Card className="gap-4">
+      <div className="flex items-center gap-3">
         <Avatar size="lg">
           <AvatarFallback className="bg-primary/10 text-primary font-semibold">
             {getInitials(nom_complet)}
           </AvatarFallback>
         </Avatar>
-
-        <div>
-          <h3 className="font-semibold text-sm text-foreground leading-snug">
-            {nom_complet}
-          </h3>
-          {grade && (
-            <p className="text-xs text-muted-foreground mt-0.5 flex items-center justify-center gap-1">
-              <GraduationCap className="h-3 w-3" aria-hidden="true" />
-              {grade}
-            </p>
-          )}
-          {departement && (
-            <p className="text-[11px] text-muted-foreground mt-0.5">{departement}</p>
-          )}
+        <div className="min-w-0">
+          <h3 className="font-semibold text-foreground leading-snug text-pretty">{nom_complet}</h3>
+          {fonction && <p className="mt-0.5 text-xs text-muted-foreground text-pretty">{fonction}</p>}
         </div>
+      </div>
 
-        {matieres.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 justify-center">
-            {matieres.map((matiere) => (
-              <Badge key={matiere} variant="secondary" className="text-[10px]">
-                {matiere}
-              </Badge>
-            ))}
-          </div>
+      {modules.length > 0 && (
+        <ul aria-label="Modules enseignés à votre classe" className="flex flex-wrap gap-1.5">
+          {modules.map((module) => (
+            <li key={module.id} className="rounded-md bg-muted px-2 py-1 text-xs font-medium text-foreground">
+              {module.libelle}
+              {module.types.length > 0 && (
+                <span className="font-normal text-muted-foreground"> · {module.types.join(', ')}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-auto flex items-start gap-2 border-t border-border pt-3 text-xs">
+        <CalendarClock className="mt-px size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        {prochaine ? (
+          <p className="min-w-0 text-muted-foreground">
+            Prochain cours :{' '}
+            <span className="font-medium text-foreground">
+              {formatJourProche(prochaine.date)} · {formatCreneau(prochaine.debut, prochaine.fin)}
+            </span>
+            <span className="block truncate">
+              {[
+                prochaine.seance?.module?.libelle,
+                prochaine.seance?.type_seance,
+                prochaine.seance?.statut === 'Reportée' && 'cours reporté',
+              ].filter(Boolean).join(' · ')}
+            </span>
+          </p>
+        ) : (
+          <p className="text-muted-foreground">Plus de cours prévu avec votre classe ce semestre</p>
         )}
-      </CardContent>
+      </div>
     </Card>
   );
 }

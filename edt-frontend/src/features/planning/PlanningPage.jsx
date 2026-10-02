@@ -45,6 +45,7 @@ import {
 
 export default function PlanningPage() {
   const role = useAuthStore((state) => state.user?.role);
+  const nomComplet = useAuthStore((state) => state.user?.nom_complet);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -338,20 +339,19 @@ export default function PlanningPage() {
 
     const html2pdf = (await import("html2pdf.js")).default;
 
-    const semestre = semestres.find(
-      (s) => String(s.id) === String(semestreId),
-    );
-    const rolePrefix =
-      role === ROLES.ENSEIGNANT
-        ? "enseignant"
-        : GESTIONNAIRE_ROLES.includes(role)
-          ? "chef"
-          : "etudiant";
+    // Nom du fichier = titre du PDF + semaine : « Emploi du temps - L2 S1
+    // Informatique 2026-2027 - semaine du 5 oct. 2026.pdf ». Avant, il ne
+    // disait que le rôle et le semestre (« emploi_du_temps_etudiant_Semestre 1 »),
+    // sans la classe. Les caractères refusés par Windows sont retirés.
+    const semaine = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" })
+      .format(weekStart);
+    const nomFichier = `${titrePdf.replace(" — ", " - ")} - semaine du ${semaine}`
+      .replace(/[\\/:*?"<>|]/g, "-");
     // Capture ×3 (≈ 300 dpi sur un A4) en JPEG, PDF compressé : ~600 Ko en
     // 2 s. En PNG ×6 sans compression, le fichier pesait ~80 Mo (11 s).
     const opt = {
       margin: 10,
-      filename: `emploi_du_temps_${rolePrefix}_${semestre?.libelle || "planning"}.pdf`,
+      filename: `${nomFichier}.pdf`,
       image: { type: "jpeg", quality: 0.95 },
       html2canvas: { scale: 3, useCORS: true, logging: false },
       jsPDF: { unit: "mm", format: "a4", orientation: "landscape", compress: true },
@@ -381,6 +381,19 @@ export default function PlanningPage() {
     }
     return "Planning";
   }, [effectiveRole, isPersonalPlanningRoute, profilEtudiant, selectedClasse]);
+
+  // Intitulé du PDF : l'emploi du temps de la classe (ou de l'enseignant sur
+  // son planning personnel), pas le titre de la page (« Planning — … »).
+  const classePdf =
+    effectiveRole === ROLES.ETUDIANT
+      ? profilEtudiant?.etudiant?.classe?.libelle || profilEtudiant?.etudiant?.classe?.code
+      : selectedClasse?.libelle;
+  const titrePdf =
+    effectiveRole === ROLES.ENSEIGNANT && isPersonalPlanningRoute
+      ? `Emploi du temps — ${nomComplet || "Mon planning"}`
+      : classePdf
+        ? `Emploi du temps — ${classePdf}`
+        : "Emploi du temps";
 
   // Ce qui est déjà dit par le titre n'est pas répété sur chaque carte : la
   // classe sur un planning de classe (ou d'étudiant), l'enseignant sur son
@@ -559,7 +572,7 @@ export default function PlanningPage() {
             semestre={semestres.find(
               (s) => String(s.id) === String(semestreId),
             )}
-            title={pageTitle}
+            title={titrePdf}
             masquer={champsMasques}
           />
         </div>
