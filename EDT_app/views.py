@@ -713,9 +713,13 @@ class EtudiantViewSet(BaseViewSet):
         except ObjectDoesNotExist:
             raise PermissionDenied("Cette ressource est réservée aux étudiants.")
 
+        # Brouillons exclus, comme dans SeanceViewSet.get_queryset : l'étudiant
+        # ne voit que les séances publiées. Sans ce filtre, une séance encore
+        # en préparation apparaissait dans son planning, et son enseignant
+        # dans « Mes enseignants ».
         seances  = Seance.objects.filter(
             classe=etudiant.classe
-        ).select_related(*SEANCE_RELATIONS).order_by('date_seance', 'heure_debut')
+        ).exclude(statut='brouillon').select_related(*SEANCE_RELATIONS).order_by('date_seance', 'heure_debut')
 
         statut = request.query_params.get('statut')
         if statut:
