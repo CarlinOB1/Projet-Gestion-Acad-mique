@@ -2,10 +2,9 @@
 // doit être créée. (La séance créée est effacée par preparer_base.py
 // nettoyer : elle appartient à l'enseignant de test.)
 import { test, expect } from '@playwright/test';
-import { failleConnue, lireEtat, ouvrirSession } from './outils.js';
+import { lireEtat, ouvrirSession } from './outils.js';
 
 test('double clic sur Enregistrer : une seule séance créée', async ({ page }) => {
-  failleConnue(test, 43);
   const { donnees } = lireEtat();
   const creations = [];
   page.on('response', (r) => {

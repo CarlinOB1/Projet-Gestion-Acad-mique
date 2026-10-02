@@ -1178,6 +1178,7 @@ class Seance(models.Model):
             valider_bornes_semestre,
             valider_conflit_enseignant,
             valider_conflit_classe,
+            valider_doublon,
             valider_volume_module,
             valider_affectation,
             valider_volume_journalier,
@@ -1242,6 +1243,15 @@ class Seance(models.Model):
             jour_effectif,
             debut_effectif,
             fin_effectif,
+            self.pk,
+        )
+
+        # Brouillon identique à une séance déjà enregistrée (point 43). Ici,
+        # le contrôle se fait sous les verrous de save() et de la vue : deux
+        # envois simultanés (double clic) ne passent pas tous les deux.
+        valider_doublon(
+            self.statut, self.classe_id, self.module_id,
+            self.date_seance, self.heure_debut, self.heure_fin,
             self.pk,
         )
 

@@ -221,6 +221,14 @@ class CompteSuspenduTest(UniversDeuxDepartements, TestCase):
     def test_controle_liste_des_seances_refusee(self):
         self.assertEqual(self.client_chef.get("/api/seances/").status_code, 403)
 
+    def test_le_refus_dit_que_le_compte_est_suspendu(self):
+        # Champ `code` lu par l'interface pour ramener la personne à la
+        # connexion avec ce message (CORRECTIONS_A_FAIRE.md point 41).
+        resp = self.client_chef.get("/api/seances/")
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.data.get("code"), "profil_suspendu")
+        self.assertIn("suspendu", str(resp.data.get("detail")))
+
     def test_archiver_une_annee_refuse(self):
         self.assertRefuse(self.client_chef.post(f"/api/annees/{self.annee.pk}/archiver/"))
 
@@ -266,6 +274,7 @@ class CompteSuspenduTest(UniversDeuxDepartements, TestCase):
         jeton = RefreshToken.for_user(user_de(self.chef_a))
         resp = APIClient().post("/api/token/refresh/", {"refresh": str(jeton)}, format="json")
         self.assertEqual(resp.status_code, 401, "un compte suspendu obtient encore une nouvelle session")
+        self.assertEqual(resp.data.get("code"), "profil_suspendu")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

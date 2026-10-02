@@ -1096,6 +1096,7 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             valider_bornes_semestre,
             valider_conflit_enseignant,
             valider_conflit_classe,
+            valider_doublon,
             valider_volume_module,
             valider_affectation,
             valider_volume_journalier,
@@ -1239,6 +1240,17 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             valider_conflit_classe(classe, date_seance, heure_debut, heure_fin, pk)
         except Exception as exc:
             self._to_drf_error('classe_id', exc)
+
+        # 11b. Brouillon identique à une séance déjà enregistrée
+        # (CORRECTIONS_A_FAIRE.md point 43). Sans statut envoyé, une création
+        # est un brouillon (valeur par défaut du modèle).
+        try:
+            valider_doublon(
+                valeurs.get('statut', 'brouillon'),
+                classe, module, date_seance, heure_debut, heure_fin, pk,
+            )
+        except Exception as exc:
+            self._to_drf_error('non_field_errors', exc)
 
         # 12. Champs de report obligatoires si statut == 'Reportée'
         if statut == 'Reportée':

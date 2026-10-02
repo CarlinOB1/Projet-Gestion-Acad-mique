@@ -13,6 +13,20 @@ export function parseLoginError(error) {
     return "Trop de tentatives de connexion. Patientez une minute avant de réessayer.";
   }
 
+  // simplejwt répond 401 (« No active account found… », en anglais) pour un
+  // identifiant inconnu, un mot de passe faux ou un compte désactivé
+  // (CORRECTIONS_A_FAIRE.md point 40).
+  if (error?.response?.status === 401) {
+    return "Identifiant ou mot de passe incorrect.";
+  }
+
+  // Page d'erreur du serveur (HTML) : jamais affichée telle quelle.
+  if (error?.response?.status >= 500) {
+    return "Le serveur a rencontré une erreur. Réessayez plus tard.";
+  }
+
+  // Profil suspendu ou absent : 400 avec le message du serveur (motif inclus),
+  // affiché tel quel par le bloc ci-dessous.
   if (error?.response?.data) {
     const { non_field_errors, detail } = error.response.data;
 

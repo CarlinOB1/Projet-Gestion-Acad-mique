@@ -548,6 +548,54 @@ class DoublonsTest(UniversSimple, TestCase):
         )
 
 
+class SeancesEnDoubleTest(UniversSimple, TestCase):
+    """
+    Deux séances identiques (même classe, module, jour et heures), brouillons
+    compris : CORRECTIONS_A_FAIRE.md point 43 (double clic sur « Enregistrer
+    la séance »).
+    """
+
+    def setUp(self):
+        self.construire_univers()
+        self.client_chef = client_de(self.chef.profil.user)
+        self.jour = self.sem1.date_debut + timedelta(days=1)
+
+    def _creer(self, **surcharges):
+        # Sans statut : la séance est un brouillon, comme depuis l'interface.
+        donnees = {
+            "module_id": self.module.pk, "enseignant_id": self.ens.pk,
+            "classe_id": self.classe.pk, "annee_id": self.annee.pk,
+            "date_seance": str(self.jour), "heure_debut": "09:00", "heure_fin": "11:00",
+            "type_seance": "CM",
+        }
+        donnees.update(surcharges)
+        return self.client_chef.post("/api/seances/", donnees, format="json")
+
+    def test_deux_brouillons_identiques_refuses(self):
+        self.assertEqual(self._creer().status_code, 201)
+        resp = self._creer()
+        self.assertEqual(resp.status_code, 400, resp.content[:300])
+        self.assertIn("existe déjà", str(resp.data))
+        self.assertEqual(Seance.objects.filter(classe=self.classe, date_seance=self.jour).count(), 1)
+
+    def test_doublon_enregistre_sans_passer_par_l_api_refuse(self):
+        self.seance(self.jour, *BLOCS[0], statut="brouillon")
+        with self.assertRaisesMessage(ValidationError, "existe déjà"):
+            self.seance(self.jour, *BLOCS[0], statut="brouillon")
+
+    def test_controle_meme_creneau_qu_une_seance_annulee_accepte(self):
+        self.seance(self.jour, *BLOCS[0], statut="Annulée")
+        self.assertEqual(self._creer().status_code, 201)
+
+    def test_controle_brouillons_de_modules_differents_sur_le_meme_creneau_acceptes(self):
+        # Le chef peut préparer plusieurs possibilités avant de publier.
+        module2 = ModuleFactory(
+            libelle="Module Solidité 2", matiere=self.matiere, semestre=self.sem1, credits=6,
+        )
+        self.assertEqual(self._creer().status_code, 201)
+        self.assertEqual(self._creer(module_id=module2.pk).status_code, 201)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 6. SÉANCES REPORTÉES ET CRÉNEAUX — CORRECTIONS_A_FAIRE.md point 32
 # ══════════════════════════════════════════════════════════════════════════════
@@ -774,6 +822,28 @@ class RequetesSimultaneesTest(UniversSimple, TransactionTestCase):
                 doublons.append(str(jour))
         self.assertEqual(plantages, [], "erreurs serveur sous requêtes simultanées")
         self.assertEqual(doublons, [], "enseignant réservé deux fois sur le même créneau")
+
+    def test_double_clic_un_seul_brouillon(self):
+        # Deux envois identiques au même instant (double clic) : les
+        # brouillons échappent aux contrôles de conflit, seul le refus des
+        # doublons les départage (CORRECTIONS_A_FAIRE.md point 43).
+        doublons, plantages = [], []
+        for jour, debut, fin in creneaux(self.sem1.date_debut, self.REPETITIONS):
+            def creer():
+                return client_de(self.chef.profil.user).post("/api/seances/", {
+                    "module_id": self.module.pk, "enseignant_id": self.ens.pk,
+                    "classe_id": self.classe.pk, "annee_id": self.annee.pk,
+                    "date_seance": str(jour), "heure_debut": debut.strftime("%H:%M"),
+                    "heure_fin": fin.strftime("%H:%M"), "type_seance": "CM",
+                }, format="json").status_code
+
+            codes = self._en_parallele(creer, creer)
+            if any(isinstance(c, Exception) or c >= 500 for c in codes):
+                plantages.append((str(jour), [repr(c) for c in codes]))
+            if Seance.objects.filter(classe=self.classe, date_seance=jour, heure_debut=debut).count() > 1:
+                doublons.append(str(jour))
+        self.assertEqual(plantages, [], "erreurs serveur sous requêtes simultanées")
+        self.assertEqual(doublons, [], "deux brouillons identiques enregistrés")
 
     def test_controle_publications_croisees_sans_blocage(self):
         # Deux gestionnaires publient en masse les mêmes séances, listées dans

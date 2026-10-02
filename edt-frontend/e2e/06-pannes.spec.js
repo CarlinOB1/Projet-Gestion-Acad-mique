@@ -2,7 +2,7 @@
 // HTML), serveur qui ne répond jamais. Attendu : un message lisible, jamais
 // une page blanche, jamais de code HTML affiché, jamais d'attente sans fin.
 import { test, expect } from '@playwright/test';
-import { failleConnue, lireEtat, ouvrirSession } from './outils.js';
+import { lireEtat, ouvrirSession } from './outils.js';
 
 const PLANNING = '**/api/etudiants/mon_planning/**';
 const PAGE_500 = '<!DOCTYPE html><html><body><h1>Server Error (500)</h1></body></html>';
@@ -29,7 +29,6 @@ test('erreur 500 : message lisible, pas de code HTML affiché', async ({ page })
 });
 
 test("erreur 500 à la suspension d'un étudiant : pas de code HTML dans le message", async ({ page }) => {
-  failleConnue(test, 44);
   const { donnees } = lireEtat();
   await page.route('**/changer_statut/', (route) =>
     route.fulfill({ status: 500, contentType: 'text/html', body: PAGE_500 }));
@@ -51,7 +50,6 @@ test("erreur 500 à la suspension d'un étudiant : pas de code HTML dans le mess
 });
 
 test('serveur qui ne répond jamais : un message finit par apparaître', async ({ page }) => {
-  failleConnue(test, 42);
   await page.route(PLANNING, () => { /* jamais de réponse */ });
   await ouvrirSession(page, 'etudiant', '/etudiant/planning');
   await expect(page.getByText(/erreur|délai|réessayer|ne répond/i).first()).toBeVisible({ timeout: 45_000 });

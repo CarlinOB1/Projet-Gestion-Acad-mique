@@ -1,7 +1,7 @@
 // Scénario 1 — Connexion par rôle : chacun arrive sur sa page, et un étudiant
 // qui tape l'adresse de l'espace chef n'y entre pas.
 import { test, expect } from '@playwright/test';
-import { failleConnue, lireEtat, ouvrirSession } from './outils.js';
+import { lireEtat, ouvrirSession } from './outils.js';
 
 async function seConnecter(page, { username, password }) {
   await page.goto('/login');
@@ -25,10 +25,9 @@ for (const [role, arrivee] of Object.entries(ARRIVEES)) {
 }
 
 test('mauvais mot de passe : message, et on reste sur la connexion', async ({ page }) => {
-  failleConnue(test, 40);
   const { username } = lireEtat().comptes.etudiant;
   await seConnecter(page, { username, password: 'pas-le-bon-mot-de-passe' });
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveText('Identifiant ou mot de passe incorrect.');
   await expect(page).toHaveURL(/\/login$/);
 });
 

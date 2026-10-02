@@ -276,6 +276,37 @@ def valider_conflit_classe(classe, date_seance, heure_debut, heure_fin, pk):
         )
 
 
+def valider_doublon(statut, classe, module, date_seance, heure_debut, heure_fin, pk):
+    """
+    Refuse un brouillon identique à une séance déjà enregistrée (brouillon ou
+    confirmée) : même classe, même module, même jour, mêmes heures. Les
+    contrôles de conflit ignorent les brouillons, si bien qu'un double clic
+    sur « Enregistrer la séance » créait deux brouillons identiques
+    (CORRECTIONS_A_FAIRE.md point 43).
+
+    Ne concerne que les brouillons : une séance confirmée identique à une
+    autre confirmée est déjà refusée par valider_conflit_classe, et publier
+    un brouillon reste possible même si un double existe (le double sera
+    alors refusé à sa propre publication). Une séance annulée ou reportée ne
+    compte pas : son créneau d'origine est libre.
+    """
+    from EDT_app.models import Seance
+
+    if statut != 'brouillon':
+        return
+    if not (classe and module and date_seance and heure_debut and heure_fin):
+        return
+
+    if Seance.objects.filter(
+        classe=classe, module=module, date_seance=date_seance,
+        heure_debut=heure_debut, heure_fin=heure_fin,
+        statut__in=('brouillon', 'Confirmée'),
+    ).exclude(pk=pk).exists():
+        raise ValidationError(
+            "Cette séance existe déjà : même module, même classe, même créneau."
+        )
+
+
 def valider_volume_module(module, duree, pk):
     """
     Le volume horaire du module ne doit pas être dépassé.

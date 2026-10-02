@@ -8,7 +8,14 @@ class ProfilActifPermission(BasePermission):
     S'applique en plus de IsAuthenticated sur tous les ViewSets.
     Les superusers (admin Django) ne sont pas concernés.
     """
-    message = "Votre profil est suspendu. Contactez le responsable pédagogique."
+    # Sous forme de dictionnaire, le refus (403) porte un champ `code` stable,
+    # le même que le renouvellement de session refusé (authentication.py) :
+    # l'interface le reconnaît et ramène la personne à la connexion avec ce
+    # message, au lieu d'une erreur vague (CORRECTIONS_A_FAIRE.md point 41).
+    message = {
+        'detail': "Votre profil est suspendu. Contactez le responsable pédagogique.",
+        'code': 'profil_suspendu',
+    }
 
     def has_permission(self, request, view):
         if request.user.is_superuser:

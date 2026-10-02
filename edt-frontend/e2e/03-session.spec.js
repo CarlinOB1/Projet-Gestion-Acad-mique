@@ -28,6 +28,7 @@ test('renouvellement refusé : retour à la connexion, sans boucle', async ({ pa
     ...s, accessToken: JETON_PERIME, refreshToken: JETON_PERIME,
   }));
   await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByText('Votre session a expiré. Reconnectez-vous.')).toBeVisible();
   await page.waitForTimeout(3000);
   expect(renouvellements.length).toBeLessThanOrEqual(1);
   await expect(page).toHaveURL(/\/login$/);

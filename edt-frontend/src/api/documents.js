@@ -1,5 +1,9 @@
 import apiClient from "./client";
 
+// Fichiers jusqu'à 20 Mo : sur une connexion lente, il faut plus que le délai
+// ordinaire de client.js (30 s).
+const DELAI_FICHIER_MS = 5 * 60_000;
+
 export const getDocuments = async (params) => {
   const response = await apiClient.get("/documents/", { params });
   return response.data?.results ?? response.data;
@@ -10,6 +14,7 @@ export const createDocument = async (formData) => {
     headers: {
       "Content-Type": "multipart/form-data",
     },
+    timeout: DELAI_FICHIER_MS,
   });
   return response.data;
 };
@@ -21,6 +26,7 @@ export const createDocument = async (formData) => {
 export const downloadDocument = async (doc) => {
   const response = await apiClient.get(`/documents/${doc.id}/telecharger/`, {
     responseType: "blob",
+    timeout: DELAI_FICHIER_MS,
   });
   const url = window.URL.createObjectURL(response.data);
   const link = document.createElement("a");

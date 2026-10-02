@@ -1220,7 +1220,13 @@ déjà des modifications en cours dans `client.js` et `useLogin.js` sur ce
 sujet (copie de travail `.claude/worktrees/affectionate-jang-4dc4cc`, non
 commitée) : à reprendre de là.
 
-**Statut :** reproduit (1 scénario), non corrigé.
+**Statut :** corrigé le 2026-10-02, en reprenant ces modifications (la copie
+de travail elle-même n'a pas été touchée) : l'intercepteur ne tente plus de
+renouvellement sur `/token/` et `/token/refresh/`, et un refus à la
+connexion affiche « Identifiant ou mot de passe incorrect. »
+(`useLogin.js`). Une erreur 500 à la connexion affiche un message fixe au
+lieu de « Impossible de joindre le serveur ». Scénario
+`e2e/01-connexion.spec.js` au vert.
 
 ---
 
@@ -1242,7 +1248,20 @@ refus (403 avec ce message) et l'afficher une fois pour toute
 l'application, par exemple en déconnectant avec ce message sur la page de
 connexion.
 
-**Statut :** reproduit (1 scénario), non corrigé.
+**Statut :** corrigé le 2026-10-02.
+- Serveur : le refus porte un code stable, `"code": "profil_suspendu"`
+  (`ProfilActifPermission`, `permissions.py`), comme le renouvellement de
+  session refusé, qui l'avait déjà.
+- Interface : `client.js` reconnaît ce code, vide la session et ramène à la
+  page de connexion, qui affiche « Votre profil est suspendu. Contactez le
+  responsable pédagogique. » (`lib/messageConnexion.js`, `LoginPage.jsx`).
+- Même chemin pour une session expirée : « Votre session a expiré.
+  Reconnectez-vous. » au lieu d'un retour muet à la connexion.
+- Un renouvellement impossible parce que le serveur ne répond pas ne
+  déconnecte plus : la session n'est pas en cause, la page affiche l'erreur.
+
+Tests : `CompteSuspenduTest` (code dans les deux refus),
+`e2e/03-session.spec.js` et `e2e/04-suspension.spec.js` au vert.
 
 ---
 
@@ -1262,7 +1281,12 @@ eux, un message lisible.
 dépôts de documents (jusqu'à 20 Mo) pourront demander un délai plus long,
 réglé sur leur appel.
 
-**Statut :** reproduit (1 scénario), non corrigé.
+**Statut :** corrigé le 2026-10-02 : délai de 30 s pour toute requête
+(`client.js`, renouvellement de session compris), 5 minutes pour l'envoi et
+le téléchargement de documents (`api/documents.js`). Pas de nouvel essai
+automatique après un délai dépassé (`main.jsx`) : sans cela, le message
+n'arrivait qu'au bout d'une minute. Scénario `e2e/06-pannes.spec.js` au
+vert (message au bout de 30 s).
 
 ---
 
@@ -1287,7 +1311,25 @@ second envoi tant que le premier n'est pas terminé (drapeau dans un
 `useRef`). Côté serveur, à décider : refuser deux séances identiques, même
 en brouillon (même classe, même date, même heure, même module).
 
-**Statut :** reproduit (1 scénario), non corrigé.
+**Statut :** corrigé le 2026-10-02, des deux côtés.
+- Interface : un second envoi est ignoré tant que le premier n'a pas abouti
+  (`SeanceDrawer.jsx`).
+- Serveur : un brouillon identique à une séance déjà enregistrée,
+  brouillon ou confirmée (même classe, même module, même jour, mêmes
+  heures), est refusé : « Cette séance existe déjà : même module, même
+  classe, même créneau. » (`valider_doublon`, `validation_seance.py`). Le
+  contrôle se refait sous les verrous de l'enregistrement : deux envois
+  simultanés ne passent pas tous les deux, et les appels directs à l'API
+  sont couverts. Deux séances confirmées identiques étaient déjà refusées
+  par le contrôle de conflit de la classe.
+- Restent permis : refaire une séance sur le créneau d'une séance annulée
+  ou reportée, préparer deux brouillons de modules différents sur le même
+  créneau, et publier un brouillon dont un double existait avant ce
+  correctif (le double est alors refusé à sa propre publication).
+
+Tests : `SeancesEnDoubleTest`, `RequetesSimultaneesTest.
+test_double_clic_un_seul_brouillon` (20 essais simultanés, une seule
+séance à chaque fois), `e2e/08-double-clic.spec.js` au vert.
 
 ---
 
@@ -1307,7 +1349,10 @@ de champ, et sinon un message fixe (« Le serveur a rencontré une erreur.
 Réessayez plus tard. »). Les autres panneaux (`SeanceDrawer`,
 `ReportDrawer`) ne sont pas touchés : ils ignorent les réponses en texte.
 
-**Statut :** reproduit (1 scénario), non corrigé.
+**Statut :** corrigé le 2026-10-02 comme proposé : seules les réponses de
+l'API (JSON) sont affichées ; sinon « Le serveur a rencontré une erreur.
+Réessayez plus tard. », ou « Impossible de joindre le serveur » sans
+réponse du tout. Scénario `e2e/06-pannes.spec.js` au vert.
 
 ---
 

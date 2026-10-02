@@ -1,7 +1,7 @@
 // Scénario 4 — Compte suspendu pendant qu'il est connecté : l'action suivante
 // est refusée, avec un message qui dit pourquoi.
 import { test, expect } from '@playwright/test';
-import { API, entetes, failleConnue, lireEtat, ouvrirSession } from './outils.js';
+import { API, entetes, lireEtat, ouvrirSession } from './outils.js';
 
 test.afterEach(async ({ request }) => {
   // Réactive le compte, pour pouvoir rejouer le scénario.
@@ -11,7 +11,6 @@ test.afterEach(async ({ request }) => {
 });
 
 test("suspendu en cours de session : l'action suivante est refusée avec un message clair", async ({ page, request }) => {
-  failleConnue(test, 41);
   await ouvrirSession(page, 'suspendu', '/etudiant/planning');
   await expect(page.getByRole('heading', { name: /^Planning/ })).toBeVisible();
 
@@ -28,5 +27,6 @@ test("suspendu en cours de session : l'action suivante est refusée avec un mess
 
   // Le serveur refuse ; l'interface doit dire que le compte est suspendu,
   // pas « rafraîchissez la page ».
+  await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByText(/suspendu/i)).toBeVisible();
 });

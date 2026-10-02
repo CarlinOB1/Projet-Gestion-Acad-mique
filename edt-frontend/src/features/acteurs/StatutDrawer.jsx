@@ -185,23 +185,22 @@ export default function StatutDrawer({ open, onClose, profil, queryKeyToInvalida
 
 /**
  * Extrait un message d'erreur propre depuis la réponse Django REST Framework.
+ * Seules les réponses de l'API (objet JSON) sont affichées : une page
+ * d'erreur HTML du serveur s'affichait en code brut dans le panneau
+ * (CORRECTIONS_A_FAIRE.md point 44).
  * @param {Object} error - L'objet d'erreur intercepté par Axios.
  * @returns {string} Message d'erreur utilisateur.
  */
 function parseApiError(error) {
-  if (error?.response?.data) {
-    const data = error.response.data;
-    
-    if (typeof data === 'string') return data;
-    if (data.detail) return data.detail;
-    if (data.message) return data.message;
-    
+  const data = error?.response?.data;
+  if (data && typeof data === 'object') {
+    if (typeof data.detail === 'string') return data.detail;
+    if (typeof data.message === 'string') return data.message;
+
     // Si Django renvoie des erreurs de validation par champ ({ motif_suspension: ["..."] })
-    const firstKey = Object.keys(data)[0];
-    if (firstKey) {
-      const fieldError = data[firstKey];
-      return Array.isArray(fieldError) ? fieldError[0] : fieldError;
-    }
+    const premiere = Object.values(data).flat().find((v) => typeof v === 'string' && v);
+    if (premiere) return premiere;
   }
-  return error?.message || "Une erreur réseau ou serveur est survenue.";
+  if (error?.response) return "Le serveur a rencontré une erreur. Réessayez plus tard.";
+  return "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.";
 }
