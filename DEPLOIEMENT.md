@@ -39,6 +39,7 @@ server {
     # ssl_certificate / ssl_certificate_key : certificat de l'université
 
     client_max_body_size 20m;            # aligné sur DOCUMENT_MAX_UPLOAD_BYTES
+    server_tokens off;                   # ne pas annoncer la version de nginx (scan ZAP)
 
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy same-origin always;

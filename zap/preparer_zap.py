@@ -45,7 +45,11 @@ def premier_pk(viewset):
 
 def preparer(chemin_etat):
     seance = (
-        Seance.objects.filter(statut="Confirmée", classe__filiere__departement__chef__isnull=False)
+        # Classe qui a encore des étudiants : un scan précédent a pu en vider
+        # une (« passer au semestre suivant » rejoué par le scan actif).
+        Seance.objects.filter(statut="Confirmée", classe__filiere__departement__chef__isnull=False,
+                              classe__etudiant__isnull=False)
+        .distinct()
         .select_related("classe__filiere__departement__chef__profil__user", "classe__semestre")
         .order_by("pk").first()
     )

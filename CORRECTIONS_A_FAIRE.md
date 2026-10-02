@@ -1331,5 +1331,40 @@ une tabulation ou un retour chariot.
 
 ---
 
+## 46. Scan d'attaque automatique (OWASP ZAP) : version du serveur annoncée
+
+**Découvert le :** 2026-10-02 (étape C4, `zap/lancer_zap.py`, ZAP 2.17.0).
+
+**Déroulé du scan :** base jetable `edt_zap`, serveur de développement à
+part, 53 requêtes couvrant toutes les routes de l'API (paramètres et corps
+plausibles), puis scan passif et actif complet avec la session d'un chef de
+département, puis d'un étudiant (environ 7 minutes chacun, toutes les
+règles passées). Environ 30 000 requêtes : injections SQL et de commandes,
+inclusion de fichiers, contournement de chemins, en-têtes piégés...
+
+**Résultat :** aucune faille confirmée.
+- Aucune injection ni fuite détectée ; les saisies piégées sont refusées
+  (12 500 réponses 400, 6 100 refus 403).
+- Aucune écriture acceptée avec la session étudiant. Les écritures réussies
+  de la phase chef (report, suspension d'un étudiant de ses classes,
+  affectation, passage au semestre suivant) sont permises à un chef.
+- 282 erreurs 500, toutes du même cas propre au mode développement : un
+  POST sur une adresse sans « / » final, que Django refuse de rediriger
+  quand `DEBUG=True` (en production, il redirige). Sans effet en ligne.
+- Alertes ZAP restantes : le serveur annonce sa version (« WSGIServer/0.2
+  CPython/3.14.2 », serveur de développement), et une réponse qui varie
+  selon le navigateur annoncé (information, sans risque démontré).
+
+**Piste de correction :** en production, nginx remplace l'en-tête du
+serveur ; `server_tokens off;` lui évite d'annoncer sa propre version.
+
+**Statut :** ajouté le 2026-10-02 à la configuration nginx de
+`DEPLOIEMENT.md`. À revérifier en Phase B, avec un scan ZAP sur le serveur
+réel (HTTPS, nginx, `DEBUG=False`) : le plan de scan de `zap/lancer_zap.py`
+sert de base, à adapter pour viser ce serveur au lieu d'en démarrer un en
+local.
+
+---
+
 <!-- Ajouter les prochains points ci-dessous, avec le même format
      (titre, date de découverte, problème, cause, piste de correction). -->
