@@ -416,6 +416,9 @@ class ProfilSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'user_id', 'user',
             'genre', 'telephone', 'photo', 'statut', 'motif_suspension',
         ]
+        # Même limite que changer_statut (ProfilSuspensionSerializer) : le
+        # champ n'en a pas en base (CORRECTIONS_A_FAIRE.md point 37).
+        extra_kwargs = {'motif_suspension': {'max_length': 255}}
 
     def validate(self, data):
         # Un profil reste attaché à son compte : user_id ne sert qu'à la
@@ -679,6 +682,10 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'nb_seances_liees', 'nb_affectations_liees',
         ]
         read_only_fields = ['created_at']
+        # Champ texte sans limite en base : un million de caractères passait
+        # et alourdissait chaque planning contenant le module
+        # (CORRECTIONS_A_FAIRE.md point 37).
+        extra_kwargs = {'description': {'max_length': 2000}}
 
     def get_heures_max(self, obj):
         return obj.heures_max()

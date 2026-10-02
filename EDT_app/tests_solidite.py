@@ -51,7 +51,6 @@ from EDT_app.models import (
     Inscription,
     Seance,
 )
-from EDT_app.outils_tests import faille_connue
 from EDT_app.tests_securite import PDF_MINIMAL, make_enseignant, make_etudiant, make_user
 
 BLOCS = [(time(9, 0), time(11, 0)), (time(11, 15), time(13, 15)), (time(14, 15), time(16, 15))]
@@ -334,12 +333,17 @@ class TextesTresLongsTest(UniversSimple, TestCase):
         self.construire_univers()
         self.client_admin = client_de(self.admin)
 
-    @faille_connue(37)
     def test_description_de_module_d_un_million_de_caracteres(self):
         resp = self.client_admin.patch(
             f"/api/modules/{self.module.pk}/", {"description": self.UN_MILLION}, format="json",
         )
         self.assertEqual(resp.status_code, 400, resp.content[:200])
+
+    def test_description_de_2000_caracteres_acceptee(self):
+        resp = self.client_admin.patch(
+            f"/api/modules/{self.module.pk}/", {"description": "x" * 2000}, format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content[:200])
 
     def test_controle_motif_de_suspension_limite_par_changer_statut(self):
         resp = self.client_admin.patch(
@@ -348,7 +352,6 @@ class TextesTresLongsTest(UniversSimple, TestCase):
         )
         self.assertEqual(resp.status_code, 400, resp.content[:200])
 
-    @faille_connue(37)
     def test_motif_de_suspension_d_un_million_de_caracteres_par_la_fiche(self):
         # Le même motif passe par une simple modification de la fiche profil
         # (voir aussi le point 20 : statut et motif y sont modifiables).
@@ -873,7 +876,6 @@ class RequetesSimultaneesTest(UniversSimple, TransactionTestCase):
                 plantages.append((str(jour), [repr(c) for c in codes]))
         self.assertEqual(plantages, [], "interblocage ou erreur serveur")
 
-    @faille_connue(38)
     def test_reinscriptions_simultanees_une_seule_inscription_active(self):
         # Deux réinscriptions du même étudiant vers deux classes différentes,
         # au même instant (double clic, deux onglets, import en parallèle).

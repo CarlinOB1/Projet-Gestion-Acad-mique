@@ -10,6 +10,7 @@
 # et par le serializer : une seule règle, jamais deux copies qui divergent.
 import os
 import uuid
+import zipfile
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -32,6 +33,17 @@ SIGNATURES = {
 EXTENSIONS_AUTORISEES = frozenset(SIGNATURES)
 
 _TAILLE_ENTETE = 8192
+
+# Formats Office récents : une archive ZIP dont la structure est imposée.
+# Dossier principal attendu pour chaque extension.
+_DOSSIER_OFFICE = {'.docx': 'word/', '.xlsx': 'xl/', '.pptx': 'ppt/'}
+# Contenus qu'un document à distribuer aux étudiants n'a pas à porter :
+# programmes et scripts que Windows lancerait d'un double clic.
+_EXTENSIONS_EXECUTABLES = (
+    '.exe', '.dll', '.com', '.scr', '.msi', '.bat', '.cmd', '.ps1',
+    '.vbs', '.vbe', '.js', '.jse', '.wsf', '.hta', '.jar', '.lnk',
+)
+_TAILLE_MAX_TYPES = 1024 * 1024  # [Content_Types].xml : quelques Ko en pratique
 
 
 def taille_maximale():
@@ -72,6 +84,49 @@ def valider_fichier_televerse(fichier):
         raise ValidationError(
             f"Le contenu du fichier ne correspond pas à son extension '{ext}'."
         )
+
+    if ext in _DOSSIER_OFFICE:
+        _valider_archive_office(fichier, ext)
+
+
+def _valider_archive_office(fichier, ext):
+    """
+    Les quatre premiers octets d'un .docx/.xlsx/.pptx sont ceux de n'importe
+    quelle archive ZIP : une archive contenant un programme, ou un document à
+    macros (.docm) renommé, passait pour un document ordinaire
+    (CORRECTIONS_A_FAIRE.md point 35). On lit donc la table des matières de
+    l'archive, sans rien décompresser d'autre que [Content_Types].xml.
+    """
+    refus = ValidationError(
+        f"Ce fichier n'est pas un document '{ext}' valide, ou il contient des "
+        "macros ou un programme. Enregistrez-le de nouveau au format "
+        f"'{ext}' (sans macros) avant de le déposer."
+    )
+    fichier.seek(0)
+    try:
+        with zipfile.ZipFile(fichier) as archive:
+            noms = archive.namelist()
+            noms_minuscules = [nom.lower() for nom in noms]
+            if '[Content_Types].xml' not in noms:
+                raise refus
+            if not any(nom.startswith(_DOSSIER_OFFICE[ext]) for nom in noms):
+                raise refus
+            if any(
+                nom.endswith('vbaproject.bin') or nom.endswith(_EXTENSIONS_EXECUTABLES)
+                for nom in noms_minuscules
+            ):
+                raise refus
+            with archive.open('[Content_Types].xml') as types:
+                # « macroEnabled » : type déclaré par Office pour un document
+                # à macros, même quand le fichier de macros porte un autre nom.
+                if b'macroenabled' in types.read(_TAILLE_MAX_TYPES).lower():
+                    raise refus
+    except ValidationError:
+        raise
+    except Exception:  # noqa: BLE001 — archive illisible, chiffrée ou corrompue
+        raise refus from None
+    finally:
+        fichier.seek(0)
 
 
 def chemin_televerse(dossier, nom_fichier):

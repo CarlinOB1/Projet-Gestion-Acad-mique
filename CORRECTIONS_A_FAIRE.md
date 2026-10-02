@@ -1057,7 +1057,15 @@ signature ZIP et non un vrai document.
 **Statut :** nom trop long corrigé le 2026-10-01 par la migration 0016 : la
 base acceptait 100 caractères alors que le modèle en déclarait 255 ; Django
 raccourcit maintenant le nom (extension gardée) et l'écriture passe.
-Contenu Office : reproduit (2 tests), non corrigé. Contrôles qui passent : noms
+Contenu Office corrigé le 2026-10-02 (`_valider_archive_office`,
+`EDT_app/fichiers.py`) : l'archive est ouverte (table des matières
+seulement, rien n'est décompressé à part `[Content_Types].xml`) et doit
+contenir `[Content_Types].xml` et le dossier du format (`word/`, `xl/`,
+`ppt/`) ; sont refusés les macros (`vbaProject.bin`, ou un type déclaré
+« macroEnabled »), les programmes et scripts glissés dedans (`.exe`, `.js`,
+`.vbs`...) et les archives illisibles, avec un message qui invite à
+réenregistrer le document sans macros. `test_docx_valide_accepte` dépose
+désormais un vrai document. Contrôles qui passent : noms
 piégés (guillemets, retour à la ligne, `../`) neutralisés en développement et
 en production, double extension `.pdf.exe` et formats à macros
 (`.docm`/`.xlsm`/`.pptm`/`.dotm`) refusés, texte contenant du HTML servi
@@ -1111,7 +1119,11 @@ un seul module ainsi rempli alourdit tous les plannings qui le contiennent.
 **Piste de correction :** `max_length` côté sérialiseur (par exemple 2 000
 caractères pour la description, 255 pour le motif, comme `changer_statut`).
 
-**Statut :** reproduit (2 tests), non corrigé.
+**Statut :** corrigé le 2026-10-02 comme proposé : 2 000 caractères pour la
+description d'un module (`ModuleSerializer`), 255 pour le motif de
+suspension par la fiche profil (`ProfilSerializer`), refus 400 au-delà.
+Pas de migration : la limite est posée à l'entrée de l'API, la base garde
+ses colonnes. L'interface ne saisit pas de description de module.
 
 ---
 
@@ -1135,9 +1147,13 @@ pour un même étudiant (l'unicité porte sur le couple étudiant-classe).
 basse tant que `reinscrire()` n'est appelée par aucune page (elle le
 deviendra avec la correction du point 30).
 
-**Statut :** reproduit, non corrigé. Contrôle : deux publications en masse
-croisées des mêmes séances ne se bloquent pas (verrous ordonnés de
-`_locker_pour_validation`).
+**Statut :** corrigé le 2026-10-02 comme proposé : `reinscrire()`
+verrouille la ligne de l'étudiant avant toute autre lecture, et relit sa
+classe sous ce verrou. Les réinscriptions simultanées passent l'une après
+l'autre ; la dernière arrivée l'emporte, avec une seule inscription active.
+`reinscrire()` sert désormais au passage au semestre suivant (point 30).
+Contrôle : deux publications en masse croisées des mêmes séances ne se
+bloquent pas (verrous ordonnés de `_locker_pour_validation`).
 
 ---
 

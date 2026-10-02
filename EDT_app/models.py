@@ -511,6 +511,17 @@ class Etudiant(models.Model):
         date_inscription = date_inscription or date_type.today()
 
         with transaction.atomic():
+            # Verrou sur l'étudiant, pris avant toute autre lecture ou
+            # écriture : deux réinscriptions simultanées (double clic, deux
+            # onglets, import rejoué) passent l'une après l'autre au lieu de
+            # se bloquer (erreur MySQL 1213) ou d'ouvrir deux inscriptions
+            # actives (CORRECTIONS_A_FAIRE.md point 38). La classe est relue
+            # sous ce verrou : l'autre réinscription a pu la changer.
+            self.classe_id = (
+                Etudiant.objects.select_for_update()
+                .values_list('classe_id', flat=True)
+                .get(pk=self.pk)
+            )
             deja_inscrit = self.inscriptions.exists()
 
             if deja_inscrit and nouvelle_classe.pk != self.classe_id:

@@ -42,7 +42,6 @@ from EDT_app.factories import (
     Semestre1Factory,
 )
 from EDT_app.models import DocumentPedagogique, ReferentClasse
-from EDT_app.outils_tests import faille_connue
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -378,7 +377,11 @@ class DocumentsSecuriteTest(TestCase):
         self.assertEqual(self._deposer("a.pdf", PDF_MINIMAL).status_code, 201)
 
     def test_docx_valide_accepte(self):
-        self.assertEqual(self._deposer("a.docx", ZIP_MINIMAL).status_code, 201)
+        self.assertEqual(self._deposer("a.docx", DOCX_MINIMAL).status_code, 201)
+
+    def test_simple_signature_zip_renommee_en_docx_refusee(self):
+        # Les quatre premiers octets d'une archive ne suffisent plus (point 35).
+        self.assertEqual(self._deposer("a.docx", ZIP_MINIMAL).status_code, 400)
 
     def test_doc_ancien_format_accepte(self):
         self.assertEqual(self._deposer("a.doc", OLE_MINIMAL).status_code, 201)
@@ -528,14 +531,13 @@ class DocumentsNomsEtContenusTest(TestCase):
         self.assertTrue(telechargement['Content-Type'].startswith('text/plain'), telechargement['Content-Type'])
         self.assertIn('attachment', telechargement['Content-Disposition'])
 
-    @faille_connue(35)
     def test_archive_quelconque_renommee_en_docx_refusee(self):
-        # Seuls les 4 premiers octets (« PK ») sont vérifiés : une archive
-        # contenant un programme passe pour un document Word.
+        # Avant le point 35, seuls les 4 premiers octets (« PK ») étaient
+        # vérifiés : une archive contenant un programme passait pour un
+        # document Word.
         archive = archive_zip({'programme.exe': EXE_DEGUISE})
         self.assertEqual(self._deposer('cours.docx', archive).status_code, 400)
 
-    @faille_connue(35)
     def test_document_office_contenant_des_macros_refuse(self):
         # Un .docm (document à macros) simplement renommé en .docx.
         avec_macros = archive_zip({
@@ -544,6 +546,37 @@ class DocumentsNomsEtContenusTest(TestCase):
             'word/vbaProject.bin': EXE_DEGUISE,
         })
         self.assertEqual(self._deposer('cours.docx', avec_macros).status_code, 400)
+
+    def test_document_qui_se_declare_a_macros_refuse(self):
+        # Fichier de macros renommé, mais type « macroEnabled » déclaré.
+        declare = archive_zip({
+            '[Content_Types].xml': (
+                '<Types><Override PartName="/word/document.xml" ContentType='
+                '"application/vnd.ms-word.document.macroEnabled.main+xml"/></Types>'
+            ),
+            'word/document.xml': '<w:document/>',
+        })
+        self.assertEqual(self._deposer('cours.docx', declare).status_code, 400)
+
+    def test_programme_glisse_dans_un_vrai_document_refuse(self):
+        archive = archive_zip({
+            '[Content_Types].xml': '<Types/>',
+            'word/document.xml': '<w:document/>',
+            'word/media/photo.exe': EXE_DEGUISE,
+        })
+        self.assertEqual(self._deposer('cours.docx', archive).status_code, 400)
+
+    def test_document_word_renomme_en_xlsx_refuse(self):
+        self.assertEqual(self._deposer('notes.xlsx', DOCX_MINIMAL).status_code, 400)
+
+    def test_archive_tronquee_refusee_sans_plantage(self):
+        self.assertEqual(self._deposer('cours.docx', DOCX_MINIMAL[:-20]).status_code, 400)
+
+    def test_vrais_xlsx_et_pptx_acceptes(self):
+        for nom, dossier in (('notes.xlsx', 'xl/workbook.xml'), ('diapos.pptx', 'ppt/presentation.xml')):
+            contenu = archive_zip({'[Content_Types].xml': '<Types/>', dossier: '<x/>'})
+            with self.subTest(nom=nom):
+                self.assertEqual(self._deposer(nom, contenu).status_code, 201)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
