@@ -2,7 +2,7 @@ import {
   CalendarDays,
   Users, BookOpen, BookMarked,
   GraduationCap, BarChart3, UserCircle, FileText
-} from 'lucide-react';
+} from '@/components/ui/icons';
 
 export const NAV_ITEMS = [
   // Admin & Chef & Référent (Hybride) - GESTION DU DÉPARTEMENT

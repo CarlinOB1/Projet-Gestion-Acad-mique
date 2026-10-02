@@ -77,7 +77,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     # Pagination par défaut sur toutes les listes
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # (20 lignes, jusqu'à 200 sur demande avec ?page_size=)
+    'DEFAULT_PAGINATION_CLASS': 'EDT_app.pagination.PaginationStandard',
     'PAGE_SIZE': 20,
     # Convertit toute django.core.exceptions.ValidationError non interceptée
     # en réponse 400 DRF au lieu d'un 500 (cf. EDT_app/exception_handlers.py).
@@ -96,7 +97,9 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '60/min',
-        'user': '600/min',
+        # Relevable pour le seul serveur du scan ZAP (zap/lancer_zap.py), qui
+        # envoie des milliers de requêtes avec un même compte.
+        'user': env.str('DJANGO_THROTTLE_USER', default='600/min'),
         'login': '5/min',
         'login_ip': '120/min',
     },
@@ -250,8 +253,11 @@ CSRF_TRUSTED_ORIGINS = env.list(
     default=['http://localhost:3000', 'http://127.0.0.1:3000'],
 )
 
-# Rappel : Ceci doit toujours être à True
-CORS_ALLOW_CREDENTIALS = True
+# Le jeton voyage dans l'en-tête Authorization, jamais dans un cookie :
+# l'interface n'envoie aucun identifiant de navigateur (pas de
+# withCredentials), inutile donc de les autoriser (CORRECTIONS_A_FAIRE.md
+# point 26).
+CORS_ALLOW_CREDENTIALS = False
 
 # Media files (Profile pictures, etc.)
 MEDIA_URL = '/media/'

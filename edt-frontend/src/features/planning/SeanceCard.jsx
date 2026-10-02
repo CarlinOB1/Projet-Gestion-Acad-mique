@@ -2,7 +2,7 @@
  * @file SeanceCard.jsx
  * @description Rendu custom d'un événement FullCalendar — adapté au type et statut de la séance.
  */
-import { CalendarClock } from 'lucide-react';
+import { CalendarClock } from '@/components/ui/icons';
 import { SEANCE_COLORS, STATUT_COLORS } from '@/lib/constants';
 import { formatHeure } from '@/lib/utils';
 

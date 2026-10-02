@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Users, BookOpen, AlertCircle, Inbox } from 'lucide-react';
+import { Plus, Users, BookOpen, AlertCircle, Inbox } from '@/components/ui/icons';
 
 // UI primitives
 import { Button } from '@/components/ui/button';

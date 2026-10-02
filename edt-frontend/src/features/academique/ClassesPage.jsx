@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   GraduationCap, ChevronDown, ChevronUp, Users, ArrowRightCircle,
   CheckCircle2, Plus, UserX, UserCheck, School,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import PageHeader from '@/components/shared/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';

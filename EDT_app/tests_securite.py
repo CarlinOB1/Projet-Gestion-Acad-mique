@@ -12,9 +12,11 @@
 # Lancement :
 #   ./.venv/Scripts/python.exe manage.py test EDT_app.tests_securite --verbosity=2
 
+import io
 import re
 import shutil
 import tempfile
+import zipfile
 from datetime import time, timedelta
 
 from django.conf import settings
@@ -355,6 +357,18 @@ class DocumentsSecuriteTest(TestCase):
         self.assertEqual(resp['X-Accel-Redirect'], '/protected_media/' + doc.fichier.name)
         self.assertEqual(resp.content, b"")
 
+    @override_settings(PROTECTED_MEDIA_INTERNAL_PREFIX='/protected_media/')
+    def test_en_production_le_type_du_fichier_est_annonce(self):
+        # nginx garde le type de la réponse de Django (simulation de mise en
+        # ligne, point 47) : jamais text/html pour un document.
+        attendus = {'cours.pdf': 'application/pdf', 'notes.txt': 'text/plain'}
+        contenus = {'cours.pdf': PDF_MINIMAL, 'notes.txt': b'Bonjour'}
+        for nom, type_attendu in attendus.items():
+            depot = self._deposer(nom, contenus[nom])
+            resp = client_for(self.etu.profil.user).get(f"/api/documents/{depot.data['id']}/telecharger/")
+            with self.subTest(nom=nom):
+                self.assertEqual(resp['Content-Type'], type_attendu)
+
     # ── Noms de fichiers non devinables ──────────────────────────────────────
 
     def test_le_fichier_est_range_sous_un_dossier_aleatoire(self):
@@ -375,7 +389,11 @@ class DocumentsSecuriteTest(TestCase):
         self.assertEqual(self._deposer("a.pdf", PDF_MINIMAL).status_code, 201)
 
     def test_docx_valide_accepte(self):
-        self.assertEqual(self._deposer("a.docx", ZIP_MINIMAL).status_code, 201)
+        self.assertEqual(self._deposer("a.docx", DOCX_MINIMAL).status_code, 201)
+
+    def test_simple_signature_zip_renommee_en_docx_refusee(self):
+        # Les quatre premiers octets d'une archive ne suffisent plus (point 35).
+        self.assertEqual(self._deposer("a.docx", ZIP_MINIMAL).status_code, 400)
 
     def test_doc_ancien_format_accepte(self):
         self.assertEqual(self._deposer("a.doc", OLE_MINIMAL).status_code, 201)
@@ -407,6 +425,170 @@ class DocumentsSecuriteTest(TestCase):
     def test_fichier_a_la_limite_accepte(self):
         contenu = PDF_MINIMAL + b"0" * (1024 - len(PDF_MINIMAL))
         self.assertEqual(self._deposer("limite.pdf", contenu).status_code, 201)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3 bis. DOCUMENTS : NOMS PIÉGÉS ET CONTENUS DÉGUISÉS
+# (plan « solidité et sécurité », étape 1c, 2026-10-01)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def archive_zip(fichiers):
+    """Contenu binaire d'une archive ZIP {nom: contenu}."""
+    tampon = io.BytesIO()
+    with zipfile.ZipFile(tampon, 'w') as archive:
+        for nom, contenu in fichiers.items():
+            archive.writestr(nom, contenu)
+    return tampon.getvalue()
+
+
+DOCX_MINIMAL = archive_zip({
+    '[Content_Types].xml': '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+    'word/document.xml': '<w:document/>',
+})
+
+
+class DocumentsNomsEtContenusTest(TestCase):
+    """
+    Le nom d'un fichier vient du navigateur de l'enseignant : il ne doit ni
+    s'échapper du dossier des documents, ni s'injecter dans l'en-tête de
+    téléchargement. Le contenu doit correspondre à un vrai document.
+    """
+
+    # Même préparation que DocumentsSecuriteTest, sans en rejouer les tests.
+    setUp = DocumentsSecuriteTest.setUp
+    _deposer = DocumentsSecuriteTest._deposer
+
+    NOMS_PIEGES = [
+        'a"; filename="virus.exe.pdf',
+        'a\r\nX-Pirate: 1.pdf',
+        '../../../settings.pdf',
+        '..\\..\\windows.pdf',
+    ]
+
+    def _problemes_de_nom(self, nom, en_production):
+        """Liste des défauts observés pour un nom piégé (vide si tout va bien)."""
+        resp = self._deposer(nom, PDF_MINIMAL)
+        if resp.status_code >= 500:
+            return [f"{nom!r} : dépôt → erreur serveur {resp.status_code}"]
+        if resp.status_code != 201:
+            return []  # refus propre : acceptable
+        doc = DocumentPedagogique.objects.get(pk=resp.data['id'])
+        problemes = []
+        if '..' in doc.fichier.name or not doc.fichier.name.startswith('documents/'):
+            problemes.append(f"{nom!r} : rangé hors du dossier des documents ({doc.fichier.name})")
+        client = client_for(self.etu.profil.user)
+        client.raise_request_exception = False
+        prefixe = '/protected_media/' if en_production else ''
+        with override_settings(PROTECTED_MEDIA_INTERNAL_PREFIX=prefixe):
+            telechargement = client.get(f'/api/documents/{doc.pk}/telecharger/')
+        if telechargement.status_code != 200:
+            return problemes + [f"{nom!r} : téléchargement → {telechargement.status_code}"]
+        entete = telechargement['Content-Disposition']
+        if '\r' in entete or '\n' in entete or telechargement.has_header('X-Pirate'):
+            problemes.append(f"{nom!r} : en-tête injecté ({entete!r})")
+        if entete.count('"') > 2:
+            problemes.append(f"{nom!r} : guillemet non neutralisé ({entete!r})")
+        return problemes
+
+    def test_controle_noms_pieges_neutralises_en_developpement(self):
+        problemes = [p for nom in self.NOMS_PIEGES for p in self._problemes_de_nom(nom, False)]
+        self.assertEqual(problemes, [])
+
+    def test_controle_noms_pieges_neutralises_en_production(self):
+        # En production, l'en-tête Content-Disposition est écrit à la main
+        # (DocumentViewSet.telecharger, branche X-Accel-Redirect).
+        problemes = [p for nom in self.NOMS_PIEGES for p in self._problemes_de_nom(nom, True)]
+        self.assertEqual(problemes, [])
+
+    def test_controle_chemin_remontant_neutralise_a_la_source(self):
+        # Le client de test retire lui-même les « ../ » d'un envoi : on vérifie
+        # donc aussi la fonction qui fabrique le chemin de rangement.
+        from EDT_app.fichiers import chemin_televerse
+        for nom in ('../../../settings.pdf', '..\\..\\windows.pdf', '/etc/passwd.pdf'):
+            chemin = chemin_televerse('documents/%Y/%m', nom)
+            self.assertNotIn('..', chemin)
+            self.assertRegex(chemin, r'^documents/\d{4}/\d{2}/[0-9a-f]{32}/[^/\\]+$')
+
+    def test_nom_tres_long_sans_plantage(self):
+        # Django raccourcit le nom à la longueur du champ (255) ; la base
+        # n'acceptait que 100 caractères avant la migration 0016 (point 35).
+        resp = self._deposer('a' * 300 + '.pdf', PDF_MINIMAL)
+        self.assertLess(resp.status_code, 500, resp.content[:300])
+        if resp.status_code == 201:
+            doc = DocumentPedagogique.objects.get(pk=resp.data['id'])
+            limite = DocumentPedagogique._meta.get_field('fichier').max_length
+            self.assertLessEqual(len(doc.fichier.name), limite)
+            self.assertTrue(doc.fichier.name.endswith('.pdf'))
+            self.assertTrue(doc.fichier.storage.exists(doc.fichier.name))
+
+    def test_controle_double_extension_executable_refusee(self):
+        self.assertEqual(self._deposer('cours.pdf.exe', PDF_MINIMAL).status_code, 400)
+
+    def test_controle_fichiers_office_a_macros_refuses(self):
+        acceptes = [
+            nom for nom in ('cours.docm', 'notes.xlsm', 'diapos.pptm', 'modele.dotm')
+            if self._deposer(nom, DOCX_MINIMAL).status_code != 400
+        ]
+        self.assertEqual(acceptes, [])
+
+    def test_controle_vrai_docx_accepte(self):
+        self.assertEqual(self._deposer('cours.docx', DOCX_MINIMAL).status_code, 201)
+
+    def test_controle_texte_contenant_du_html_servi_comme_texte(self):
+        resp = self._deposer('page.txt', b'<script>alert(1)</script>')
+        self.assertEqual(resp.status_code, 201)
+        telechargement = client_for(self.etu.profil.user).get(
+            f"/api/documents/{resp.data['id']}/telecharger/"
+        )
+        self.assertTrue(telechargement['Content-Type'].startswith('text/plain'), telechargement['Content-Type'])
+        self.assertIn('attachment', telechargement['Content-Disposition'])
+
+    def test_archive_quelconque_renommee_en_docx_refusee(self):
+        # Avant le point 35, seuls les 4 premiers octets (« PK ») étaient
+        # vérifiés : une archive contenant un programme passait pour un
+        # document Word.
+        archive = archive_zip({'programme.exe': EXE_DEGUISE})
+        self.assertEqual(self._deposer('cours.docx', archive).status_code, 400)
+
+    def test_document_office_contenant_des_macros_refuse(self):
+        # Un .docm (document à macros) simplement renommé en .docx.
+        avec_macros = archive_zip({
+            '[Content_Types].xml': '<Types/>',
+            'word/document.xml': '<w:document/>',
+            'word/vbaProject.bin': EXE_DEGUISE,
+        })
+        self.assertEqual(self._deposer('cours.docx', avec_macros).status_code, 400)
+
+    def test_document_qui_se_declare_a_macros_refuse(self):
+        # Fichier de macros renommé, mais type « macroEnabled » déclaré.
+        declare = archive_zip({
+            '[Content_Types].xml': (
+                '<Types><Override PartName="/word/document.xml" ContentType='
+                '"application/vnd.ms-word.document.macroEnabled.main+xml"/></Types>'
+            ),
+            'word/document.xml': '<w:document/>',
+        })
+        self.assertEqual(self._deposer('cours.docx', declare).status_code, 400)
+
+    def test_programme_glisse_dans_un_vrai_document_refuse(self):
+        archive = archive_zip({
+            '[Content_Types].xml': '<Types/>',
+            'word/document.xml': '<w:document/>',
+            'word/media/photo.exe': EXE_DEGUISE,
+        })
+        self.assertEqual(self._deposer('cours.docx', archive).status_code, 400)
+
+    def test_document_word_renomme_en_xlsx_refuse(self):
+        self.assertEqual(self._deposer('notes.xlsx', DOCX_MINIMAL).status_code, 400)
+
+    def test_archive_tronquee_refusee_sans_plantage(self):
+        self.assertEqual(self._deposer('cours.docx', DOCX_MINIMAL[:-20]).status_code, 400)
+
+    def test_vrais_xlsx_et_pptx_acceptes(self):
+        for nom, dossier in (('notes.xlsx', 'xl/workbook.xml'), ('diapos.pptx', 'ppt/presentation.xml')):
+            contenu = archive_zip({'[Content_Types].xml': '<Types/>', dossier: '<x/>'})
+            with self.subTest(nom=nom):
+                self.assertEqual(self._deposer(nom, contenu).status_code, 201)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

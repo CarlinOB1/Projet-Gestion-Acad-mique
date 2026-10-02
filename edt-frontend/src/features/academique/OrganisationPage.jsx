@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus } from '@/components/ui/icons';
 
 // Primitives UI de shadcn/ui
 import { Button } from '@/components/ui/button';

@@ -7,7 +7,7 @@ import { useMemo } from 'react';
 import {
     Search, SlidersHorizontal, X,
     ChevronsDown, ChevronsUp,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';

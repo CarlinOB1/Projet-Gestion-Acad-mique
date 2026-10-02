@@ -5,10 +5,11 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Navigate } from 'react-router-dom';
-import { Eye, EyeOff, ChevronLeft, ChevronRight, Pause, Play, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, ChevronLeft, ChevronRight, Pause, Play, Loader2 } from '@/components/ui/icons';
 import useAuthStore from '@/store/authStore';
 import { loginSchema } from '@/lib/schemas';
 import { useLogin, parseLoginError } from './useLogin';
+import { effacerMessageConnexion, lireMessageConnexion } from '@/lib/messageConnexion';
 import logoUccb from '@/assets/login/logo-uccb.svg';
 import campusBatiment from '@/assets/login/campus-batiment.jpg';
 import campusSport from '@/assets/login/campus-sport.jpg';
@@ -207,6 +208,11 @@ export default function LoginPage() {
 
   const { mutate, isPending, error, isError } = useLogin();
   const [showPassword, setShowPassword] = useState(false);
+  // Raison d'une déconnexion forcée (compte suspendu, session expirée),
+  // notée par api/client.js juste avant de revenir ici. Effacée à la
+  // tentative de connexion suivante, pas à l'affichage : la déconnexion
+  // affiche cette page une première fois avant de la recharger.
+  const [messageConnexion] = useState(lireMessageConnexion);
 
   const { register, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(loginSchema),
@@ -214,6 +220,7 @@ export default function LoginPage() {
   });
 
   const onSubmit = (data) => {
+    effacerMessageConnexion();
     mutate({ username: data.username, password: data.password });
   };
 
@@ -271,6 +278,12 @@ export default function LoginPage() {
               </div>
 
               <div className="flex flex-col gap-[18px]" onKeyDown={handleKeyDown}>
+                {messageConnexion && !isError && (
+                  <div role="status" className="p-3 text-sm font-medium text-uccb-ink bg-uccb-yellow/15 rounded-lg border border-uccb-yellow/50">
+                    {messageConnexion}
+                  </div>
+                )}
+
                 {/* Identifiant */}
                 <div>
                   <label htmlFor="username" className="block text-sm font-semibold text-uccb-ink mb-2">

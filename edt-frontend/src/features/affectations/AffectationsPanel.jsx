@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Plus, AlertTriangle, CheckCircle2, Pencil, ArrowLeft } from 'lucide-react';
+import { Trash2, Plus, AlertTriangle, CheckCircle2, Pencil, ArrowLeft } from '@/components/ui/icons';
 import {
   getAffectations,
   createAffectation,

@@ -9,7 +9,7 @@ import {
   Trash2,
   Layers,
   List,
-} from "lucide-react";
+} from '@/components/ui/icons';
 import useAuthStore from "@/store/authStore";
 import { useSeances } from "@/hooks/useSeances";
 import { useDeleteSeance } from "@/hooks/useSeanceMutations";
@@ -159,13 +159,32 @@ export default function PlanningPage() {
     }
   }, [semestreId, semestres]);
 
+  // Seule la semaine affichée est demandée au serveur (V5) : avant, tout le
+  // semestre, par tranches de 20 (14 requêtes pour un département).
+  const filtresSeances = useMemo(() => {
+    const jourIso = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const lundi = jourIso(weekStart);
+    if (!GESTIONNAIRE_ROLES.includes(effectiveRole)) {
+      return { semestre_id: semestreId, semaine: lundi };
+    }
+    const dimanche = new Date(weekStart);
+    dimanche.setDate(dimanche.getDate() + 6);
+    return {
+      semestre_id: semestreId,
+      date_debut: lundi,
+      date_fin: jourIso(dimanche),
+      page_size: 200,
+    };
+  }, [semestreId, weekStart, effectiveRole]);
+
   const {
     events,
     isLoading: isLoadingSeances,
     isError: isErrorSeances,
   } = useSeances({
     role: effectiveRole,
-    filters: { semestre_id: semestreId },
+    filters: filtresSeances,
     // Sans semestre, la requête partait sans filtre et téléchargeait toutes
     // les séances du département (29 pages), en concurrence avec la vraie
     // requête lancée un instant plus tard avec le semestre.

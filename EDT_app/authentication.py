@@ -5,8 +5,11 @@
 #   2. Enrichit le token avec le rôle et les infos du profil
 #   3. Expose une vue de login qui retourne aussi les infos utilisateur
 #
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework_simplejwt.views import TokenObtainPairView
+from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework import serializers
 
 from EDT_app.throttles import LoginCompteRateThrottle, LoginIPRateThrottle
@@ -136,3 +139,30 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
     # Remplace les limites globales : voir EDT_app/throttles.py.
     throttle_classes = [LoginCompteRateThrottle, LoginIPRateThrottle]
+
+
+class CustomTokenRefreshSerializer(TokenRefreshSerializer):
+    """
+    Renouvellement de session refusé à un profil suspendu ou absent, comme
+    la connexion. Sans ce contrôle, un compte suspendu pendant sa session
+    la prolongeait indéfiniment (CORRECTIONS_A_FAIRE.md point 17).
+    """
+
+    def validate(self, attrs):
+        refresh = self.token_class(attrs['refresh'])
+        user_id = refresh.payload.get(api_settings.USER_ID_CLAIM)
+        user = get_user_model().objects.filter(
+            **{api_settings.USER_ID_FIELD: user_id}
+        ).first()
+        if user is not None and not user.is_superuser:
+            if not hasattr(user, 'profil') or user.profil.statut != 'actif':
+                raise AuthenticationFailed(
+                    "Votre profil est suspendu. Contactez le responsable pédagogique.",
+                    'profil_suspendu',
+                )
+        return super().validate(attrs)
+
+
+class CustomTokenRefreshView(TokenRefreshView):
+    """POST /api/token/refresh/ — refuse les profils suspendus."""
+    serializer_class = CustomTokenRefreshSerializer

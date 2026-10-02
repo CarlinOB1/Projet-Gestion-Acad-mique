@@ -29,3 +29,6 @@ __pycache__/
 
 # Cache fichier (compteurs de limitation de debit en production)
 /cache/
+
+# Environnement Python separe pour les tests de charge (Locust)
+.venv-charge/

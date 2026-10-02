@@ -1,10 +1,22 @@
 import axios from 'axios';
 import useAuthStore from '@/store/authStore';
+import { noterMessageConnexion } from '@/lib/messageConnexion';
 
+
+// Délai maximal d'une requête. Sans lui, un serveur qui reçoit la demande
+// sans jamais répondre laissait la page en chargement indéfiniment
+// (CORRECTIONS_A_FAIRE.md point 42). Les envois et téléchargements de
+// documents (jusqu'à 20 Mo) règlent un délai plus long sur leur appel.
+export const DELAI_REQUETE_MS = 30_000;
+
+/** Vrai si la requête a été abandonnée faute de réponse dans le délai. */
+export const estDelaiDepasse = (error) =>
+  error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT';
 
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
+  timeout: DELAI_REQUETE_MS,
 });
 
 apiClient.interceptors.request.use(
@@ -35,7 +47,8 @@ function rafraichirLesJetons() {
       const baseURL = import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
       const response = await axios.post(
         `${baseURL}/token/refresh/`,
-        { refresh: refreshToken }
+        { refresh: refreshToken },
+        { timeout: DELAI_REQUETE_MS }
       );
 
       useAuthStore.getState().setTokens({
@@ -50,12 +63,50 @@ function rafraichirLesJetons() {
   return rafraichissementEnCours;
 }
 
+// Un 401 sur ces routes ne signifie pas « jeton d'accès expiré » : c'est la
+// réponse elle-même (identifiants faux, renouvellement refusé). Tenter un
+// renouvellement n'a pas de sens, et la redirection forcée rechargeait la
+// page de connexion en effaçant son message d'erreur
+// (CORRECTIONS_A_FAIRE.md point 40).
+const ROUTES_AUTHENTIFICATION = ['/token/', '/token/refresh/'];
+
+function estRouteAuthentification(url = '') {
+  const chemin = url.split('?')[0].replace(/\/?$/, '/');
+  return ROUTES_AUTHENTIFICATION.some((route) => chemin.endsWith(route));
+}
+
+// Compte suspendu pendant la session : le serveur refuse toute action (403)
+// et tout renouvellement (401) avec le code `profil_suspendu`
+// (EDT_app/permissions.py). Sans ce repérage, chaque page n'affichait qu'un
+// « Une erreur est survenue » (CORRECTIONS_A_FAIRE.md point 41).
+const estCompteSuspendu = (error) => error?.response?.data?.code === 'profil_suspendu';
+
+const MESSAGE_COMPTE_SUSPENDU = 'Votre profil est suspendu. Contactez le responsable pédagogique.';
+const MESSAGE_SESSION_EXPIREE = 'Votre session a expiré. Reconnectez-vous.';
+
+/**
+ * Vide la session et revient à la page de connexion, qui affiche `message`.
+ * Le rechargement complet efface aussi les données gardées en mémoire.
+ */
+function deconnecter(message) {
+  useAuthStore.getState().clearAuth();
+  noterMessageConnexion(message);
+  if (window.location.pathname !== '/login') {
+    window.location.href = '/login';
+  }
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._isRetry) {
+    if (
+      error.response?.status === 401
+      && originalRequest
+      && !originalRequest._isRetry
+      && !estRouteAuthentification(originalRequest.url)
+    ) {
       originalRequest._isRetry = true;
 
       try {
@@ -65,11 +116,18 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
 
       } catch (refreshError) {
-        console.error('Échec du refresh token — déconnexion forcée.', refreshError);
-        useAuthStore.getState().clearAuth();
-        window.location.href = '/login';
+        // Serveur injoignable ou trop lent pendant le renouvellement : la
+        // session n'est pas en cause, on la garde ; la page affiche l'erreur.
+        if (refreshError.response || !refreshError.isAxiosError) {
+          console.error('Échec du refresh token — déconnexion forcée.', refreshError);
+          deconnecter(estCompteSuspendu(refreshError) ? MESSAGE_COMPTE_SUSPENDU : MESSAGE_SESSION_EXPIREE);
+        }
         return Promise.reject(refreshError);
       }
+    }
+
+    if (error.response?.status === 403 && estCompteSuspendu(error)) {
+      deconnecter(MESSAGE_COMPTE_SUSPENDU);
     }
 
     return Promise.reject(error);

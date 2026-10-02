@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getMonProfil } from '@/api/acteurs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { User, Phone, Mail, GraduationCap, Briefcase, Hash } from 'lucide-react';
+import { User, Phone, Mail, GraduationCap, Briefcase, Hash } from '@/components/ui/icons';
 import useAuthStore from '@/store/authStore';
 import { ROLE_LABELS } from '@/lib/constants';
 import PageHeader from '@/components/shared/PageHeader';

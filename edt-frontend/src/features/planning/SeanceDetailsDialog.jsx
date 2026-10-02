@@ -4,7 +4,7 @@
  * d'une séance au clic, pour les rôles enseignant et étudiant.
  * Design premium avec code couleur, icônes et sections distinctes.
  */
-import { Clock, User, Users, BookOpen, CalendarClock, MapPin, Tag } from 'lucide-react';
+import { Clock, User, Users, BookOpen, CalendarClock, MapPin, Tag } from '@/components/ui/icons';
 import {
     Dialog, DialogContent, DialogHeader,
     DialogTitle,

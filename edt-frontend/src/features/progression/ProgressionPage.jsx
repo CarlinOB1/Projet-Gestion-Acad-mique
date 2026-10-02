@@ -3,7 +3,7 @@
  * @description Page listant l'avancement de chaque module du semestre en cours,
  * dérivé du planning de l'utilisateur connecté.
  */
-import { BarChart3 } from "lucide-react";
+import { BarChart3 } from '@/components/ui/icons';
 import { useProgression } from "@/hooks/useProgression";
 import ModuleProgressCard from "./ModuleProgressCard";
 

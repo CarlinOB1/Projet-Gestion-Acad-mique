@@ -2,6 +2,8 @@
 import re
 from datetime import datetime, timedelta, date as date_type
 from datetime import time as time_type
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -137,7 +139,9 @@ class AnneeAcademique(models.Model):
         ('archivée', 'Archivée'),
     ]
 
-    libelle = models.CharField(max_length=20, blank=False)
+    # Unique : deux années « 2025-2026 » rendaient les listes et les
+    # passages ambigus (CORRECTIONS_A_FAIRE.md point 31).
+    libelle = models.CharField(max_length=20, blank=False, unique=True)
     date_debut = models.DateField(blank=False, null=False)
     date_fin = models.DateField(blank=False, null=False)
     statut = models.CharField(
@@ -276,6 +280,14 @@ class Classe(models.Model):
                 raise ValidationError(
                     "Le semestre ne correspond pas à l'année académique de la classe."
                 )
+        # Classe sans filière (L1) : unique par son code. La base le garantit
+        # aussi (index unique_classe_sans_filiere, voir Meta) ; ce contrôle
+        # donne le message clair.
+        if not self.filiere_id and self.code and Classe.objects.filter(
+            filiere__isnull=True, parcours_id=self.parcours_id, semestre_id=self.semestre_id,
+            annee_id=self.annee_id, code=self.code,
+        ).exclude(pk=self.pk).exists():
+            raise ValidationError(f"La classe {self.code} existe déjà pour ce semestre.")
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -288,18 +300,22 @@ class Classe(models.Model):
     class Meta:
         # La contrainte d'unicité porte sur l'identifiant réel :
         # soit la filière (L2+), soit le code (L1).
-        # On utilise unique_together sur les deux colonnes nullables :
-        # Django tolère plusieurs NULL dans une colonne unique.
+        # MySQL ignore les contraintes conditionnelles (`condition=`) : on
+        # s'appuie sur le fait que deux NULL ne se gênent jamais dans un
+        # index unique (CORRECTIONS_A_FAIRE.md point 31).
+        #  - avec filière : la filière est NULL pour les L1, qui ne sont
+        #    donc pas concernées ;
+        #  - sans filière : index unique `unique_classe_sans_filiere` sur
+        #    (parcours, semestre, annee, CASE WHEN filiere IS NULL THEN code
+        #    END), créé par la migration 0016 et connu de la base seulement
+        #    (0017) : déclaré ici, Django le vérifiait par une requête qui
+        #    plante quand les colonnes n'ont pas la collation de la
+        #    connexion (base en utf8mb4_unicode_ci). Le contrôle Python est
+        #    dans clean().
         constraints = [
             models.UniqueConstraint(
                 fields=['parcours', 'filiere', 'semestre', 'annee'],
-                condition=models.Q(filiere__isnull=False),
                 name='unique_classe_avec_filiere',
-            ),
-            models.UniqueConstraint(
-                fields=['parcours', 'code', 'semestre', 'annee'],
-                condition=models.Q(filiere__isnull=True),
-                name='unique_classe_sans_filiere',
             ),
         ]
 
@@ -495,6 +511,17 @@ class Etudiant(models.Model):
         date_inscription = date_inscription or date_type.today()
 
         with transaction.atomic():
+            # Verrou sur l'étudiant, pris avant toute autre lecture ou
+            # écriture : deux réinscriptions simultanées (double clic, deux
+            # onglets, import rejoué) passent l'une après l'autre au lieu de
+            # se bloquer (erreur MySQL 1213) ou d'ouvrir deux inscriptions
+            # actives (CORRECTIONS_A_FAIRE.md point 38). La classe est relue
+            # sous ce verrou : l'autre réinscription a pu la changer.
+            self.classe_id = (
+                Etudiant.objects.select_for_update()
+                .values_list('classe_id', flat=True)
+                .get(pk=self.pk)
+            )
             deja_inscrit = self.inscriptions.exists()
 
             if deja_inscrit and nouvelle_classe.pk != self.classe_id:
@@ -888,12 +915,12 @@ class AffectationModule(models.Model):
     # ── Contraintes d'intégrité ──────────────────────────────────────────────
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=['module', 'enseignant', 'type_seance'],
-                name='unique_affectation_module_enseignant_type',
-            ),
-        ]
+        # Unicité de (module, enseignant, type) : index unique
+        # `unique_affectation_module_enseignant_type` sur (module,
+        # enseignant, COALESCE(type_seance, '')), qui empêche aussi deux
+        # affectations génériques (type NULL). Créé par la migration 0016 et
+        # connu de la base seulement (0017), pour la même raison de collation
+        # que Classe. Le contrôle Python, avec message clair, est dans clean().
         ordering = ['module', 'enseignant', 'type_seance']
 
     def clean(self):
@@ -916,6 +943,11 @@ class AffectationModule(models.Model):
         ).exclude(pk=self.pk)
 
         if self.type_seance is None:
+            if autres.filter(type_seance__isnull=True).exists():
+                raise ValidationError(
+                    "Cet enseignant a déjà une affectation générique sur ce module. "
+                    "Modifiez-la plutôt que d'en créer une seconde."
+                )
             # Affectation générique : interdit si le couple a déjà des affectations typées
             if autres.filter(type_seance__isnull=False).exists():
                 raise ValidationError(
@@ -924,6 +956,11 @@ class AffectationModule(models.Model):
                     "Supprimez-les d'abord, ou utilisez une affectation typée."
                 )
         else:
+            if autres.filter(type_seance=self.type_seance).exists():
+                raise ValidationError(
+                    f"Cet enseignant a déjà une affectation {self.type_seance} sur ce module. "
+                    "Modifiez-la plutôt que d'en créer une seconde."
+                )
             # Affectation typée : interdit si le couple a déjà une affectation générique
             if autres.filter(type_seance__isnull=True).exists():
                 raise ValidationError(
@@ -1152,6 +1189,7 @@ class Seance(models.Model):
             valider_bornes_semestre,
             valider_conflit_enseignant,
             valider_conflit_classe,
+            valider_doublon,
             valider_volume_module,
             valider_affectation,
             valider_volume_journalier,
@@ -1216,6 +1254,15 @@ class Seance(models.Model):
             jour_effectif,
             debut_effectif,
             fin_effectif,
+            self.pk,
+        )
+
+        # Brouillon identique à une séance déjà enregistrée (point 43). Ici,
+        # le contrôle se fait sous les verrous de save() et de la vue : deux
+        # envois simultanés (double clic) ne passent pas tous les deux.
+        valider_doublon(
+            self.statut, self.classe_id, self.module_id,
+            self.date_seance, self.heure_debut, self.heure_fin,
             self.pk,
         )
 
@@ -1359,3 +1406,14 @@ class DocumentPedagogique(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+@receiver(post_delete, sender=DocumentPedagogique)
+def supprimer_fichier_du_document(sender, instance, **kwargs):
+    """
+    Efface le fichier quand son document est supprimé, directement ou par
+    cascade (suppression du module) : il restait sur le disque sans plus
+    aucun lien (CORRECTIONS_A_FAIRE.md point 28).
+    """
+    if instance.fichier:
+        instance.fichier.delete(save=False)

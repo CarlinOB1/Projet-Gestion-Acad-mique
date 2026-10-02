@@ -14,7 +14,9 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // Les tests navigateur (playwright.config.js) visent leur propre
+        // serveur Django, sur la base jetable.
+        target: process.env.EDT_API_URL || 'http://localhost:8000',
         changeOrigin: true,
         secure: false,
       },

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown } from '@/components/ui/icons';
 import { getAffectations } from "@/api/affectations";
 import { getAnnees } from "@/api/academique";
 import { Badge } from "@/components/ui/badge";

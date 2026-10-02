@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import { AlertCircle, ChevronLeft, ChevronRight, CalendarDays, Clock } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, CalendarDays, Clock } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import SeanceCard from './SeanceCard';
 import { HEURE_MIN, HEURE_MAX } from '@/lib/constants';

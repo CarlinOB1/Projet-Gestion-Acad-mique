@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import serializers
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 
 from EDT_app.models import (
     Faculte, Departement, Filiere, Parcours,
@@ -47,6 +47,43 @@ class ValidateOnSaveMixin:
             return super().update(instance, validated_data)
         except DjangoValidationError as exc:
             self._convert_django_error(exc)
+
+
+def _utilisateur(serializer):
+    request = serializer.context.get('request')
+    user = getattr(request, 'user', None)
+    return user if user is not None and user.is_authenticated else None
+
+
+def verifier_departement_du_chef(serializer, departement, champ):
+    """
+    Un chef de département ne crée ou ne rattache rien à un département qu'il
+    ne dirige pas (CORRECTIONS_A_FAIRE.md points 19 et 20). Sans objet pour
+    la scolarité, l'admin, ou un appel interne sans requête.
+    """
+    from EDT_app.perimetre import departements_diriges_ids
+    user = _utilisateur(serializer)
+    if user is None or departement is None:
+        return
+    departements = departements_diriges_ids(user)
+    if departements and departement.pk not in departements:
+        # Refus de droits (403), comme pour les séances hors périmètre.
+        raise PermissionDenied(
+            {champ: "Vous ne pouvez agir que sur votre propre département."}
+        )
+
+
+def verifier_classe_du_perimetre(serializer, classe, champ):
+    """Même règle pour une classe : elle doit relever du périmètre du chef."""
+    from EDT_app.perimetre import classes_autorisees
+    user = _utilisateur(serializer)
+    if user is None or classe is None:
+        return
+    perimetre = classes_autorisees(user)
+    if perimetre is not None and not perimetre.filter(pk=classe.pk).exists():
+        raise PermissionDenied(
+            {champ: "Cette classe ne relève pas de votre département."}
+        )
 
 
 # ==========================================
@@ -110,6 +147,10 @@ class FiliereSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     class Meta:
         model  = Filiere
         fields = ['id', 'libelle', 'departement', 'departement_id', 'responsable', 'responsable_id']
+
+    def validate(self, data):
+        verifier_departement_du_chef(self, data.get('departement'), 'departement_id')
+        return data
 
     def get_responsable(self, obj):
         chef = obj.departement.chef if obj.departement_id else None
@@ -326,6 +367,11 @@ class ClasseSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
                     )
                 }
             )
+        # Un chef ne crée ni ne déplace une classe vers la filière d'un autre
+        # département (CORRECTIONS_A_FAIRE.md point 19).
+        if filiere is not None:
+            verifier_departement_du_chef(self, filiere.departement, 'filiere_id')
+
         # Au moins un identifiant requis
         if not filiere and not code:
             raise serializers.ValidationError(
@@ -370,10 +416,25 @@ class ProfilSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'user_id', 'user',
             'genre', 'telephone', 'photo', 'statut', 'motif_suspension',
         ]
+        # Même limite que changer_statut (ProfilSuspensionSerializer) : le
+        # champ n'en a pas en base (CORRECTIONS_A_FAIRE.md point 37).
+        extra_kwargs = {'motif_suspension': {'max_length': 255}}
 
     def validate(self, data):
-        statut           = data.get('statut', 'actif')
-        motif_suspension = data.get('motif_suspension', '').strip()
+        # Un profil reste attaché à son compte : user_id ne sert qu'à la
+        # création (CORRECTIONS_A_FAIRE.md point 20).
+        if self.instance is not None and 'user' in data and data['user'] != self.instance.user:
+            raise serializers.ValidationError(
+                {'user_id': "Un profil ne peut pas être rattaché à un autre compte."}
+            )
+
+        # Sur une modification partielle, le statut non envoyé reste celui du
+        # profil : un simple changement de téléphone n'efface plus le motif
+        # d'un profil suspendu.
+        statut           = data.get('statut', getattr(self.instance, 'statut', 'actif'))
+        motif_suspension = data.get(
+            'motif_suspension', getattr(self.instance, 'motif_suspension', ''),
+        ).strip()
 
         if statut == 'suspendu' and not motif_suspension:
             raise serializers.ValidationError(
@@ -386,6 +447,64 @@ class ProfilSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         if statut == 'actif':
             data['motif_suspension'] = ''
         return data
+
+
+def voit_coordonnees(serializer, enseignant):
+    """
+    Email, téléphone et motif de suspension d'un enseignant ne sont envoyés
+    qu'à lui-même, à la scolarité et au chef de son département
+    (CORRECTIONS_A_FAIRE.md point 21). Calculé une fois par réponse.
+    """
+    from EDT_app.perimetre import departements_diriges_ids
+    user = _utilisateur(serializer)
+    if user is None:
+        return False
+    if user.pk == enseignant.pk:
+        return True
+    cle = '_departements_diriges'
+    if cle not in serializer.context:
+        serializer.context[cle] = departements_diriges_ids(user)
+    departements = serializer.context[cle]
+    return departements is None or enseignant.departement_id in departements
+
+
+def masquer_coordonnees(profil):
+    if not profil:
+        return
+    for champ in ('telephone', 'motif_suspension'):
+        profil.pop(champ, None)
+    if isinstance(profil.get('user'), dict):
+        profil['user'].pop('email', None)
+
+
+class EnseignantResumeSerializer(serializers.ModelSerializer):
+    """
+    Fiche réduite d'un enseignant, pour les séances, affectations et
+    documents : nom, grade, département. Jamais d'email ni de téléphone
+    (CORRECTIONS_A_FAIRE.md point 21) ; `profil.user` garde l'identifiant et
+    le nom, que l'interface lit déjà. Aucune requête en plus si
+    `profil__user` et `departement` sont préchargés.
+    """
+    profil_id   = serializers.IntegerField(source='pk', read_only=True)
+    nom_complet = serializers.SerializerMethodField()
+    profil      = serializers.SerializerMethodField()
+    departement = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = Enseignant
+        fields = ['profil_id', 'profil', 'nom_complet', 'grade', 'departement']
+
+    def get_nom_complet(self, obj):
+        return f"{obj.profil.user.last_name} {obj.profil.user.first_name}".strip()
+
+    def get_profil(self, obj):
+        user = obj.profil.user
+        return {'user': {'id': user.pk, 'first_name': user.first_name, 'last_name': user.last_name}}
+
+    def get_departement(self, obj):
+        if obj.departement_id is None:
+            return None
+        return {'id': obj.departement_id, 'libelle': obj.departement.libelle}
 
 
 class EnseignantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
@@ -413,12 +532,19 @@ class EnseignantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     def get_nom_complet(self, obj):
         return f"{obj.profil.user.last_name} {obj.profil.user.first_name}".strip()
 
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        if not voit_coordonnees(self, obj):
+            masquer_coordonnees(data.get('profil'))
+        return data
+
     def validate(self, data):
         profil = data.get('profil')
         if profil and hasattr(profil, 'etudiant'):
             raise serializers.ValidationError(
                 {'profil_id': "Ce profil est déjà enregistré comme étudiant."}
             )
+        verifier_departement_du_chef(self, data.get('departement'), 'departement_id')
         return data
 
 
@@ -461,6 +587,9 @@ class EtudiantSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'profil_id': "Ce profil est déjà enregistré comme enseignant."}
             )
+        # Un chef n'inscrit ni ne déplace un étudiant hors de ses classes
+        # (CORRECTIONS_A_FAIRE.md point 20).
+        verifier_classe_du_perimetre(self, classe, 'classe_id')
         if classe and classe.annee.statut == 'archivée':
             raise serializers.ValidationError(
                 {
@@ -508,6 +637,10 @@ class MatiereSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         model  = Matiere
         fields = ['id', 'libelle', 'departement', 'departement_id']
 
+    def validate(self, data):
+        verifier_departement_du_chef(self, data.get('departement'), 'departement_id')
+        return data
+
 
 class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     matiere     = MatiereSerializer(read_only=True)
@@ -549,6 +682,10 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             'nb_seances_liees', 'nb_affectations_liees',
         ]
         read_only_fields = ['created_at']
+        # Champ texte sans limite en base : un million de caractères passait
+        # et alourdissait chaque planning contenant le module
+        # (CORRECTIONS_A_FAIRE.md point 37).
+        extra_kwargs = {'description': {'max_length': 2000}}
 
     def get_heures_max(self, obj):
         return obj.heures_max()
@@ -562,10 +699,16 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     def get_heures_effectuees(self, obj):
         return round(obj.heures_effectuees(), 2)
 
+    # Comptes calculés par la base pour toute la liste quand la vue les a
+    # annotés (V3), sinon une requête par module.
     def get_nb_seances_liees(self, obj):
+        if hasattr(obj, 'nb_seances_annote'):
+            return obj.nb_seances_annote
         return obj.nb_seances_liees()
 
     def get_nb_affectations_liees(self, obj):
+        if hasattr(obj, 'nb_affectations_annote'):
+            return obj.nb_affectations_annote
         return obj.nb_affectations_liees()
 
     def validate(self, data):
@@ -603,6 +746,140 @@ class ModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         return data
 
 
+def _heures_module(serializer, module):
+    """
+    Heures du module (max, planifiées, restantes, effectuées), calculées une
+    seule fois par module et par réponse. Les séances du volume viennent de
+    `module._seances_volume` quand la liste les a préchargées en une requête
+    (precharger_volumes_modules), sinon d'une requête par module.
+    """
+    cache = serializer.context.setdefault('_heures_modules', {})
+    if module.pk not in cache:
+        consommees = module.heures_consommees()
+        cache[module.pk] = {
+            'heures_max':        module.heures_max(),
+            'heures_consommees': round(consommees, 2),
+            'heures_restantes':  round(module.heures_max() - consommees, 2),
+            'heures_effectuees': round(module.heures_effectuees(), 2),
+        }
+    return cache[module.pk]
+
+
+def precharger_volumes_modules(modules):
+    """
+    Attache à chaque instance de `modules` (une même ligne peut revenir sous
+    plusieurs objets Python) la liste `_seances_volume` de ses séances
+    Confirmée/Reportée, en une seule requête pour toute la liste.
+    """
+    modules = [m for m in modules if m is not None]
+    ids = {m.pk for m in modules if not hasattr(m, '_seances_volume')}
+    if not ids:
+        return
+    par_module = {}
+    for seance in Seance.objects.filter(module_id__in=ids, statut__in=['Confirmée', 'Reportée']):
+        par_module.setdefault(seance.module_id, []).append(seance)
+    for module in modules:
+        if not hasattr(module, '_seances_volume'):
+            module._seances_volume = par_module.get(module.pk, [])
+
+
+class ClasseResumeSerializer(serializers.ModelSerializer):
+    """
+    Classe vue depuis une séance : identifiants et libellés des objets liés,
+    sans le nombre d'étudiants ni les fiches complètes (V2).
+    """
+    filiere  = serializers.SerializerMethodField()
+    parcours = serializers.SerializerMethodField()
+    semestre = serializers.SerializerMethodField()
+    annee    = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = Classe
+        fields = ['id', 'libelle', 'code', 'filiere', 'parcours', 'semestre', 'annee']
+
+    def get_filiere(self, obj):
+        if obj.filiere_id is None:
+            return None
+        return {'id': obj.filiere_id, 'libelle': obj.filiere.libelle}
+
+    def get_parcours(self, obj):
+        p = obj.parcours
+        return {'id': p.pk, 'libelle': p.libelle, 'type_parcours': p.type_parcours, 'niveau': p.niveau}
+
+    def get_semestre(self, obj):
+        return {'id': obj.semestre_id, 'libelle': obj.semestre.libelle}
+
+    def get_annee(self, obj):
+        return {'id': obj.annee_id, 'libelle': obj.annee.libelle, 'statut': obj.annee.statut}
+
+
+class ModuleResumeSerializer(serializers.ModelSerializer):
+    """
+    Module vu depuis une séance, une affectation ou un document : de quoi
+    l'afficher et suivre sa progression, sans les fiches imbriquées du
+    ModuleSerializer complet (CORRECTIONS_A_FAIRE.md point 33, V2).
+    """
+    matiere  = serializers.SerializerMethodField()
+    semestre = serializers.SerializerMethodField()
+    classe   = serializers.SerializerMethodField()
+    heures_max        = serializers.SerializerMethodField()
+    heures_consommees = serializers.SerializerMethodField()
+    heures_restantes  = serializers.SerializerMethodField()
+    heures_effectuees = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = Module
+        fields = [
+            'id', 'libelle', 'credits', 'matiere', 'semestre', 'classe',
+            'heures_cm', 'heures_td', 'heures_tp',
+            'heures_max', 'heures_consommees', 'heures_restantes', 'heures_effectuees',
+        ]
+
+    def get_matiere(self, obj):
+        matiere = obj.matiere
+        departement = matiere.departement
+        return {
+            'id': matiere.pk, 'libelle': matiere.libelle,
+            'departement': {'id': departement.pk, 'libelle': departement.libelle},
+        }
+
+    def get_semestre(self, obj):
+        return {'id': obj.semestre_id, 'libelle': obj.semestre.libelle}
+
+    def get_classe(self, obj):
+        if obj.classe_id is None:
+            return None
+        return {'id': obj.classe_id, 'libelle': obj.classe.libelle, 'code': obj.classe.code}
+
+    def get_heures_max(self, obj):
+        return _heures_module(self, obj)['heures_max']
+
+    def get_heures_consommees(self, obj):
+        return _heures_module(self, obj)['heures_consommees']
+
+    def get_heures_restantes(self, obj):
+        return _heures_module(self, obj)['heures_restantes']
+
+    def get_heures_effectuees(self, obj):
+        return _heures_module(self, obj)['heures_effectuees']
+
+
+# Relations à charger avec une séance pour la sérialiser sans requête par
+# ligne (liste, plannings, conflits) : CORRECTIONS_A_FAIRE.md point 33.
+SEANCE_RELATIONS = (
+    'module__matiere__departement',
+    'module__semestre',
+    'module__classe',
+    'enseignant__profil__user',
+    'enseignant__departement',
+    'classe__filiere',
+    'classe__parcours',
+    'classe__semestre',
+    'classe__annee',
+    'annee',
+)
+
+
 # ==========================================
 # 4. PLANIFICATION
 # ==========================================
@@ -611,11 +888,12 @@ class AffectationModuleSerializer(ValidateOnSaveMixin, serializers.ModelSerializ
     module_id = serializers.PrimaryKeyRelatedField(
         queryset=Module.objects.all(), source='module', write_only=True
     )
-    module = ModuleSerializer(read_only=True)
+    module = ModuleResumeSerializer(read_only=True)
     enseignant_id = serializers.PrimaryKeyRelatedField(
         queryset=Enseignant.objects.all(), source='enseignant', write_only=True
     )
-    enseignant = EnseignantSerializer(read_only=True)
+    # Fiche réduite : jamais l'email ni le téléphone (point 21).
+    enseignant = EnseignantResumeSerializer(read_only=True)
     heures_consommees = serializers.SerializerMethodField()
     heures_restantes = serializers.SerializerMethodField()
     heures_effectuees = serializers.SerializerMethodField()
@@ -715,7 +993,8 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
     module_id     = serializers.PrimaryKeyRelatedField(
         queryset=Module.objects.all(), source='module', write_only=True,
     )
-    enseignant    = EnseignantSerializer(read_only=True)
+    # Fiche réduite : le planning est public, pas les coordonnées (point 21).
+    enseignant    = EnseignantResumeSerializer(read_only=True)
     enseignant_id = serializers.PrimaryKeyRelatedField(
         queryset=Enseignant.objects.all(), source='enseignant', write_only=True,
     )
@@ -824,6 +1103,7 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
             valider_bornes_semestre,
             valider_conflit_enseignant,
             valider_conflit_classe,
+            valider_doublon,
             valider_volume_module,
             valider_affectation,
             valider_volume_journalier,
@@ -832,14 +1112,25 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         )
         from EDT_app.validation_seance import _calculer_duree_effective
 
-        heure_debut = data.get('heure_debut')
-        heure_fin   = data.get('heure_fin')
-        date_seance = data.get('date_seance')
-        module      = data.get('module')
-        enseignant  = data.get('enseignant')
-        classe      = data.get('classe')
-        annee       = data.get('annee')
-        statut      = data.get('statut', 'Confirmée')
+        # Modification partielle : les champs non envoyés gardent la valeur
+        # de la séance existante. Sans cela, annuler une séance en n'envoyant
+        # que son statut était refusé (« Horaires obligatoires »,
+        # CORRECTIONS_A_FAIRE.md point 29). `valeurs` sert aux contrôles ;
+        # seul `data` (ce qui a été envoyé) est enregistré.
+        valeurs = dict(data)
+        if self.instance is not None:
+            for champ in self._CHAMPS_CONTROLES:
+                if champ not in valeurs:
+                    valeurs[champ] = getattr(self.instance, champ)
+
+        heure_debut = valeurs.get('heure_debut')
+        heure_fin   = valeurs.get('heure_fin')
+        date_seance = valeurs.get('date_seance')
+        module      = valeurs.get('module')
+        enseignant  = valeurs.get('enseignant')
+        classe      = valeurs.get('classe')
+        annee       = valeurs.get('annee')
+        statut      = valeurs.get('statut', 'Confirmée')
         # Fallback sur l'instance existante (mise à jour partielle) : sans
         # lui, un PATCH qui ne touche pas `seance_liee` verrait ce champ
         # comme absent ici alors que la séance est bien mutualisée côté
@@ -888,10 +1179,10 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
                     self._to_drf_error('module_id', exc)
 
             # 5. Affectation de l'enseignant + volume restant
-            if module and enseignant and data.get('type_seance'):
+            if module and enseignant and valeurs.get('type_seance'):
                 try:
                     valider_affectation(
-                        module, enseignant, data.get('type_seance'), duree, pk
+                        module, enseignant, valeurs.get('type_seance'), duree, pk
                     )
                 except Exception as exc:
                     self._to_drf_error('enseignant_id', exc)
@@ -957,11 +1248,28 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         except Exception as exc:
             self._to_drf_error('classe_id', exc)
 
+        # 11b. Brouillon identique à une séance déjà enregistrée
+        # (CORRECTIONS_A_FAIRE.md point 43). Sans statut envoyé, une création
+        # est un brouillon (valeur par défaut du modèle).
+        try:
+            valider_doublon(
+                valeurs.get('statut', 'brouillon'),
+                classe, module, date_seance, heure_debut, heure_fin, pk,
+            )
+        except Exception as exc:
+            self._to_drf_error('non_field_errors', exc)
+
         # 12. Champs de report obligatoires si statut == 'Reportée'
         if statut == 'Reportée':
-            data = self._validate_report(data, pk)
+            self._validate_report(valeurs, pk)
 
         return data
+
+    _CHAMPS_CONTROLES = (
+        'heure_debut', 'heure_fin', 'date_seance', 'module', 'enseignant',
+        'classe', 'annee', 'statut', 'type_seance',
+        'date_report', 'heure_debut_report', 'heure_fin_report',
+    )
 
 
     def _validate_report(self, data, pk):
@@ -983,6 +1291,70 @@ class SeanceSerializer(ValidateOnSaveMixin, serializers.ModelSerializer):
         except Exception as exc:
             self._to_drf_error('date_report', exc)
         return data
+
+
+class _SeanceListeListSerializer(serializers.ListSerializer):
+    """
+    Prépare en quelques requêtes ce que chaque ligne demandait une par une :
+    séances du volume de chaque module, et séances mutualisées (V2/V3).
+    """
+
+    def to_representation(self, data):
+        seances = list(data.all() if hasattr(data, 'all') else data)
+        precharger_volumes_modules([s.module for s in seances])
+        ids = [s.pk for s in seances]
+        self.context['_seances_avec_associees'] = set(
+            Seance.objects.filter(seance_liee_id__in=ids).values_list('seance_liee_id', flat=True)
+        ) if ids else set()
+        return [self.child.to_representation(s) for s in seances]
+
+
+class SeanceListeSerializer(serializers.ModelSerializer):
+    """
+    Version allégée et en lecture seule d'une séance, pour les listes et les
+    plannings : module, enseignant et classe réduits à ce que l'interface
+    affiche. Le SeanceSerializer complet reste pour l'ouverture d'une séance
+    et sa modification (CORRECTIONS_A_FAIRE.md points 21 et 33).
+    Charger les séances avec `select_related(*SEANCE_RELATIONS)`.
+    """
+    module          = ModuleResumeSerializer(read_only=True)
+    enseignant      = EnseignantResumeSerializer(read_only=True)
+    classe          = ClasseResumeSerializer(read_only=True)
+    annee           = serializers.SerializerMethodField()
+    is_mutualise    = serializers.SerializerMethodField()
+    duree_effective = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = Seance
+        fields = [
+            'id', 'libelle',
+            'date_seance', 'heure_debut', 'heure_fin', 'duree_effective',
+            'type_seance', 'statut',
+            'date_report', 'heure_debut_report', 'heure_fin_report',
+            'module', 'enseignant', 'classe', 'annee',
+            'is_mutualise',
+        ]
+        read_only_fields = fields
+        list_serializer_class = _SeanceListeListSerializer
+
+    def get_annee(self, obj):
+        if obj.annee_id is None:
+            return None
+        annee = obj.annee
+        return {'id': annee.pk, 'libelle': annee.libelle, 'statut': annee.statut}
+
+    def get_duree_effective(self, obj):
+        if obj.heure_debut and obj.heure_fin:
+            return round(Seance.calculer_duree_effective(obj.heure_debut, obj.heure_fin), 2)
+        return None
+
+    def get_is_mutualise(self, obj):
+        if obj.seance_liee_id is not None:
+            return True
+        associees = self.context.get('_seances_avec_associees')
+        if associees is not None:
+            return obj.pk in associees
+        return obj.seances_associees.exists()
 
 
 # ==========================================
@@ -1107,8 +1479,8 @@ class DocumentPedagogiqueSerializer(serializers.ModelSerializer):
     - `module_id`  : clé étrangère en écriture.
     """
     fichier_url  = serializers.SerializerMethodField(read_only=True)
-    enseignant   = EnseignantSerializer(read_only=True)
-    module       = ModuleSerializer(read_only=True)
+    enseignant   = EnseignantResumeSerializer(read_only=True)
+    module       = ModuleResumeSerializer(read_only=True)
     module_id    = serializers.PrimaryKeyRelatedField(
         queryset=Module.objects.all(), source='module', write_only=True
     )

@@ -2,7 +2,7 @@
  * @file SeanceDrawer.jsx
  * @description Drawer shadcn/ui — orchestration création/édition d'une séance.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Dialog, DialogContent, DialogHeader,
   DialogTitle, DialogDescription,
@@ -28,8 +28,16 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
   const isEditMode     = !!seance;
   const activeMutation = isEditMode ? updateMutation : createMutation;
 
+  // Un double clic envoyait le formulaire deux fois avant que le bouton ne
+  // soit désactivé, d'où deux séances (CORRECTIONS_A_FAIRE.md point 43) : un
+  // second envoi est ignoré tant que le premier n'a pas abouti.
+  const envoiEnCours = useRef(false);
+
   useEffect(() => {
-    if (open) setServerError(null);
+    if (open) {
+      setServerError(null);
+      envoiEnCours.current = false;
+    }
   }, [open, seance]);
 
   // Classe déjà fixée par le contexte : celle de la séance modifiée, ou celle
@@ -65,11 +73,14 @@ export default function SeanceDrawer({ open, onClose, semestreId, seance, contex
   } : null;
 
   const handleSubmit = (formData) => {
+    if (envoiEnCours.current) return;
+    envoiEnCours.current = true;
     setServerError(null);
     const args = isEditMode ? { id: seance.id, data: formData } : formData;
     activeMutation.mutate(args, {
       onSuccess: () => onClose(),
       onError:   (err) => setServerError(parseApiError(err)),
+      onSettled: () => { envoiEnCours.current = false; },
     });
   };
 

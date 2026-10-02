@@ -3,7 +3,7 @@
  * @description Carte individuelle du trombinoscope — avatar (initiales), nom,
  * grade, département et badges des matières enseignées.
  */
-import { GraduationCap } from 'lucide-react';
+import { GraduationCap } from '@/components/ui/icons';
 import { Card, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';

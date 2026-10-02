@@ -7,11 +7,17 @@ from .models import (
     Profil, Enseignant, Etudiant,
     Matiere, Module, Seance
 )
+from .throttles import limiter_connexion_admin
 from .forms import (
     SemestreAdminForm,
     AnneeAcademiqueAdminForm,
     SeanceAdminForm
 )
+
+
+# Connexion à l'administration limitée comme celle de l'application
+# (5 essais par minute et par compte) : CORRECTIONS_A_FAIRE.md point 25.
+admin.site.login = limiter_connexion_admin(admin.site.login)
 
 
 # ==========================================

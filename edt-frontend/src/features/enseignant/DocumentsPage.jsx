@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Plus, Download, Trash2, FileIcon, FileBarChart, FileSpreadsheet, Upload } from 'lucide-react';
+import { FileText, Plus, Download, Trash2, FileIcon, FileBarChart, FileSpreadsheet, Upload } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
 import FormModal from '@/components/shared/FormModal';

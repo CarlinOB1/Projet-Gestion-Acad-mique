@@ -17,7 +17,7 @@ import ClasseGroupSection from './ClasseGroupSection';
 import SeanceDrawer from './SeanceDrawer';
 import ReportDrawer from './ReportDrawer';
 import { Button } from '@/components/ui/button';
-import { Plus, ChevronsDown, ChevronsUp, Calendar, List } from 'lucide-react';
+import { Plus, ChevronsDown, ChevronsUp, Calendar, List } from '@/components/ui/icons';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const DEFAULT_FILTERS = {

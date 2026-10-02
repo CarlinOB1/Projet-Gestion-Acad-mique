@@ -2,7 +2,7 @@
  * Sidebar — navigation filtrée par rôle, logo et bouton de déconnexion.
  */
 import { NavLink } from 'react-router-dom';
-import { LogOut } from 'lucide-react';
+import { LogOut } from '@/components/ui/icons';
 import useAuthStore from '@/store/authStore';
 import { logout } from '@/api/auth';
 import { NAV_ITEMS } from '@/lib/navigation';
