@@ -22,6 +22,7 @@ effacé à la fin ; les sessions ne valent rien ailleurs.
 import argparse
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -47,6 +48,27 @@ def trouver_zap(chemin):
         if candidat and os.path.exists(candidat):
             return candidat
     sys.exit("ZAP introuvable : l'installer, ou indiquer --zap <chemin de zap.bat>.")
+
+
+def env_java_recent():
+    """
+    Environnement de ZAP avec un Java 17 ou plus en tête du PATH : zap.bat
+    lance le premier `java` trouvé, et un Java 8 installé par ailleurs
+    (java.com) passe devant et empêche ZAP de démarrer.
+    """
+    candidats = []
+    for base in (r"C:\Program Files\Eclipse Adoptium", r"C:\Program Files\Java"):
+        if os.path.isdir(base):
+            for nom in os.listdir(base):
+                chiffres = re.findall(r"\d+", nom)
+                if chiffres and int(chiffres[0]) >= 17 and os.path.exists(os.path.join(base, nom, "bin", "java.exe")):
+                    candidats.append((int(chiffres[0]), os.path.join(base, nom)))
+    if not candidats:
+        sys.exit("Aucun Java 17 ou plus trouvé (Eclipse Temurin, adoptium.net) : ZAP ne démarrerait pas.")
+    java_home = max(candidats)[1]
+    print(f"Java utilisé par ZAP : {java_home}", flush=True)
+    return {**os.environ, "JAVA_HOME": java_home,
+            "PATH": os.path.join(java_home, "bin") + os.pathsep + os.environ.get("PATH", "")}
 
 
 def attendre_serveur(delai=90):
@@ -125,6 +147,7 @@ def main():
     args = parser.parse_args()
 
     zap = trouver_zap(args.zap)
+    env_zap = env_java_recent()
     os.makedirs(args.sortie, exist_ok=True)
     travail = tempfile.mkdtemp(prefix="edt-zap-")
     env = {
@@ -158,7 +181,7 @@ def main():
             # recherche de mises à jour) ; -dir : réglages jetables.
             subprocess.run(
                 [zap, "-cmd", "-silent", "-dir", os.path.join(travail, f"zap-{role}"), "-autorun", chemin_plan],
-                cwd=os.path.dirname(zap), check=False,
+                cwd=os.path.dirname(zap), env=env_zap, check=False,
             )
     finally:
         if serveur:
