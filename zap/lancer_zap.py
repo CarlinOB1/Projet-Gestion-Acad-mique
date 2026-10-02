@@ -18,6 +18,13 @@ la session d'un chef de département et une fois avec celle d'un étudiant.
 Rapports HTML et JSON dans le dossier de sortie (par défaut un dossier
 temporaire, hors du dépôt). Le dossier de travail, avec les sessions, est
 effacé à la fin ; les sessions ne valent rien ailleurs.
+
+Phase B, à travers nginx et HTTPS : lancer d'abord la simulation de mise en
+ligne sur edt_zap, limite de requêtes relevée,
+    set DJANGO_THROTTLE_USER=100000/min
+    .venv/Scripts/python.exe deploiement/simulation_production.py --base edt_zap --garder 40
+puis viser son adresse avec la clé secrète qu'elle a tirée :
+    .venv/Scripts/python.exe zap/lancer_zap.py --cible https://127.0.0.1:8443         --cle-secrete <dossier de travail de la simulation>/cle_secrete
 """
 import argparse
 import json
@@ -36,7 +43,7 @@ import urllib.request
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = os.path.join(RACINE, ".venv", "Scripts", "python.exe")
 PORT = 8012
-API = f"http://127.0.0.1:{PORT}/api/"
+API_LOCALE = f"http://127.0.0.1:{PORT}/api/"
 EMPLACEMENTS_ZAP = [
     r"C:\Program Files\ZAP\Zed Attack Proxy\zap.bat",
     r"C:\Program Files (x86)\ZAP\Zed Attack Proxy\zap.bat",
@@ -93,17 +100,17 @@ def attendre_serveur(delai=90):
     sys.exit("Le serveur Django du scan n'a pas démarré.")
 
 
-def plan(role, jeton, requetes, sortie, duree):
+def plan(role, jeton, requetes, sortie, duree, api):
     """Plan d'automatisation ZAP (JSON, accepté comme du YAML)."""
     return {
         "env": {
             "contexts": [{
                 "name": "edt-api",
-                "urls": [API],
-                "includePaths": [f"{API}.*"],
+                "urls": [api],
+                "includePaths": [f"{api}.*"],
                 # La connexion a sa propre limitation, déjà testée par
                 # LimitationTentativesTest : inutile de la marteler.
-                "excludePaths": [f"{API}token/.*"],
+                "excludePaths": [f"{api}token/.*"],
             }],
             "parameters": {"failOnError": False, "failOnWarning": False, "progressToStdout": True},
         },
@@ -125,7 +132,7 @@ def plan(role, jeton, requetes, sortie, duree):
                 "type": "requestor",
                 "requests": [
                     {
-                        "url": API + r["url"],
+                        "url": api + r["url"],
                         "method": r["method"],
                         **({"data": json.dumps(r["data"]), "headers": ["Content-Type: application/json"]}
                            if "data" in r else {}),
@@ -153,7 +160,12 @@ def main():
     parser.add_argument("--zap")
     parser.add_argument("--sortie", default=os.path.join(tempfile.gettempdir(), "edt-zap-rapports"))
     parser.add_argument("--duree", type=int, default=20, help="minutes de scan actif par compte")
+    parser.add_argument("--cible", help="serveur déjà en place (simulation de mise en ligne), ex. https://127.0.0.1:8443")
+    parser.add_argument("--cle-secrete", help="fichier contenant la clé secrète du serveur visé par --cible")
     args = parser.parse_args()
+    if bool(args.cible) != bool(args.cle_secrete):
+        sys.exit("--cible et --cle-secrete vont ensemble.")
+    api = args.cible.rstrip("/") + "/api/" if args.cible else API_LOCALE
 
     zap = trouver_zap(args.zap)
     env_zap = env_java_recent()
@@ -162,7 +174,9 @@ def main():
     env = {
         **os.environ,
         "DB_NAME": "edt_zap",
-        "DJANGO_SECRET_KEY": secrets.token_hex(32),
+        "DJANGO_SECRET_KEY": (
+            open(args.cle_secrete, encoding="utf-8").read().strip() if args.cle_secrete else secrets.token_hex(32)
+        ),
         "DJANGO_MEDIA_ROOT": os.path.join(travail, "media"),
         "DJANGO_THROTTLE_USER": "100000/min",
         "PYTHONIOENCODING": "utf-8",
@@ -174,17 +188,18 @@ def main():
         with open(etat_chemin, encoding="utf-8") as f:
             etat = json.load(f)
 
-        journal = open(os.path.join(args.sortie, "serveur-django.log"), "w", encoding="utf-8")
-        serveur = subprocess.Popen(
-            [PYTHON, "manage.py", "runserver", f"127.0.0.1:{PORT}", "--noreload"],
-            cwd=RACINE, env=env, stdout=journal, stderr=subprocess.STDOUT,
-        )
-        attendre_serveur()
+        if not args.cible:
+            journal = open(os.path.join(args.sortie, "serveur-django.log"), "w", encoding="utf-8")
+            serveur = subprocess.Popen(
+                [PYTHON, "manage.py", "runserver", f"127.0.0.1:{PORT}", "--noreload"],
+                cwd=RACINE, env=env, stdout=journal, stderr=subprocess.STDOUT,
+            )
+            attendre_serveur()
 
         for role, jeton in etat["sessions"].items():
             chemin_plan = os.path.join(travail, f"plan-{role}.yaml")
             with open(chemin_plan, "w", encoding="utf-8") as f:
-                json.dump(plan(role, jeton, etat["requetes"], args.sortie, args.duree), f, ensure_ascii=False, indent=1)
+                json.dump(plan(role, jeton, etat["requetes"], args.sortie, args.duree, api), f, ensure_ascii=False, indent=1)
             print(f"\n=== Scan avec la session {role} ({etat['comptes'][role]}) ===", flush=True)
             # -silent : ZAP ne contacte aucun service extérieur (pas de
             # recherche de mises à jour) ; -dir : réglages jetables.

@@ -357,6 +357,18 @@ class DocumentsSecuriteTest(TestCase):
         self.assertEqual(resp['X-Accel-Redirect'], '/protected_media/' + doc.fichier.name)
         self.assertEqual(resp.content, b"")
 
+    @override_settings(PROTECTED_MEDIA_INTERNAL_PREFIX='/protected_media/')
+    def test_en_production_le_type_du_fichier_est_annonce(self):
+        # nginx garde le type de la réponse de Django (simulation de mise en
+        # ligne, point 47) : jamais text/html pour un document.
+        attendus = {'cours.pdf': 'application/pdf', 'notes.txt': 'text/plain'}
+        contenus = {'cours.pdf': PDF_MINIMAL, 'notes.txt': b'Bonjour'}
+        for nom, type_attendu in attendus.items():
+            depot = self._deposer(nom, contenus[nom])
+            resp = client_for(self.etu.profil.user).get(f"/api/documents/{depot.data['id']}/telecharger/")
+            with self.subTest(nom=nom):
+                self.assertEqual(resp['Content-Type'], type_attendu)
+
     # ── Noms de fichiers non devinables ──────────────────────────────────────
 
     def test_le_fichier_est_range_sous_un_dossier_aleatoire(self):

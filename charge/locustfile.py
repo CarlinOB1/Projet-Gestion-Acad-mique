@@ -29,6 +29,12 @@ filtrer par étiquette laisserait des catégories vides que Locust lance quand
 même (environ un utilisateur virtuel sur dix perdu).
 
 Supprimer <tmp>/sessions.json après le test : il contient des jetons valides.
+
+Phase B, à travers nginx et HTTPS (simulation locale, voir
+deploiement/simulation_production.py --garder) : sessions dans le dossier de
+travail de la simulation, adresse https://localhost:8443, et
+CHARGE_CERTIFICAT_AUTO_SIGNE=1 pour accepter son certificat auto-signé
+(jamais contre le vrai serveur, dont le certificat doit être valide).
 """
 import itertools
 import json
@@ -48,10 +54,24 @@ _enseignants = itertools.cycle(SESSIONS["enseignants"])
 _chefs = itertools.cycle(SESSIONS["chefs"])
 _identifiants = itertools.cycle(SESSIONS["identifiants_connexion"])
 
+CERTIFICAT_AUTO_SIGNE = os.environ.get("CHARGE_CERTIFICAT_AUTO_SIGNE") == "1"
+if CERTIFICAT_AUTO_SIGNE:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def accepter_certificat(user):
+    if CERTIFICAT_AUTO_SIGNE:
+        user.client.verify = False
+
 
 class Authentifie(HttpUser):
     abstract = True
     wait_time = between(1, 4)  # un humain lit l'écran entre deux clics
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        accepter_certificat(self)
 
     def entetes(self, jeton):
         return {"Authorization": f"Bearer {jeton}"}
@@ -137,6 +157,10 @@ class Connexion(HttpUser):
     """Rafale de connexions réelles : la limitation doit répondre 429, jamais 500."""
     weight = 1
     wait_time = between(0.1, 0.5)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        accepter_certificat(self)
 
     @task
     def se_connecter(self):

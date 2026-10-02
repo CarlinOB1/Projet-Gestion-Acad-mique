@@ -1425,6 +1425,134 @@ réel (HTTPS, nginx, `DEBUG=False`) : le plan de scan de `zap/lancer_zap.py`
 sert de base, à adapter pour viser ce serveur au lieu d'en démarrer un en
 local.
 
+Revérifié le 2026-10-02 sur la simulation de mise en ligne (point 49) :
+nginx répond « Server: nginx » sans version, et `zap/lancer_zap.py --cible`
+vise désormais un serveur déjà en place.
+
+---
+
+## 47. En production, les documents téléchargés étaient annoncés comme des pages web
+
+**Découvert le :** 2026-10-02 (simulation de mise en ligne, point 49).
+
+**Problème :** sur un vrai serveur, un document téléchargé (PDF, Word...)
+arrivait avec le type « page web » (`text/html`). Le navigateur
+l'enregistrait quand même (téléchargement forcé), mais un fichier mal
+étiqueté peut être mal ouvert, et un fichier texte contenant du code
+risquait d'être traité comme une page.
+
+**Cause :** en production, Django délègue l'envoi du fichier à nginx
+(`X-Accel-Redirect`) avec une réponse vide, sans préciser le type ;
+`HttpResponse` met alors `text/html` par défaut, et nginx le garde. En
+développement, `FileResponse` devinait le bon type : les tests ne voyaient
+rien.
+
+**Statut :** corrigé le 2026-10-02 : `DocumentViewSet.telecharger` annonce
+le type deviné d'après le nom du fichier (`application/pdf`, `text/plain`...,
+`application/octet-stream` à défaut). Test
+`test_en_production_le_type_du_fichier_est_annonce` ; vérifié en simulation
+(`application/pdf`). `verifier_production.py` le contrôle en ligne.
+
+---
+
+## 48. Une connexion coûte 3,5 secondes de calcul sur ce poste
+
+**Découvert le :** 2026-10-02 (simulation de mise en ligne, point 49).
+
+**Problème :** chaque tentative de connexion, réussie ou non, occupe le
+processeur environ 3,5 s sur le poste de développement. À la rentrée, si
+beaucoup d'étudiants se connectent en même temps, les connexions
+attendront les unes derrière les autres, et le reste de l'application
+ralentira avec elles.
+
+**Cause :** Django vérifie le mot de passe avec PBKDF2 en 1,2 million de
+tours (réglage par défaut de Django 6, voulu : c'est ce qui rend un vol de
+la base inexploitable). Le temps dépend du processeur : un serveur récent
+devrait faire nettement mieux.
+
+**Piste de correction :** mesurer d'abord sur le serveur
+(`verifier_production.py --identifiant ...` chronomètre la connexion et
+signale plus de 2 s). Si c'est trop lent : passer à Argon2
+(`pip install argon2-cffi`, puis `Argon2PasswordHasher` en tête de
+`PASSWORD_HASHERS`), plus rapide à sécurité égale, les mots de passe étant
+convertis d'eux-mêmes à la connexion suivante. Ne pas baisser le nombre de
+tours de PBKDF2.
+
+**Statut :** à mesurer sur le serveur réel.
+
+---
+
+## 49. Phase B : répétition de la mise en ligne (simulation locale)
+
+**Fait le :** 2026-10-02, sur le poste de développement, faute de serveur
+(`deploiement/simulation_production.py`, voir `DEPLOIEMENT.md` § 8) :
+Django en production (`DJANGO_DEBUG=False`, HTTPS, X-Accel-Redirect) servi
+par waitress, derrière nginx 1.30 pour Windows configuré avec le bloc nginx
+de `DEPLOIEMENT.md` lui-même, certificat auto-signé, bases jetables.
+
+**Contrôles du site** (`deploiement/verifier_production.py`, réutilisable
+le jour J) : 18 contrôles, aucun échec au dernier passage. Bons : TLS 1.3,
+redirection HTTP → HTTPS, en-têtes de sécurité et CSP, version de nginx
+masquée (point 46), pas de page de débogage, envoi sans « / » final sans
+erreur (point 46), `/admin/` refusé depuis l'extérieur, `/media/` et
+`/protected_media/` fermés, envoi de plus de 20 Mo refusé par nginx (413),
+téléchargement protégé servi par nginx, rafale de connexions freinée malgré
+de faux `X-Forwarded-For`. `manage.py check --deploy` : seulement les deux
+avertissements choisis du § 4. Reste à examiner, sans effet : trois en-têtes
+envoyés deux fois avec la même valeur (Django et nginx).
+
+**Corrigé en route :**
+- documents annoncés comme pages web (point 47) ;
+- nginx répondait 503 à la rafale de connexions, que l'interface aurait
+  affiché « Le serveur a rencontré une erreur » : `limit_req_status 429;` ;
+- HSTS absent des pages de l'interface, puis présent deux fois sur l'API
+  (signalé par ZAP, contraire à la norme) : un `map` nginx ne le pose que si
+  Django ne l'a pas fait.
+
+**Charge** (à travers nginx et HTTPS, 1 à 3 minutes par palier) :
+
+| Utilisateurs | Médiane | 95 % sous | Débit | Erreurs |
+|---|---|---|---|---|
+| 10 | 0,13 s | 0,65 s | 5 req/s | 0 |
+| 25 | 0,38 s | 6,5 s | 7,7 req/s | 0 |
+| 50 | 2,5 s | 5,5 s | 9,7 req/s | 0 |
+| 100 | 4,8 s | 7,8 s | 13,5 req/s | 1 (cache, Windows) |
+
+Même essai avec les compteurs de limitation en mémoire au lieu du cache
+fichier (réglage d'essai hors dépôt) : 13,4 req/s et médiane 0,54 s à
+50 utilisateurs ; 22 req/s, médiane 2,2 s et 95 % sous 3,7 s à 100, sans
+erreur. L'objectif fixé pour le vrai serveur (95 % sous 2 s à 100
+utilisateurs) n'est pas atteint sur ce portable : un seul processus Python
+(gunicorn en aura trois), base et générateur de charge sur la même machine,
+et des ralentissements passagers de toute la machine (jusqu'à 30 s, sans
+lien avec l'application). À mesurer sur le serveur.
+
+**Scan ZAP** (à travers nginx et HTTPS, sessions chef et étudiant) : aucune
+faille confirmée. Les alertes « injection SQL » (26), « injection SQL
+SQLite par délai » (10) et « format string » (1) sont de fausses alertes :
+elles reposent sur des erreurs 500, qui venaient toutes (619 sur 619) du
+cache fichier sous Windows, et sur des écarts de temps sans rapport avec la
+charge injectée (base MySQL, pas SQLite). Les 11 requêtes signalées,
+rejouées sans ce cache, donnent 400, 200 ou 405, jamais 500. Restent :
+HSTS en double (corrigé), « Cache-control » et « User Agent Fuzzer »
+(informations).
+
+**Sauvegarde** (`deploiement/essai_sauvegarde.py`) : sauvegarde de
+`edt_charge` (1,1 Mo, 5 s), restauration dans une base neuve (15 s),
+30 tables et 7 076 lignes identiques.
+
+**Limites propres à Windows**, sans objet sur le serveur Linux mais
+consignées dans `DEPLOIEMENT.md` § 8 : le cache fichier n'y supporte pas
+les accès simultanés (erreurs 500) et y coûte environ 40 % de débit ;
+`localhost` y est d'abord essayé en IPv6 (21 s d'attente par connexion).
+
+**Reste pour la vraie mise en ligne** (`DEPLOIEMENT.md` § 7) : relancer
+`verifier_production.py` sur le serveur, securityheaders.com et SSL Labs,
+l'essai de sauvegarde sur la vraie base, la charge et ZAP sur une instance
+de test ; mesurer la connexion (point 48). Si la charge déçoit sur le
+serveur : remplacer le cache fichier par Redis pour les compteurs de
+limitation (partagé par les workers, sans écriture disque).
+
 ---
 
 <!-- Ajouter les prochains points ci-dessous, avec le même format

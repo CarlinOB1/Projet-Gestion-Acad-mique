@@ -1,3 +1,4 @@
+import mimetypes
 import os
 
 from django.conf import settings
@@ -1612,7 +1613,12 @@ class DocumentViewSet(BaseViewSet):
         nom_affiche = os.path.basename(doc.fichier.name)
 
         if settings.PROTECTED_MEDIA_INTERNAL_PREFIX:
-            response = HttpResponse()
+            # Type deviné d'après le nom, comme FileResponse en développement.
+            # nginx garde le type de cette réponse : sans lui, tout document
+            # partait en text/html, le type par défaut de HttpResponse
+            # (CORRECTIONS_A_FAIRE.md point 47).
+            type_contenu, _ = mimetypes.guess_type(nom_affiche)
+            response = HttpResponse(content_type=type_contenu or 'application/octet-stream')
             response['X-Accel-Redirect'] = (
                 settings.PROTECTED_MEDIA_INTERNAL_PREFIX + doc.fichier.name
             )
